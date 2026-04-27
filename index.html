@@ -1407,8 +1407,10 @@ async function cargarMisConsultas() {
   const cont = document.getElementById('misConsultasList');
   cont.innerHTML = '<div class="empty">Cargando...</div>';
   try {
-    // Gerente ve todas las consultas; vendedor ve solo las suyas
-    const filtro = currentMode === 'gerente' ? '' : `vendedor_id=eq.${currentUser.id}&`;
+    // Vendedor: ve sus propias consultas. Gerente: ve las consultas que él cargó.
+    const filtro = currentMode === 'gerente'
+      ? `cargada_por_id=eq.${currentUser.id}&`
+      : `vendedor_id=eq.${currentUser.id}&`;
     const data = await sbFetch(`consultas_0km?${filtro}order=created_at.desc`);
     const ids = (data || []).map(c => c.id);
     let items = [];
@@ -1509,7 +1511,7 @@ function abrirDetalle(consultaId) {
   const overlay = document.getElementById('modalOverlay');
   const cont = document.getElementById('modalContent');
   const cliente = c.tipo_cliente === 'particular' ? `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}`.trim() : (c.reventa_nombre || '');
-  const showGcia = currentMode === 'admin' || currentMode === 'gerente'; // gcia visible para admin y gerente
+  const showGcia = currentMode === 'admin'; // gcia y % financiación SOLO admin (fngonzalez)
   const itemsHtml = (c.items || []).map((it, i) => {
     const chasis = (it.chasis || []).map(ch =>
       `<div style="font-size:12px; padding:4px 0; border-bottom:1px dashed var(--vw-grey-2)">
