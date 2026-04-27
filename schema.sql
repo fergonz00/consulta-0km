@@ -98,3 +98,45 @@ CREATE INDEX idx_consultas_0km_items_consulta ON consultas_0km_items(consulta_id
 -- con error 42501 "new row violates row-level security policy".
 ALTER TABLE consultas_0km DISABLE ROW LEVEL SECURITY;
 ALTER TABLE consultas_0km_items DISABLE ROW LEVEL SECURITY;
+
+-- ============================================================================
+-- Notificaciones WhatsApp (Edge Function notify-whatsapp-consulta)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS consultas_0km_notif_config (
+  evento             TEXT PRIMARY KEY,
+  incluir_vendedor   BOOLEAN DEFAULT FALSE,
+  incluir_gerente    BOOLEAN DEFAULT FALSE,
+  usuarios_ids       UUID[] DEFAULT '{}',
+  updated_at         TIMESTAMPTZ DEFAULT NOW(),
+  updated_by         TEXT
+);
+ALTER TABLE consultas_0km_notif_config DISABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS consultas_0km_notif_log (
+  id                     BIGSERIAL PRIMARY KEY,
+  created_at             TIMESTAMPTZ DEFAULT NOW(),
+  consulta_id            BIGINT,
+  destinatario_id        UUID,
+  destinatario_telefono  TEXT,
+  template               TEXT,
+  evento                 TEXT,
+  estado                 TEXT, -- 'enviado' | 'error' | 'fallido'
+  meta_message_id        TEXT,
+  error_detalle          TEXT,
+  payload                JSONB
+);
+ALTER TABLE consultas_0km_notif_log DISABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_consultas_0km_notif_log_consulta ON consultas_0km_notif_log(consulta_id);
+
+-- Configuración inicial:
+-- Nueva consulta -> al admin (Fer, fngonzalez); no toca al vendedor que la creó
+INSERT INTO consultas_0km_notif_config (evento, incluir_vendedor, incluir_gerente, usuarios_ids)
+SELECT 'consulta_0km_nueva', FALSE, FALSE, ARRAY[id]
+FROM tasador_usuarios WHERE usuario = 'fngonzalez'
+ON CONFLICT (evento) DO NOTHING;
+
+-- Respuesta -> al vendedor original + a todos los gerentes (Daniel)
+INSERT INTO consultas_0km_notif_config (evento, incluir_vendedor, incluir_gerente, usuarios_ids)
+VALUES ('consulta_0km_respondida', TRUE, TRUE, '{}'::uuid[])
+ON CONFLICT (evento) DO NOTHING;

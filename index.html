@@ -339,8 +339,8 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const STOCK_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=0&single=true&output=csv';
 const STOCK_LIM_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=1137307261&single=true&output=csv';
 const FYF = 1110000;
-const ADMIN_PHONE = '5491156559854';
-const ADMIN_KEY = '6552632';
+// Notificaciones WhatsApp via Edge Function notify-whatsapp-consulta (Meta Cloud API).
+// Destinatarios configurados en tabla `consultas_0km_notif_config`.
 const PROVINCIAS_AR = ['CABA','Buenos Aires','Catamarca','Chaco','Chubut','Córdoba','Corrientes','Entre Ríos','Formosa','Jujuy','La Pampa','La Rioja','Mendoza','Misiones','Neuquén','Río Negro','Salta','San Juan','San Luis','Santa Cruz','Santa Fe','Santiago del Estero','Tierra del Fuego','Tucumán'];
 
 // ============ STATE ============
@@ -1370,7 +1370,7 @@ async function submitConsulta() {
     });
     await sbFetch('consultas_0km_items', { method: 'POST', body: JSON.stringify(items) });
 
-    notifyAdminNuevaConsulta(consultaId, cabecera, items).catch(e => console.error(e));
+    notifyAdminNuevaConsulta(consultaId).catch(e => console.error(e));
 
     hideLoading();
     showToast('Consulta enviada');
@@ -1384,22 +1384,27 @@ async function submitConsulta() {
   }
 }
 
-async function notifyAdminNuevaConsulta(id, c, items) {
-  const lineas = [];
-  lineas.push(`🚗 Nueva consulta 0KM #${id}`);
-  lineas.push(`Vendedor: ${c.vendedor_nombre}${c.cargada_por_nombre ? ` (cargada por ${c.cargada_por_nombre})` : ''}`);
-  lineas.push(`Tipo: ${c.tipo_cliente}` + (c.tipo_cliente === 'particular' ? ` — ${c.cliente_nombre} ${c.cliente_apellido}` : ` — ${c.reventa_nombre}`));
-  lineas.push(`${c.provincia} / ${c.localidad}`);
-  items.forEach((it, i) => {
-    const dto = (it.dto_extra_pedido * 100).toFixed(2) + '%';
-    const gcia = (it.gcia_resultante * 100).toFixed(2) + '%';
-    lineas.push(`U${i+1}: ${it.modelo} → pide ${fmtMoney(it.precio_pedido)} (vs ${fmtMoney(it.oferta_vigente_min)}). Dto extra ${dto}. Gcia ${gcia}.`);
-  });
-  if (c.financia) lineas.push(`Financia ${fmtMoney(c.financia_monto)} con ${c.financia_entidad}` + (c.financia_pct ? ` (${(c.financia_pct*100).toFixed(1)}%)` : ''));
-  if (c.vs_otro_concesionario === 'si') lineas.push(`VS ${c.concesionario_nombre}: ${fmtMoney(c.concesionario_precio)}`);
-  const msg = lineas.join('\n');
-  const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(ADMIN_PHONE)}&text=${encodeURIComponent(msg)}&apikey=${encodeURIComponent(ADMIN_KEY)}`;
-  try { await fetch(url, { mode: 'no-cors' }); } catch(e) { console.error(e); }
+// Dispara la Edge Function notify-whatsapp-consulta. Fire-and-forget.
+async function notifyEvent(evento, consultaId) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/notify-whatsapp-consulta`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ consulta_id: consultaId, evento })
+    });
+    const data = await res.json().catch(() => ({}));
+    console.log(`[notify] evento=${evento} enviados=${data.enviados || 0} errores=${(data.errores || []).length}`, data);
+  } catch(e) {
+    console.error('[notify] error:', e);
+  }
+}
+
+async function notifyAdminNuevaConsulta(id) {
+  return notifyEvent('consulta_0km_nueva', id);
 }
 
 // ============ MIS CONSULTAS (vendedor / gerente) ============
@@ -1639,7 +1644,7 @@ async function aceptarMejora(consultaId) {
       method: 'PATCH',
       body: JSON.stringify({ estado: 'aceptada', admin_user_id: currentUser.id, admin_respuesta_at: new Date().toISOString() })
     });
-    notifyVendedorRespuesta(consultaId, 'aceptada', null).catch(e => console.error(e));
+    notifyVendedorRespuesta(consultaId).catch(e => console.error(e));
     closeModal();
     await cargarConsultasAdmin();
     hideLoading();
@@ -1658,40 +1663,15 @@ async function rechazarMejora(consultaId) {
       method: 'PATCH',
       body: JSON.stringify({ estado: 'rechazada', admin_user_id: currentUser.id, admin_respuesta_at: new Date().toISOString(), precio_max_admin: precio })
     });
-    notifyVendedorRespuesta(consultaId, 'rechazada', precio).catch(e => console.error(e));
+    notifyVendedorRespuesta(consultaId).catch(e => console.error(e));
     closeModal();
     await cargarConsultasAdmin();
     hideLoading();
     showToast('Respuesta enviada');
   } catch(e) { hideLoading(); console.error(e); alert('Error: ' + (e.message || e)); }
 }
-async function notifyVendedorRespuesta(consultaId, estado, precioMax) {
-  const c = adminConsultas.find(x => x.id === consultaId);
-  if (!c) return;
-  let msg = `Consulta 0KM #${consultaId}: ${estado.toUpperCase()}.`;
-  if (estado === 'rechazada' && precioMax) msg += ` Mejor precio máx ${fmtMoney(precioMax)}.`;
-  try {
-    // Tomamos vendedor + todos los usuarios con rol gerente
-    const allUsers = await sbFetch(`tasador_usuarios?activo=eq.true&select=id,usuario,nombre,telefono_wa,callmebot_key,roles,rol`);
-    const destinatarios = new Map(); // id -> {phone, key, label}
-    // 1. Vendedor original
-    const v = (allUsers || []).find(u => u.id === c.vendedor_id);
-    if (v && v.telefono_wa && v.callmebot_key) {
-      destinatarios.set(v.id, { phone: v.telefono_wa, key: v.callmebot_key, label: 'vendedor' });
-    }
-    // 2. Gerentes (todos los activos)
-    (allUsers || []).forEach(u => {
-      const r = Array.isArray(u.roles) ? u.roles : (u.rol ? [u.rol] : []);
-      if (r.includes('gerente') && u.telefono_wa && u.callmebot_key) {
-        destinatarios.set(u.id, { phone: u.telefono_wa, key: u.callmebot_key, label: 'gerente' });
-      }
-    });
-    // Disparar a todos
-    for (const d of destinatarios.values()) {
-      const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(d.phone)}&text=${encodeURIComponent(msg)}&apikey=${encodeURIComponent(d.key)}`;
-      try { await fetch(url, { mode: 'no-cors' }); } catch(e) { console.error(e); }
-    }
-  } catch(e) { console.error(e); }
+async function notifyVendedorRespuesta(consultaId) {
+  return notifyEvent('consulta_0km_respondida', consultaId);
 }
 
 // ============ INIT ============
