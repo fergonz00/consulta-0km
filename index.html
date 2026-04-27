@@ -118,79 +118,93 @@ input, select, textarea { font-family: var(--font); }
 .consulta-card .resumen-units span { background:var(--vw-grey-1); padding:4px 10px;
   border-radius:6px; font-size:12px; }
 
-/* ============ FORM (nueva consulta) ============ */
-.form-section { background:#fff; border-radius:var(--radius); padding:22px 22px;
-  box-shadow:var(--shadow); margin-bottom:16px; }
-.form-section > h2 { color:var(--vw-blue); font-size:17px; margin-bottom:16px;
-  display:flex; align-items:center; gap:10px; }
-.form-section > h2 .num { background:var(--vw-blue); color:#fff; width:24px; height:24px;
-  border-radius:50%; display:flex; align-items:center; justify-content:center;
-  font-size:13px; font-weight:700; }
+/* ============ WIZARD ============ */
+.wizard { max-width:600px; margin:0 auto; padding:16px; min-height:calc(100vh - 50px);
+  display:flex; flex-direction:column; }
+.wizard-header { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+.wizard-header .back { background:transparent; color:var(--vw-grey-4); padding:8px 12px;
+  font-size:14px; font-weight:500; }
+.wizard-header .back:hover { color:var(--vw-blue); }
+.wizard-header .progress-text { font-size:12px; color:var(--vw-grey-3); margin-left:auto; }
+.wizard-progress { display:flex; gap:3px; margin-bottom:18px; }
+.wizard-progress .dot { flex:1; height:4px; background:var(--vw-grey-2); border-radius:2px;
+  transition:background .3s; }
+.wizard-progress .dot.done { background:var(--vw-blue); }
+.wizard-progress .dot.current { background:var(--vw-blue-light); }
 
-.field { margin-bottom:14px; }
-.field label { display:block; font-size:13px; font-weight:500;
-  color:var(--vw-grey-4); margin-bottom:6px; }
-.field .hint { font-size:11px; color:var(--vw-grey-3); margin-top:4px; }
-.field input[type=text], .field input[type=number], .field input[type=tel],
-.field select, .field textarea {
-  width:100%; padding:11px 14px; border:2px solid var(--vw-grey-2); border-radius:8px;
-  font-size:14px; outline:none; background:#fff; transition:border-color .2s;
+.wizard-body { background:#fff; border-radius:var(--radius); padding:28px 24px;
+  box-shadow:var(--shadow); flex:1; animation:fadeIn .25s ease; }
+@keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+.wizard-body h2 { color:var(--vw-blue); font-size:20px; font-weight:700; margin-bottom:6px; line-height:1.3; }
+.wizard-body .step-hint { font-size:13px; color:var(--vw-grey-3); margin-bottom:22px; }
+
+.wizard-footer { display:flex; gap:10px; margin-top:18px; }
+.wizard-footer button { flex:1; padding:14px; border-radius:10px;
+  font-size:15px; font-weight:600; transition:all .2s; }
+.wizard-footer .btn-back { background:var(--vw-grey-2); color:var(--vw-grey-4); }
+.wizard-footer .btn-next { background:var(--vw-blue); color:#fff; }
+.wizard-footer .btn-next:disabled { opacity:.4; cursor:not-allowed; }
+.wizard-footer .btn-submit { background:var(--green); color:#fff; }
+
+/* Inputs / selects en wizard body */
+.wizard-body label.field-label { display:block; font-size:14px; font-weight:500;
+  color:var(--vw-grey-4); margin-bottom:8px; }
+.wizard-body .field-hint { font-size:12px; color:var(--vw-grey-3); margin-top:6px; }
+.wizard-body input[type=text], .wizard-body input[type=number], .wizard-body input[type=tel],
+.wizard-body select, .wizard-body textarea {
+  width:100%; padding:14px 16px; border:2px solid var(--vw-grey-2); border-radius:10px;
+  font-size:16px; outline:none; background:#fff; transition:border-color .2s;
   -webkit-appearance:none; }
-.field select { background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23999' stroke-width='2' fill='none'/%3E%3C/svg%3E") no-repeat right 14px center; padding-right:36px; }
-.field input:focus, .field select:focus, .field textarea:focus { border-color:var(--vw-blue); }
-.field-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-@media (max-width:480px) { .field-row { grid-template-columns:1fr; } }
+.wizard-body select { background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23999' stroke-width='2' fill='none'/%3E%3C/svg%3E") no-repeat right 14px center; padding-right:40px; }
+.wizard-body input:focus, .wizard-body select:focus, .wizard-body textarea:focus { border-color:var(--vw-blue); }
+.wizard-body .field-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+@media (max-width:480px) { .wizard-body .field-row { grid-template-columns:1fr; } }
 
-.radio-group, .checkbox-group { display:flex; flex-direction:column; gap:8px; }
-.radio-group label, .checkbox-group label { display:flex; align-items:center; gap:10px;
-  padding:10px 14px; border:2px solid var(--vw-grey-2); border-radius:8px;
-  cursor:pointer; transition:border-color .2s, background .2s; font-weight:500;
-  font-size:14px; color:var(--vw-grey-4); }
-.radio-group label:hover, .checkbox-group label:hover { border-color:var(--vw-blue-light); }
-.radio-group input, .checkbox-group input { width:18px; height:18px; cursor:pointer; }
-.radio-group label:has(input:checked), .checkbox-group label:has(input:checked) {
-  border-color:var(--vw-blue); background:#F0F4FA; color:var(--vw-blue); }
+/* Opciones (radio cards) */
+.opt-list { display:flex; flex-direction:column; gap:10px; }
+.opt-list .opt { display:flex; align-items:center; gap:12px; padding:16px 18px;
+  border:2px solid var(--vw-grey-2); border-radius:10px; cursor:pointer;
+  transition:all .15s; font-size:15px; font-weight:500; color:var(--vw-grey-4); }
+.opt-list .opt:hover { border-color:var(--vw-blue-light); background:#F8FAFD; }
+.opt-list .opt.selected { border-color:var(--vw-blue); background:#F0F4FA; color:var(--vw-blue); }
+.opt-list .opt .opt-icon { font-size:18px; opacity:.7; }
 
-.radio-row { display:flex; gap:8px; flex-wrap:wrap; }
-.radio-row label { flex:1; min-width:120px; justify-content:center; }
+/* Lista de modelos / chasis */
+.scroll-list { max-height:400px; overflow-y:auto; border:1px solid var(--vw-grey-2);
+  border-radius:10px; background:#fff; }
+.scroll-list .item { padding:14px 16px; border-bottom:1px solid var(--vw-grey-1);
+  cursor:pointer; transition:background .15s; display:flex; align-items:center; gap:10px; }
+.scroll-list .item:last-child { border-bottom:none; }
+.scroll-list .item:hover { background:var(--vw-grey-1); }
+.scroll-list .item.selected { background:#F0F4FA; }
+.scroll-list .item .info { flex:1; }
+.scroll-list .item .title { font-size:14px; font-weight:600; color:var(--vw-blue); }
+.scroll-list .item .sub { font-size:12px; color:var(--vw-grey-3); margin-top:2px; }
+.scroll-list .item .right { font-size:13px; font-weight:600; text-align:right; }
+.scroll-list .item .right .badge { display:inline-block; font-size:10px; padding:2px 6px;
+  border-radius:4px; background:var(--orange-light); color:var(--orange); margin-left:4px; }
+.scroll-list .item input[type=checkbox] { width:18px; height:18px; }
 
-/* ============ UNIDAD CARD ============ */
-.unidad-card { background:var(--vw-grey-1); border-radius:10px; padding:18px;
-  margin-bottom:12px; border:1px solid var(--vw-grey-2); }
-.unidad-card .uc-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
-.unidad-card .uc-header h4 { color:var(--vw-blue); font-size:14px; }
-.unidad-card .uc-header .remove { background:none; color:var(--red); font-size:13px; font-weight:600; padding:4px 8px; }
-.unidad-card .chasis-grid { display:flex; flex-direction:column; gap:6px; max-height:200px; overflow-y:auto;
-  border:1px solid var(--vw-grey-2); border-radius:8px; padding:6px; background:#fff; }
-.unidad-card .chasis-row { display:flex; align-items:center; gap:10px; padding:8px;
-  border-radius:6px; cursor:pointer; }
-.unidad-card .chasis-row:hover { background:var(--vw-grey-1); }
-.unidad-card .chasis-row.selected { background:#F0F4FA; }
-.unidad-card .chasis-row input { width:16px; height:16px; }
-.unidad-card .chasis-row .info { flex:1; font-size:13px; }
-.unidad-card .chasis-row .color { font-weight:600; color:var(--vw-blue); }
-.unidad-card .chasis-row .serie { font-family:var(--mono); font-size:11px; color:var(--vw-grey-3); }
-.unidad-card .chasis-row .precio { text-align:right; font-weight:600; }
-.unidad-card .chasis-row .precio .badge { display:inline-block; font-size:10px; padding:2px 6px;
-  border-radius:4px; background:var(--orange-light); color:var(--orange); margin-left:6px; }
+/* Análisis card */
+.analisis-card { background:#F0F4FA; border-radius:10px; padding:18px;
+  margin-top:18px; border:1px solid var(--vw-blue-light); }
+.analisis-card h4 { font-size:12px; color:var(--vw-blue); text-transform:uppercase;
+  letter-spacing:1.5px; margin-bottom:10px; font-weight:700; }
+.analisis-card .row { display:flex; justify-content:space-between; padding:8px 0;
+  font-size:14px; border-bottom:1px dashed var(--vw-blue-light); }
+.analisis-card .row:last-child { border-bottom:none; }
+.analisis-card .row .label { color:var(--vw-grey-4); }
+.analisis-card .row .val { font-family:var(--mono); font-weight:700; }
+.analisis-card .row .val.pos { color:var(--green); }
+.analisis-card .row .val.neg { color:var(--red); }
 
-.unidad-card .analisis { background:#fff; border-radius:8px; padding:14px;
-  margin-top:14px; border:1px solid var(--vw-grey-2); }
-.unidad-card .analisis h5 { font-size:12px; color:var(--vw-grey-3); text-transform:uppercase;
-  letter-spacing:1px; margin-bottom:8px; }
-.unidad-card .analisis .row { display:flex; justify-content:space-between; padding:6px 0;
-  font-size:13px; border-bottom:1px dashed var(--vw-grey-2); }
-.unidad-card .analisis .row:last-child { border-bottom:none; }
-.unidad-card .analisis .row .label { color:var(--vw-grey-4); }
-.unidad-card .analisis .row .val { font-family:var(--mono); font-weight:600; }
-.unidad-card .analisis .row .val.pos { color:var(--green); }
-.unidad-card .analisis .row .val.neg { color:var(--red); }
-
-.btn-add-unidad { width:100%; padding:14px; border:2px dashed var(--vw-grey-3);
-  background:transparent; color:var(--vw-grey-4); border-radius:10px;
-  font-size:14px; font-weight:600; transition:all .2s; }
-.btn-add-unidad:hover { border-color:var(--vw-blue); color:var(--vw-blue); }
-.btn-add-unidad:disabled { opacity:.4; cursor:not-allowed; }
+/* Resumen unidades */
+.resumen-card { background:var(--vw-grey-1); border-radius:10px; padding:14px 16px;
+  margin-bottom:10px; border:1px solid var(--vw-grey-2); }
+.resumen-card h5 { font-size:13px; color:var(--vw-blue); font-weight:700; margin-bottom:6px; }
+.resumen-card p { font-size:12px; color:var(--vw-grey-4); margin:2px 0; }
+.resumen-card .precio-row { display:flex; justify-content:space-between; margin-top:6px;
+  font-size:13px; }
 
 /* ============ MODAL ============ */
 .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6);
@@ -214,27 +228,21 @@ input, select, textarea { font-family: var(--font); }
 .detalle-section .kv .k { color:var(--vw-grey-4); }
 .detalle-section .kv .v { color:var(--vw-black); font-weight:500; }
 
-/* ============ TOAST ============ */
+/* ============ TOAST + LOADING + EMPTY ============ */
 .toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
   background:var(--vw-black); color:#fff; padding:12px 22px; border-radius:8px;
   font-size:14px; box-shadow:var(--shadow-lg); z-index:2000; opacity:0;
   transition:opacity .3s, transform .3s; pointer-events:none; }
 .toast.show { opacity:1; transform:translate(-50%, -8px); }
-
-/* ============ LOADING ============ */
 .loading { position:fixed; inset:0; background:rgba(255,255,255,0.85);
   display:flex; align-items:center; justify-content:center; flex-direction:column;
   gap:14px; z-index:5000; }
 .spinner { width:40px; height:40px; border:4px solid var(--vw-grey-2);
   border-top-color:var(--vw-blue); border-radius:50%; animation:spin 0.8s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
-
-/* ============ EMPTY ============ */
 .empty { text-align:center; padding:40px 20px; color:var(--vw-grey-3); }
 .empty .icon { font-size:42px; margin-bottom:10px; opacity:.6; }
 .empty p { font-size:14px; }
-
-/* ============ MISC ============ */
 .muted { color:var(--vw-grey-3); font-size:12px; }
 .tag-badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; }
 .tag-badge.lim { background:var(--orange-light); color:var(--orange); }
@@ -286,161 +294,16 @@ input, select, textarea { font-family: var(--font); }
       </div>
     </div>
 
-    <!-- Form nueva consulta -->
-    <div id="vendedorForm" class="hidden">
-      <div class="container">
-        <div style="margin-bottom:16px">
-          <button class="btn-secondary" onclick="cancelarNuevaConsulta()">← Volver</button>
+    <!-- Wizard nueva consulta -->
+    <div id="vendedorWizard" class="hidden">
+      <div class="wizard">
+        <div class="wizard-header">
+          <button class="back" onclick="wizardBack()">← Atrás</button>
+          <span class="progress-text" id="wizardProgressText"></span>
         </div>
-
-        <div class="form-section">
-          <h2><span class="num">1</span>Unidades a consultar</h2>
-          <p class="muted" style="margin-bottom:14px">Hasta 3 unidades por consulta. Cada unidad puede tener hasta 3 chasis (mismo modelo y versión, distintos colores).</p>
-          <div id="unidadesContainer"></div>
-          <button class="btn-add-unidad" id="btnAddUnidad" onclick="addUnidad()">+ Agregar otra unidad</button>
-        </div>
-
-        <div class="form-section">
-          <h2><span class="num">2</span>Datos del cliente</h2>
-
-          <div class="field">
-            <label>Tipo de cliente *</label>
-            <div class="radio-row">
-              <label><input type="radio" name="tipoCliente" value="particular" onchange="onTipoClienteChange()"> Particular</label>
-              <label><input type="radio" name="tipoCliente" value="reventa" onchange="onTipoClienteChange()"> Reventa</label>
-            </div>
-          </div>
-
-          <!-- Particular -->
-          <div id="formParticular" class="hidden">
-            <div class="field-row">
-              <div class="field">
-                <label>Nombre *</label>
-                <input id="cliNombre" type="text">
-              </div>
-              <div class="field">
-                <label>Apellido *</label>
-                <input id="cliApellido" type="text">
-              </div>
-            </div>
-          </div>
-
-          <!-- Reventa -->
-          <div id="formReventa" class="hidden">
-            <div class="field">
-              <label>Nombre del reventa *</label>
-              <input id="reventaNombre" type="text">
-            </div>
-          </div>
-
-          <!-- Provincia + Localidad (común) -->
-          <div id="formUbicacion" class="hidden">
-            <div class="field-row">
-              <div class="field">
-                <label>Provincia *</label>
-                <select id="provincia">
-                  <option value="">— Elegir —</option>
-                </select>
-              </div>
-              <div class="field">
-                <label>Localidad *</label>
-                <input id="localidad" type="text">
-              </div>
-            </div>
-          </div>
-
-          <!-- Fuente del dato (solo particular) -->
-          <div id="formFuenteDato" class="hidden">
-            <div class="field">
-              <label>¿De dónde vino el dato? *</label>
-              <div class="radio-group" id="fuenteDatoOpts">
-                <label><input type="radio" name="fuenteDato" value="referido" onchange="onFuenteDatoChange()"> Referido</label>
-                <label><input type="radio" name="fuenteDato" value="salon" onchange="onFuenteDatoChange()"> Salón</label>
-                <label><input type="radio" name="fuenteDato" value="redes" onchange="onFuenteDatoChange()"> Instagram o redes</label>
-                <label><input type="radio" name="fuenteDato" value="tu0km" onchange="onFuenteDatoChange()"> Tu0KM</label>
-                <label><input type="radio" name="fuenteDato" value="mercadolibre" onchange="onFuenteDatoChange()"> Mercadolibre</label>
-                <label><input type="radio" name="fuenteDato" value="otro" onchange="onFuenteDatoChange()"> Otro</label>
-              </div>
-            </div>
-            <div class="field hidden" id="fuenteOtroWrap">
-              <label>¿Cuál? *</label>
-              <input id="fuenteOtro" type="text">
-            </div>
-          </div>
-
-          <!-- Tiene usado (solo particular) -->
-          <div id="formUsado" class="hidden">
-            <div class="field">
-              <label>¿Tiene usado para entregar y tasar? *</label>
-              <div class="radio-row">
-                <label><input type="radio" name="tieneUsado" value="si"> Sí</label>
-                <label><input type="radio" name="tieneUsado" value="no"> No</label>
-              </div>
-            </div>
-          </div>
-
-          <!-- Financiación -->
-          <div id="formFinancia" class="hidden">
-            <div class="field">
-              <label id="financiaLabel">¿Financia? *</label>
-              <div class="radio-row">
-                <label><input type="radio" name="financia" value="si" onchange="onFinanciaChange()"> Sí</label>
-                <label><input type="radio" name="financia" value="no" onchange="onFinanciaChange()"> No</label>
-              </div>
-            </div>
-
-            <div id="financiaDetalle" class="hidden">
-              <!-- Entidad (solo particular) -->
-              <div class="field hidden" id="financiaEntidadWrap">
-                <label>¿Con qué entidad? *</label>
-                <div class="radio-group">
-                  <label><input type="radio" name="finEntidad" value="vwfs" onchange="onFinEntidadChange()"> VWFS</label>
-                  <label><input type="radio" name="finEntidad" value="tg" onchange="onFinEntidadChange()"> TG</label>
-                  <label><input type="radio" name="finEntidad" value="otros" onchange="onFinEntidadChange()"> Otros</label>
-                </div>
-              </div>
-              <div class="field hidden" id="finEntidadOtroWrap">
-                <label>¿Cuál entidad? *</label>
-                <input id="finEntidadOtro" type="text">
-              </div>
-
-              <div class="field">
-                <label>Monto a financiar *</label>
-                <input id="finMonto" type="text" inputmode="numeric" oninput="onFinMontoInput()" placeholder="$0">
-                <div class="hint" id="finPctHint"></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- VS otro presupuesto -->
-          <div id="formVsOtro" class="hidden">
-            <div class="field">
-              <label>¿Lo pide contra otro presupuesto de otro concesionario? *</label>
-              <div class="radio-group">
-                <label><input type="radio" name="vsOtro" value="si" onchange="onVsOtroChange()"> Sí</label>
-                <label><input type="radio" name="vsOtro" value="no" onchange="onVsOtroChange()"> No</label>
-                <label><input type="radio" name="vsOtro" value="no_quiere_pasar" onchange="onVsOtroChange()"> No quiere pasar el concesionario</label>
-              </div>
-            </div>
-            <div id="vsOtroDetalle" class="hidden">
-              <div class="field-row">
-                <div class="field">
-                  <label>Concesionario *</label>
-                  <input id="conceNombre" type="text">
-                </div>
-                <div class="field">
-                  <label>Precio (con FyF) *</label>
-                  <input id="concePrecio" type="text" inputmode="numeric" placeholder="$0" oninput="formatPrecioInput(this)">
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div style="display:flex; gap:10px; margin-bottom:30px">
-          <button class="btn-secondary" style="flex:1" onclick="cancelarNuevaConsulta()">Cancelar</button>
-          <button class="btn-success" style="flex:2" onclick="submitConsulta()">Enviar consulta</button>
-        </div>
+        <div class="wizard-progress" id="wizardProgressBar"></div>
+        <div class="wizard-body" id="wizardBody"></div>
+        <div class="wizard-footer" id="wizardFooter"></div>
       </div>
     </div>
   </div>
@@ -482,15 +345,19 @@ const PROVINCIAS_AR = ['CABA','Buenos Aires','Catamarca','Chaco','Chubut','Córd
 
 // ============ STATE ============
 let currentUser = null;
-let currentMode = null; // 'admin' | 'vendedor'
-let stockData = [];     // chasis libres con su oferta vigente
-let stockLimMap = {};   // serie -> {dto_nuevo, gcia_resultante, oferta_final_fyf}
+let currentMode = null;
+let stockData = [];
+let stockLimMap = {};
 let myConsultas = [];
 let adminConsultas = [];
-let adminTab = 'pendiente'; // 'pendiente' | 'resueltas'
+let adminTab = 'pendiente';
 
-// Estado del form de nueva consulta
-let unidades = []; // [{modelo, version, chasisSeleccionados:[serie,...], precioPedido}]
+// Form de nueva consulta (state global)
+let formData = null;
+
+// Wizard state
+let wizardStack = []; // historial de stepIds (para "atrás")
+let currentStep = null;
 
 // ============ HELPERS ============
 async function sbFetch(path, options = {}) {
@@ -519,9 +386,11 @@ function parseCSVLine(line) {
   return out;
 }
 function parseCSV(text) {
+  // Quitar BOM si existe
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
   const lines = text.replace(/\r/g, '').split('\n').filter(l => l.length > 0);
   if (lines.length < 2) return [];
-  const headers = parseCSVLine(lines[0]).map(h => h.trim().replace(/"/g, ''));
+  const headers = parseCSVLine(lines[0]).map(h => h.trim().replace(/^"|"$/g, ''));
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const vals = parseCSVLine(lines[i]);
@@ -532,14 +401,12 @@ function parseCSV(text) {
   return rows;
 }
 
-// "$52,933,650" -> 52933650 ; "$0" -> 0 ; "" -> NaN
 function parseMoney(s) {
   if (s == null) return NaN;
   const clean = String(s).replace(/[^\d.\-]/g, '');
   if (!clean) return NaN;
   return parseFloat(clean);
 }
-// "15.00%" -> 0.15 ; "1.67%" -> 0.0167
 function parsePct(s) {
   if (s == null) return NaN;
   const clean = String(s).replace(/[^\d.\-]/g, '');
@@ -562,7 +429,6 @@ function fmtDate(s) {
   const d = new Date(s);
   return d.toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
-
 function showLoading(msg) { document.getElementById('loadingMsg').textContent = msg || ''; document.getElementById('loading').classList.remove('hidden'); }
 function hideLoading() { document.getElementById('loading').classList.add('hidden'); }
 function showToast(msg, dur = 2500) {
@@ -571,23 +437,13 @@ function showToast(msg, dur = 2500) {
   setTimeout(() => t.classList.remove('show'), dur);
 }
 
-function formatPrecioInput(el) {
-  const raw = el.value.replace(/[^\d]/g, '');
-  if (!raw) { el.value = ''; return; }
-  el.value = '$' + parseInt(raw, 10).toLocaleString('es-AR');
-}
-
 // ============ SESSION ============
 function guardarSesion() {
   if (!currentUser) return;
   try { localStorage.setItem('consulta0km_user', JSON.stringify({ id: currentUser.id, mode: currentMode })); } catch(e) {}
 }
 function cargarSesion() {
-  try {
-    const raw = localStorage.getItem('consulta0km_user');
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch(e) { return null; }
+  try { const raw = localStorage.getItem('consulta0km_user'); return raw ? JSON.parse(raw) : null; } catch(e) { return null; }
 }
 function limpiarSesion() { try { localStorage.removeItem('consulta0km_user'); } catch(e) {} }
 
@@ -609,7 +465,7 @@ async function login() {
       ? currentUser.roles
       : (currentUser.rol ? [currentUser.rol] : ['vendedor']);
     document.getElementById('loginScreen').classList.add('hidden');
-    await cargarDatos();
+    await cargarStock();
     hideLoading();
     elegirModo();
   } catch(e) {
@@ -618,11 +474,9 @@ async function login() {
     document.getElementById('loginError').style.display = 'block';
   }
 }
-
 function logout() {
   limpiarSesion();
-  currentUser = null;
-  currentMode = null;
+  currentUser = null; currentMode = null;
   document.getElementById('appScreen').classList.add('hidden');
   document.getElementById('modeScreen').classList.add('hidden');
   document.getElementById('loginScreen').classList.remove('hidden');
@@ -630,15 +484,12 @@ function logout() {
   document.getElementById('loginPass').value = '';
   document.getElementById('loginError').style.display = 'none';
 }
-
 function elegirModo() {
   const roles = currentUser.rolesArr || ['vendedor'];
   const tieneAdmin = roles.includes('admin');
-  // En este módulo solo aplican 'admin' y 'vendedor'. Cualquier otro rol cae a 'vendedor'.
   if (tieneAdmin && roles.length > 1) {
     document.getElementById('modeUser').textContent = currentUser.nombre || currentUser.usuario;
-    const cont = document.getElementById('modeButtons');
-    cont.innerHTML = `
+    document.getElementById('modeButtons').innerHTML = `
       <button onclick="entrarComo('vendedor')">Vendedor</button>
       <button onclick="entrarComo('admin')">Administrador</button>
     `;
@@ -661,13 +512,13 @@ function entrarComo(modo) {
     document.getElementById('adminView').classList.add('hidden');
     document.getElementById('vendedorView').classList.remove('hidden');
     document.getElementById('vendedorList').classList.remove('hidden');
-    document.getElementById('vendedorForm').classList.add('hidden');
+    document.getElementById('vendedorWizard').classList.add('hidden');
     cargarMisConsultas();
   }
 }
 
-// ============ CARGAR DATOS DE STOCK ============
-async function cargarDatos() {
+// ============ CARGAR STOCK ============
+async function cargarStock() {
   showLoading('Cargando stock...');
   try {
     const [resStock, resLim] = await Promise.all([
@@ -695,20 +546,20 @@ async function cargarDatos() {
       const oferta_baratito = parseMoney(r.oferta_baratito);
       const gcia_actual = parsePct(r.gcia_actual);
       const precio_lista = parseMoney(r.precio_lista);
-      // override stock_limitado
       const lim = stockLimMap[serie];
       const oferta_vigente = lim && !isNaN(lim.oferta_final_fyf) ? lim.oferta_final_fyf : oferta_baratito;
       const gcia_vigente = lim && !isNaN(lim.gcia_resultante) ? lim.gcia_resultante : gcia_actual;
       const fuente_oferta = lim ? 'stock_limitado' : 'baratito';
-      return {
-        serie, modelo: (r.modelo || '').trim(), color: (r.color || '').trim(),
-        libre, oferta_baratito, gcia_actual, precio_lista,
-        oferta_vigente, gcia_vigente, fuente_oferta
-      };
+      return { serie, modelo: (r.modelo || '').trim(), color: (r.color || '').trim(),
+        libre, oferta_baratito, gcia_actual, precio_lista, oferta_vigente, gcia_vigente, fuente_oferta };
     }).filter(r => r.serie && r.modelo);
+
+    const libres = stockData.filter(r => r.libre).length;
+    console.log(`[Stock] ${stockData.length} registros (${libres} libres). LimMap: ${Object.keys(stockLimMap).length} entradas.`);
+    if (libres === 0) showToast('Atención: no hay unidades disponibles en el stock.');
   } catch(e) {
     console.error('Error cargando stock:', e);
-    showToast('Error cargando stock');
+    showToast('Error al cargar stock');
   } finally {
     hideLoading();
   }
@@ -719,159 +570,664 @@ function getModelosLibres() {
   stockData.forEach(r => { if (r.libre && r.modelo) set.add(r.modelo); });
   return Array.from(set).sort();
 }
-function getVersionesLibres(modelo) {
-  // En este sheet "modelo" ya incluye la versión completa (ej: "VW Amarok Comfortline TDI MT 4x2 G2 MY26").
-  // El dato no separa modelo/versión; usamos el campo modelo entero como llave.
-  // Devolvemos placeholder para forzar el step.
-  return [modelo];
-}
-function getChasisLibres(modelo) {
+function getChasisLibresPorModelo(modelo) {
   return stockData.filter(r => r.libre && r.modelo === modelo);
 }
 
 // ============ NUEVA CONSULTA ============
 function showNuevaConsulta() {
-  unidades = [];
+  // Reset state
+  formData = {
+    unidades: [{ modelo: null, chasisSeleccionados: [], precioPedido: null }],
+    tipoCliente: null,
+    cliNombre: '', cliApellido: '',
+    reventaNombre: '',
+    provincia: '', localidad: '',
+    fuenteDato: null, fuenteDatoOtro: '',
+    tieneUsado: null,
+    financia: null,
+    finEntidad: null, finEntidadOtro: '',
+    finMonto: null,
+    vsOtro: null, conceNombre: '', concePrecio: null
+  };
+  wizardStack = [];
+  currentStep = null;
   document.getElementById('vendedorList').classList.add('hidden');
-  document.getElementById('vendedorForm').classList.remove('hidden');
-  // Reset form
-  document.querySelectorAll('input[name=tipoCliente]').forEach(r => r.checked = false);
-  ['cliNombre','cliApellido','reventaNombre','localidad','fuenteOtro','finEntidadOtro','finMonto','conceNombre','concePrecio'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  document.querySelectorAll('input[type=radio]').forEach(r => r.checked = false);
-  document.getElementById('formParticular').classList.add('hidden');
-  document.getElementById('formReventa').classList.add('hidden');
-  document.getElementById('formUbicacion').classList.add('hidden');
-  document.getElementById('formFuenteDato').classList.add('hidden');
-  document.getElementById('formUsado').classList.add('hidden');
-  document.getElementById('formFinancia').classList.add('hidden');
-  document.getElementById('formVsOtro').classList.add('hidden');
-  document.getElementById('financiaDetalle').classList.add('hidden');
-  document.getElementById('financiaEntidadWrap').classList.add('hidden');
-  document.getElementById('finEntidadOtroWrap').classList.add('hidden');
-  document.getElementById('vsOtroDetalle').classList.add('hidden');
-  document.getElementById('fuenteOtroWrap').classList.add('hidden');
-  document.getElementById('finPctHint').textContent = '';
-  // Provincia options
-  const sel = document.getElementById('provincia');
-  sel.innerHTML = '<option value="">— Elegir —</option>' + PROVINCIAS_AR.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
-  // Una unidad inicial
-  addUnidad();
+  document.getElementById('vendedorWizard').classList.remove('hidden');
+  goToStep('u0-modelo');
 }
 
 function cancelarNuevaConsulta() {
   if (!confirm('¿Cancelar la consulta? Se perderán los datos cargados.')) return;
-  document.getElementById('vendedorForm').classList.add('hidden');
+  document.getElementById('vendedorWizard').classList.add('hidden');
   document.getElementById('vendedorList').classList.remove('hidden');
 }
 
-function addUnidad() {
-  if (unidades.length >= 3) return;
-  unidades.push({ modelo: '', version: '', chasisSeleccionados: [], precioPedido: null });
-  renderUnidades();
+// ============ WIZARD ENGINE ============
+// Cada step se identifica por un string. La función getNextStep decide cuál sigue
+// según el estado actual de formData. Auto-avance al elegir radios; campos de
+// texto/selects requieren botón "Siguiente".
+
+function goToStep(stepId) {
+  if (currentStep && currentStep !== stepId) wizardStack.push(currentStep);
+  currentStep = stepId;
+  renderStep();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
-function removeUnidad(idx) {
-  unidades.splice(idx, 1);
-  if (unidades.length === 0) addUnidad();
-  else renderUnidades();
+function wizardBack() {
+  if (wizardStack.length === 0) {
+    cancelarNuevaConsulta();
+    return;
+  }
+  currentStep = wizardStack.pop();
+  renderStep();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-function renderUnidades() {
-  const cont = document.getElementById('unidadesContainer');
-  cont.innerHTML = unidades.map((u, idx) => renderUnidadCard(u, idx)).join('');
-  document.getElementById('btnAddUnidad').disabled = unidades.length >= 3;
-  // Después de pintar, recalcular análisis de cada una
-  unidades.forEach((_, idx) => recalcAnalisis(idx));
-}
-
-function renderUnidadCard(u, idx) {
-  const modelos = getModelosLibres();
-  const modeloSelHtml = `<option value="">— Modelo —</option>` + modelos.map(m => `<option value="${escapeHtml(m)}" ${u.modelo === m ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('');
-
-  let chasisHtml = '';
-  if (u.modelo) {
-    const chasis = getChasisLibres(u.modelo);
-    if (chasis.length === 0) {
-      chasisHtml = `<div class="muted" style="padding:10px">No hay chasis libres para este modelo.</div>`;
-    } else {
-      chasisHtml = chasis.map(c => {
-        const checked = u.chasisSeleccionados.includes(c.serie);
-        const disabled = !checked && u.chasisSeleccionados.length >= 3;
-        return `
-          <label class="chasis-row ${checked ? 'selected' : ''}" style="${disabled ? 'opacity:.4; cursor:not-allowed' : ''}">
-            <input type="checkbox" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="toggleChasis(${idx}, '${escapeHtml(c.serie)}')">
-            <div class="info">
-              <div class="color">${escapeHtml(c.color || '—')}</div>
-              <div class="serie">${escapeHtml(c.serie)}</div>
-            </div>
-            <div class="precio">
-              ${fmtMoney(c.oferta_vigente)}
-              ${c.fuente_oferta === 'stock_limitado' ? '<span class="badge">LIM</span>' : ''}
-            </div>
-          </label>
-        `;
-      }).join('');
+function getNextStep(step) {
+  // Unidades (3 grupos: u0, u1, u2)
+  for (let i = 0; i < 3; i++) {
+    if (step === `u${i}-modelo`) return `u${i}-colores`;
+    if (step === `u${i}-colores`) return `u${i}-precio`;
+    if (step === `u${i}-precio`) {
+      // Si la unidad anterior tiene datos completos: ofrece agregar más
+      if (i < 2) return `add-${i+1}`;
+      return 'tipo-cliente';
+    }
+    if (step === `add-${i+1}`) {
+      // Si decidió "no", saltar a tipo-cliente
+      if (formData.unidades.length <= i+1) return 'tipo-cliente';
+      return `u${i+1}-modelo`;
     }
   }
-
-  return `
-    <div class="unidad-card">
-      <div class="uc-header">
-        <h4>Unidad ${idx + 1}</h4>
-        ${unidades.length > 1 ? `<button class="remove" onclick="removeUnidad(${idx})">Quitar</button>` : ''}
-      </div>
-
-      <div class="field">
-        <label>Modelo y versión</label>
-        <select onchange="setModelo(${idx}, this.value)">${modeloSelHtml}</select>
-      </div>
-
-      ${u.modelo ? `
-        <div class="field">
-          <label>Color(es) — hasta 3</label>
-          <div class="chasis-grid">${chasisHtml}</div>
-          <div class="hint">Seleccioná hasta 3 colores. El chasis aparece automáticamente.</div>
-        </div>
-
-        <div class="field">
-          <label>Precio pedido — con flete y formulario incluido *</label>
-          <input type="text" inputmode="numeric" placeholder="$0"
-            value="${u.precioPedido != null ? '$' + Math.round(u.precioPedido).toLocaleString('es-AR') : ''}"
-            oninput="onPrecioPedidoInput(${idx}, this)">
-        </div>
-
-        <div class="analisis" id="analisisUnidad${idx}"></div>
-      ` : ''}
-    </div>
-  `;
+  if (step === 'tipo-cliente') {
+    return formData.tipoCliente === 'reventa' ? 'reventa-nombre' : 'cliente-nombre';
+  }
+  if (step === 'cliente-nombre') return 'ubicacion';
+  if (step === 'reventa-nombre') return 'ubicacion';
+  if (step === 'ubicacion') {
+    return formData.tipoCliente === 'particular' ? 'fuente-dato' : 'financia';
+  }
+  if (step === 'fuente-dato') {
+    return formData.fuenteDato === 'otro' ? 'fuente-otro' : 'tiene-usado';
+  }
+  if (step === 'fuente-otro') return 'tiene-usado';
+  if (step === 'tiene-usado') return 'financia';
+  if (step === 'financia') {
+    if (formData.financia !== 'si') return 'vs-otro';
+    if (formData.tipoCliente === 'particular') return 'fin-entidad';
+    return 'fin-monto';
+  }
+  if (step === 'fin-entidad') {
+    return formData.finEntidad === 'otros' ? 'fin-entidad-otro' : 'fin-monto';
+  }
+  if (step === 'fin-entidad-otro') return 'fin-monto';
+  if (step === 'fin-monto') return 'vs-otro';
+  if (step === 'vs-otro') {
+    return formData.vsOtro === 'si' ? 'concesionario' : 'resumen';
+  }
+  if (step === 'concesionario') return 'resumen';
+  return 'resumen';
 }
 
-function setModelo(idx, modelo) {
-  unidades[idx].modelo = modelo;
-  unidades[idx].chasisSeleccionados = [];
-  renderUnidades();
+function totalSteps() {
+  // Aprox: 3 por unidad + 1 add por unidad agregable + datos cliente
+  // Solo para barra de progreso
+  let n = 0;
+  formData.unidades.forEach(() => n += 3);
+  if (formData.unidades.length < 3) n += 1; // add
+  n += 5; // tipo, nombre, ubicación, financia, vs-otro
+  if (formData.tipoCliente === 'particular') n += 2; // fuente, usado
+  if (formData.financia === 'si') {
+    n += 1; // monto
+    if (formData.tipoCliente === 'particular') n += 1; // entidad
+  }
+  if (formData.vsOtro === 'si') n += 1;
+  n += 1; // resumen
+  return n;
+}
+function currentStepIdx() {
+  return wizardStack.length;
+}
+
+function renderStep() {
+  const body = document.getElementById('wizardBody');
+  const footer = document.getElementById('wizardFooter');
+  const progressText = document.getElementById('wizardProgressText');
+  const progressBar = document.getElementById('wizardProgressBar');
+
+  // Progreso (aproximado)
+  const total = totalSteps();
+  const idx = Math.min(currentStepIdx() + 1, total);
+  progressText.textContent = `Paso ${idx} de ~${total}`;
+  let dots = '';
+  for (let i = 0; i < total; i++) {
+    let cls = 'dot';
+    if (i < idx - 1) cls += ' done';
+    if (i === idx - 1) cls += ' current';
+    dots += `<div class="${cls}"></div>`;
+  }
+  progressBar.innerHTML = dots;
+
+  // Renderiza según step
+  const renderer = STEP_RENDERERS[currentStep];
+  if (!renderer) {
+    body.innerHTML = `<h2>Paso desconocido: ${currentStep}</h2>`;
+    footer.innerHTML = '';
+    return;
+  }
+  const out = renderer();
+  body.innerHTML = out.body;
+  footer.innerHTML = out.footer || '';
+  // Llamar onMount si existe
+  if (typeof out.onMount === 'function') {
+    setTimeout(() => out.onMount(), 0);
+  }
+}
+
+function nextStep() {
+  const next = getNextStep(currentStep);
+  goToStep(next);
+}
+
+// ============ STEP RENDERERS ============
+const STEP_RENDERERS = {};
+
+// ----- Unidades (modelo / colores / precio) -----
+['u0','u1','u2'].forEach((uid, i) => {
+  STEP_RENDERERS[`${uid}-modelo`] = () => {
+    const u = formData.unidades[i] || (formData.unidades[i] = { modelo: null, chasisSeleccionados: [], precioPedido: null });
+    const modelos = getModelosLibres();
+    const search = (window._modeloSearch || '');
+    const filtered = search ? modelos.filter(m => m.toLowerCase().includes(search.toLowerCase())) : modelos;
+    return {
+      body: `
+        <h2>Unidad ${i+1}: ¿Qué modelo consulta?</h2>
+        <p class="step-hint">${modelos.length} modelos con stock disponible. Tocá uno para seleccionarlo.</p>
+        <input type="text" placeholder="Buscar modelo..." value="${escapeHtml(search)}" oninput="window._modeloSearch=this.value; renderStep()" style="margin-bottom:12px">
+        <div class="scroll-list">
+          ${filtered.length === 0 ? '<div class="empty"><p>Sin resultados</p></div>' : filtered.map(m => {
+            const sel = u.modelo === m;
+            const cnt = getChasisLibresPorModelo(m).length;
+            return `
+              <div class="item ${sel ? 'selected' : ''}" onclick="selectModelo(${i}, '${escapeHtml(m).replace(/'/g, "\\'")}')">
+                <div class="info">
+                  <div class="title">${escapeHtml(m)}</div>
+                  <div class="sub">${cnt} chasis libre${cnt !== 1 ? 's' : ''}</div>
+                </div>
+                ${sel ? '<div style="color:var(--vw-blue); font-size:18px">✓</div>' : ''}
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `,
+      footer: `
+        <button class="btn-back" onclick="wizardBack()">Atrás</button>
+        <button class="btn-next" ${u.modelo ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+      `
+    };
+  };
+
+  STEP_RENDERERS[`${uid}-colores`] = () => {
+    const u = formData.unidades[i];
+    const chasis = getChasisLibresPorModelo(u.modelo);
+    return {
+      body: `
+        <h2>Colores para ${escapeHtml(u.modelo)}</h2>
+        <p class="step-hint">Seleccioná hasta 3 chasis (mismo modelo, distintos colores). Mostramos la oferta vigente de cada uno.</p>
+        <div class="scroll-list">
+          ${chasis.length === 0 ? '<div class="empty"><p>Sin chasis libres</p></div>' : chasis.map(c => {
+            const checked = u.chasisSeleccionados.includes(c.serie);
+            const disabled = !checked && u.chasisSeleccionados.length >= 3;
+            return `
+              <label class="item ${checked ? 'selected' : ''}" style="${disabled ? 'opacity:.4; cursor:not-allowed' : ''}">
+                <input type="checkbox" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="toggleChasis(${i}, '${escapeHtml(c.serie)}')">
+                <div class="info">
+                  <div class="title">${escapeHtml(c.color || '—')}</div>
+                  <div class="sub">${escapeHtml(c.serie)}</div>
+                </div>
+                <div class="right">
+                  ${fmtMoney(c.oferta_vigente)}
+                  ${c.fuente_oferta === 'stock_limitado' ? '<div><span class="badge">LIM</span></div>' : ''}
+                </div>
+              </label>
+            `;
+          }).join('')}
+        </div>
+      `,
+      footer: `
+        <button class="btn-back" onclick="wizardBack()">Atrás</button>
+        <button class="btn-next" ${u.chasisSeleccionados.length > 0 ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+      `
+    };
+  };
+
+  STEP_RENDERERS[`${uid}-precio`] = () => {
+    const u = formData.unidades[i];
+    const a = calcularAnalisisUnidad(u);
+    let analHtml = '';
+    if (a) {
+      const gciaCls = a.gcia_resultante >= 0 ? 'pos' : 'neg';
+      const dtoCls = a.dto_extra_pedido > 0 ? 'neg' : (a.dto_extra_pedido < 0 ? 'pos' : '');
+      analHtml = `
+        <div class="analisis-card">
+          <h4>Análisis automático</h4>
+          <div class="row"><span class="label">Oferta vigente</span><span class="val">${fmtMoney(a.oferta_vigente_min)}</span></div>
+          <div class="row"><span class="label">Gcia actual</span><span class="val">${fmtPct(a.gcia_vigente_min)}</span></div>
+          <div class="row"><span class="label">Precio lista</span><span class="val">${fmtMoney(a.precio_lista)}</span></div>
+          <div class="row"><span class="label">Dto extra pedido</span><span class="val ${dtoCls}">${fmtPct(a.dto_extra_pedido)}</span></div>
+          <div class="row"><span class="label">Gcia resultante</span><span class="val ${gciaCls}">${fmtPct(a.gcia_resultante)}</span></div>
+        </div>
+      `;
+    }
+    return {
+      body: `
+        <h2>Precio pedido</h2>
+        <p class="step-hint">¿Qué precio pidió el cliente para esta unidad? <strong>Con flete y formulario incluido</strong>.</p>
+        <input id="precioPedidoInput" type="text" inputmode="numeric" placeholder="$0"
+          value="${u.precioPedido != null ? '$' + Math.round(u.precioPedido).toLocaleString('es-AR') : ''}"
+          oninput="onPrecioPedidoInput(${i}, this)">
+        ${analHtml}
+      `,
+      footer: `
+        <button class="btn-back" onclick="wizardBack()">Atrás</button>
+        <button class="btn-next" ${u.precioPedido && u.precioPedido > 0 ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+      `,
+      onMount: () => { document.getElementById('precioPedidoInput').focus(); }
+    };
+  };
+
+  STEP_RENDERERS[`add-${i+1}`] = () => ({
+    body: `
+      <h2>¿Querés consultar otra unidad más?</h2>
+      <p class="step-hint">Podés agregar hasta 3 unidades por consulta. Llevás ${i+1}.</p>
+      <div class="opt-list">
+        <div class="opt" onclick="addUnidadDecision(true, ${i+1})">
+          <span class="opt-icon">➕</span> Sí, agregar otra unidad
+        </div>
+        <div class="opt" onclick="addUnidadDecision(false, ${i+1})">
+          <span class="opt-icon">✓</span> No, continuar con datos del cliente
+        </div>
+      </div>
+    `,
+    footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
+  });
+});
+
+// ----- Tipo cliente -----
+STEP_RENDERERS['tipo-cliente'] = () => ({
+  body: `
+    <h2>¿Tipo de cliente?</h2>
+    <p class="step-hint">Esto cambia las preguntas que vienen.</p>
+    <div class="opt-list">
+      <div class="opt ${formData.tipoCliente === 'particular' ? 'selected' : ''}" onclick="selectTipoCliente('particular')">
+        <span class="opt-icon">👤</span> Particular
+      </div>
+      <div class="opt ${formData.tipoCliente === 'reventa' ? 'selected' : ''}" onclick="selectTipoCliente('reventa')">
+        <span class="opt-icon">🏢</span> Reventa
+      </div>
+    </div>
+  `,
+  footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
+});
+
+// ----- Cliente nombre -----
+STEP_RENDERERS['cliente-nombre'] = () => ({
+  body: `
+    <h2>¿Cómo se llama el cliente?</h2>
+    <div class="field-row">
+      <div>
+        <label class="field-label">Nombre</label>
+        <input id="cliNombre" type="text" value="${escapeHtml(formData.cliNombre)}" oninput="formData.cliNombre = this.value; updateNextEnabled()">
+      </div>
+      <div>
+        <label class="field-label">Apellido</label>
+        <input id="cliApellido" type="text" value="${escapeHtml(formData.cliApellido)}" oninput="formData.cliApellido = this.value; updateNextEnabled()">
+      </div>
+    </div>
+  `,
+  footer: `
+    <button class="btn-back" onclick="wizardBack()">Atrás</button>
+    <button class="btn-next" id="btnNext" ${formData.cliNombre && formData.cliApellido ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+  `,
+  onMount: () => { document.getElementById('cliNombre').focus(); }
+});
+
+// ----- Reventa nombre -----
+STEP_RENDERERS['reventa-nombre'] = () => ({
+  body: `
+    <h2>¿Cuál es el reventa?</h2>
+    <p class="step-hint">Nombre del agente / concesionario revendedor.</p>
+    <input id="reventaNombre" type="text" placeholder="Ej: Auto del Sur"
+      value="${escapeHtml(formData.reventaNombre)}" oninput="formData.reventaNombre = this.value; updateNextEnabled()">
+  `,
+  footer: `
+    <button class="btn-back" onclick="wizardBack()">Atrás</button>
+    <button class="btn-next" id="btnNext" ${formData.reventaNombre ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+  `,
+  onMount: () => { document.getElementById('reventaNombre').focus(); }
+});
+
+// ----- Ubicación -----
+STEP_RENDERERS['ubicacion'] = () => ({
+  body: `
+    <h2>¿De qué provincia y localidad?</h2>
+    <div class="field-row">
+      <div>
+        <label class="field-label">Provincia</label>
+        <select id="provincia" onchange="formData.provincia = this.value; updateNextEnabled()">
+          <option value="">— Elegir —</option>
+          ${PROVINCIAS_AR.map(p => `<option value="${escapeHtml(p)}" ${formData.provincia === p ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label class="field-label">Localidad</label>
+        <input id="localidad" type="text" value="${escapeHtml(formData.localidad)}" oninput="formData.localidad = this.value; updateNextEnabled()">
+      </div>
+    </div>
+  `,
+  footer: `
+    <button class="btn-back" onclick="wizardBack()">Atrás</button>
+    <button class="btn-next" id="btnNext" ${formData.provincia && formData.localidad ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+  `
+});
+
+// ----- Fuente del dato -----
+STEP_RENDERERS['fuente-dato'] = () => {
+  const opts = [
+    { v: 'referido', l: 'Referido' },
+    { v: 'salon', l: 'Salón' },
+    { v: 'redes', l: 'Instagram o redes' },
+    { v: 'tu0km', l: 'Tu0KM' },
+    { v: 'mercadolibre', l: 'Mercadolibre' },
+    { v: 'otro', l: 'Otro' }
+  ];
+  return {
+    body: `
+      <h2>¿De dónde vino el dato?</h2>
+      <div class="opt-list">
+        ${opts.map(o => `
+          <div class="opt ${formData.fuenteDato === o.v ? 'selected' : ''}" onclick="selectFuenteDato('${o.v}')">${o.l}</div>
+        `).join('')}
+      </div>
+    `,
+    footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
+  };
+};
+STEP_RENDERERS['fuente-otro'] = () => ({
+  body: `
+    <h2>¿De dónde vino el dato?</h2>
+    <p class="step-hint">Especificá la fuente.</p>
+    <input id="fuenteOtro" type="text" value="${escapeHtml(formData.fuenteDatoOtro)}" oninput="formData.fuenteDatoOtro = this.value; updateNextEnabled()">
+  `,
+  footer: `
+    <button class="btn-back" onclick="wizardBack()">Atrás</button>
+    <button class="btn-next" id="btnNext" ${formData.fuenteDatoOtro ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+  `,
+  onMount: () => { document.getElementById('fuenteOtro').focus(); }
+});
+
+// ----- Tiene usado -----
+STEP_RENDERERS['tiene-usado'] = () => ({
+  body: `
+    <h2>¿Tiene usado para entregar y tasar?</h2>
+    <div class="opt-list">
+      <div class="opt ${formData.tieneUsado === true ? 'selected' : ''}" onclick="selectTieneUsado(true)">Sí</div>
+      <div class="opt ${formData.tieneUsado === false ? 'selected' : ''}" onclick="selectTieneUsado(false)">No</div>
+    </div>
+  `,
+  footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
+});
+
+// ----- Financia -----
+STEP_RENDERERS['financia'] = () => ({
+  body: `
+    <h2>${formData.tipoCliente === 'reventa' ? '¿Financia con VWFS?' : '¿Financia?'}</h2>
+    <div class="opt-list">
+      <div class="opt ${formData.financia === 'si' ? 'selected' : ''}" onclick="selectFinancia('si')">Sí</div>
+      <div class="opt ${formData.financia === 'no' ? 'selected' : ''}" onclick="selectFinancia('no')">No</div>
+    </div>
+  `,
+  footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
+});
+
+// ----- Entidad financiación (solo particular si=si) -----
+STEP_RENDERERS['fin-entidad'] = () => ({
+  body: `
+    <h2>¿Con qué entidad financia?</h2>
+    <div class="opt-list">
+      <div class="opt ${formData.finEntidad === 'vwfs' ? 'selected' : ''}" onclick="selectFinEntidad('vwfs')">VWFS</div>
+      <div class="opt ${formData.finEntidad === 'tg' ? 'selected' : ''}" onclick="selectFinEntidad('tg')">TG</div>
+      <div class="opt ${formData.finEntidad === 'otros' ? 'selected' : ''}" onclick="selectFinEntidad('otros')">Otros</div>
+    </div>
+  `,
+  footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
+});
+STEP_RENDERERS['fin-entidad-otro'] = () => ({
+  body: `
+    <h2>¿Cuál entidad?</h2>
+    <input id="finEntidadOtro" type="text" value="${escapeHtml(formData.finEntidadOtro)}" oninput="formData.finEntidadOtro = this.value; updateNextEnabled()">
+  `,
+  footer: `
+    <button class="btn-back" onclick="wizardBack()">Atrás</button>
+    <button class="btn-next" id="btnNext" ${formData.finEntidadOtro ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+  `,
+  onMount: () => { document.getElementById('finEntidadOtro').focus(); }
+});
+
+// ----- Monto financiación -----
+STEP_RENDERERS['fin-monto'] = () => {
+  const u0 = formData.unidades[0];
+  let pctHint = '';
+  if (formData.finMonto && u0 && u0.precioPedido) {
+    const base = u0.precioPedido - FYF;
+    if (base > 0) {
+      const pct = formData.finMonto / base;
+      pctHint = `% financiación (sobre precio pedido sin FyF): <strong>${fmtPct(pct)}</strong>`;
+    }
+  }
+  return {
+    body: `
+      <h2>Monto a financiar</h2>
+      <p class="step-hint">¿Cuánto quiere financiar?</p>
+      <input id="finMonto" type="text" inputmode="numeric" placeholder="$0"
+        value="${formData.finMonto != null ? '$' + Math.round(formData.finMonto).toLocaleString('es-AR') : ''}"
+        oninput="onFinMontoInput(this)">
+      <div class="field-hint" id="finPctHint">${pctHint}</div>
+    `,
+    footer: `
+      <button class="btn-back" onclick="wizardBack()">Atrás</button>
+      <button class="btn-next" id="btnNext" ${formData.finMonto && formData.finMonto > 0 ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+    `,
+    onMount: () => { document.getElementById('finMonto').focus(); }
+  };
+};
+
+// ----- VS otro presupuesto -----
+STEP_RENDERERS['vs-otro'] = () => ({
+  body: `
+    <h2>¿Pide vs otro presupuesto de otro concesionario?</h2>
+    <div class="opt-list">
+      <div class="opt ${formData.vsOtro === 'si' ? 'selected' : ''}" onclick="selectVsOtro('si')">Sí</div>
+      <div class="opt ${formData.vsOtro === 'no' ? 'selected' : ''}" onclick="selectVsOtro('no')">No</div>
+      <div class="opt ${formData.vsOtro === 'no_quiere_pasar' ? 'selected' : ''}" onclick="selectVsOtro('no_quiere_pasar')">No quiere pasar el concesionario</div>
+    </div>
+  `,
+  footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
+});
+
+// ----- Concesionario nombre + precio -----
+STEP_RENDERERS['concesionario'] = () => ({
+  body: `
+    <h2>Datos del otro presupuesto</h2>
+    <div class="field-row">
+      <div>
+        <label class="field-label">Concesionario</label>
+        <input id="conceNombre" type="text" value="${escapeHtml(formData.conceNombre)}" oninput="formData.conceNombre = this.value; updateNextEnabled()">
+      </div>
+      <div>
+        <label class="field-label">Precio (con FyF)</label>
+        <input id="concePrecio" type="text" inputmode="numeric" placeholder="$0"
+          value="${formData.concePrecio != null ? '$' + Math.round(formData.concePrecio).toLocaleString('es-AR') : ''}"
+          oninput="onConcePrecioInput(this)">
+      </div>
+    </div>
+  `,
+  footer: `
+    <button class="btn-back" onclick="wizardBack()">Atrás</button>
+    <button class="btn-next" id="btnNext" ${formData.conceNombre && formData.concePrecio ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+  `,
+  onMount: () => { document.getElementById('conceNombre').focus(); }
+});
+
+// ----- Resumen + submit -----
+STEP_RENDERERS['resumen'] = () => {
+  const f = formData;
+  const cliente = f.tipoCliente === 'particular' ? `${f.cliNombre} ${f.cliApellido}` : f.reventaNombre;
+  const unidadesHtml = f.unidades.map((u, idx) => {
+    const a = calcularAnalisisUnidad(u);
+    const colores = u.chasisSeleccionados.map(s => {
+      const c = stockData.find(r => r.serie === s);
+      return c ? c.color : s;
+    }).join(' / ');
+    return `
+      <div class="resumen-card">
+        <h5>Unidad ${idx+1}: ${escapeHtml(u.modelo)}</h5>
+        <p>Colores: ${escapeHtml(colores)}</p>
+        <div class="precio-row"><span>Precio pedido:</span><strong>${fmtMoney(u.precioPedido)}</strong></div>
+        ${a ? `<div class="precio-row"><span>Gcia resultante:</span><strong style="color:${a.gcia_resultante >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPct(a.gcia_resultante)}</strong></div>` : ''}
+      </div>
+    `;
+  }).join('');
+
+  let financiaTxt = 'No financia';
+  if (f.financia === 'si') {
+    let ent = f.tipoCliente === 'reventa' ? 'VWFS' : (f.finEntidad === 'otros' ? f.finEntidadOtro : (f.finEntidad || '').toUpperCase());
+    financiaTxt = `Sí · ${ent} · ${fmtMoney(f.finMonto)}`;
+    if (f.unidades[0] && f.unidades[0].precioPedido) {
+      const base = f.unidades[0].precioPedido - FYF;
+      if (base > 0) financiaTxt += ` (${fmtPct(f.finMonto / base)})`;
+    }
+  }
+  let vsOtroTxt = f.vsOtro === 'si' ? `${f.conceNombre}: ${fmtMoney(f.concePrecio)}` :
+    (f.vsOtro === 'no_quiere_pasar' ? 'No quiere pasar el concesionario' : 'No');
+
+  return {
+    body: `
+      <h2>Revisá la consulta</h2>
+      <p class="step-hint">Si está OK, tocá "Enviar". Si hay algo para cambiar, volvé con "Atrás".</p>
+      <div class="detalle-section">
+        <h4>Cliente</h4>
+        <div class="kv">
+          <span class="k">Tipo</span><span class="v">${f.tipoCliente === 'particular' ? 'Particular' : 'Reventa'}</span>
+          <span class="k">Nombre</span><span class="v">${escapeHtml(cliente)}</span>
+          <span class="k">Provincia/Loc.</span><span class="v">${escapeHtml(f.provincia)} / ${escapeHtml(f.localidad)}</span>
+          ${f.tipoCliente === 'particular' ? `
+            <span class="k">Fuente</span><span class="v">${escapeHtml(f.fuenteDato === 'otro' ? f.fuenteDatoOtro : (f.fuenteDato || '—'))}</span>
+            <span class="k">Tiene usado</span><span class="v">${f.tieneUsado === true ? 'Sí' : (f.tieneUsado === false ? 'No' : '—')}</span>
+          ` : ''}
+          <span class="k">Financiación</span><span class="v">${financiaTxt}</span>
+          <span class="k">VS otro</span><span class="v">${vsOtroTxt}</span>
+        </div>
+      </div>
+      <div class="detalle-section">
+        <h4>Unidades</h4>
+        ${unidadesHtml}
+      </div>
+    `,
+    footer: `
+      <button class="btn-back" onclick="wizardBack()">Atrás</button>
+      <button class="btn-submit" onclick="submitConsulta()">Enviar consulta</button>
+    `
+  };
+};
+
+// ============ Acciones de los steps ============
+function selectModelo(idx, modelo) {
+  formData.unidades[idx].modelo = modelo;
+  formData.unidades[idx].chasisSeleccionados = [];
+  renderStep();
 }
 function toggleChasis(idx, serie) {
-  const u = unidades[idx];
+  const u = formData.unidades[idx];
   const i = u.chasisSeleccionados.indexOf(serie);
   if (i >= 0) u.chasisSeleccionados.splice(i, 1);
   else if (u.chasisSeleccionados.length < 3) u.chasisSeleccionados.push(serie);
-  renderUnidades();
+  renderStep();
 }
 function onPrecioPedidoInput(idx, el) {
   const raw = el.value.replace(/[^\d]/g, '');
-  if (!raw) { unidades[idx].precioPedido = null; el.value = ''; }
-  else { unidades[idx].precioPedido = parseInt(raw, 10); el.value = '$' + unidades[idx].precioPedido.toLocaleString('es-AR'); }
-  recalcAnalisis(idx);
-  // Si cambia el precio pedido y hay financiación cargada, recalcular % financiación
-  recalcFinanciacionPct();
+  formData.unidades[idx].precioPedido = raw ? parseInt(raw, 10) : null;
+  el.value = raw ? '$' + parseInt(raw, 10).toLocaleString('es-AR') : '';
+  // Re-renderizar para mostrar análisis actualizado y habilitar el botón
+  renderStep();
+  // Mantener foco en el input
+  setTimeout(() => {
+    const e = document.getElementById('precioPedidoInput');
+    if (e) { e.focus(); const v = e.value; e.value = ''; e.value = v; }
+  }, 0);
+}
+function addUnidadDecision(addMore, nextIdx) {
+  if (addMore) {
+    if (formData.unidades.length < nextIdx + 1) formData.unidades.push({ modelo: null, chasisSeleccionados: [], precioPedido: null });
+    goToStep(`u${nextIdx}-modelo`);
+  } else {
+    // Truncar unidades extra (en caso que haya pasado y vuelto)
+    formData.unidades = formData.unidades.slice(0, nextIdx);
+    goToStep('tipo-cliente');
+  }
+}
+function selectTipoCliente(t) { formData.tipoCliente = t; nextStep(); }
+function selectFuenteDato(v) { formData.fuenteDato = v; nextStep(); }
+function selectTieneUsado(b) { formData.tieneUsado = b; nextStep(); }
+function selectFinancia(v) { formData.financia = v; nextStep(); }
+function selectFinEntidad(v) { formData.finEntidad = v; nextStep(); }
+function selectVsOtro(v) { formData.vsOtro = v; nextStep(); }
+
+function onFinMontoInput(el) {
+  const raw = el.value.replace(/[^\d]/g, '');
+  formData.finMonto = raw ? parseInt(raw, 10) : null;
+  el.value = raw ? '$' + parseInt(raw, 10).toLocaleString('es-AR') : '';
+  // Update hint
+  const u0 = formData.unidades[0];
+  const hint = document.getElementById('finPctHint');
+  if (formData.finMonto && u0 && u0.precioPedido) {
+    const base = u0.precioPedido - FYF;
+    if (base > 0) hint.innerHTML = `% financiación (sobre precio pedido sin FyF): <strong>${fmtPct(formData.finMonto / base)}</strong>`;
+    else hint.innerHTML = '';
+  } else hint.innerHTML = '';
+  // Habilitar botón
+  const btn = document.getElementById('btnNext');
+  if (btn) btn.disabled = !(formData.finMonto && formData.finMonto > 0);
+}
+function onConcePrecioInput(el) {
+  const raw = el.value.replace(/[^\d]/g, '');
+  formData.concePrecio = raw ? parseInt(raw, 10) : null;
+  el.value = raw ? '$' + parseInt(raw, 10).toLocaleString('es-AR') : '';
+  updateNextEnabled();
+}
+function updateNextEnabled() {
+  const btn = document.getElementById('btnNext');
+  if (!btn) return;
+  let ok = false;
+  switch(currentStep) {
+    case 'cliente-nombre': ok = !!(formData.cliNombre && formData.cliApellido); break;
+    case 'reventa-nombre': ok = !!formData.reventaNombre; break;
+    case 'ubicacion': ok = !!(formData.provincia && formData.localidad); break;
+    case 'fuente-otro': ok = !!formData.fuenteDatoOtro; break;
+    case 'fin-entidad-otro': ok = !!formData.finEntidadOtro; break;
+    case 'fin-monto': ok = !!(formData.finMonto && formData.finMonto > 0); break;
+    case 'concesionario': ok = !!(formData.conceNombre && formData.concePrecio); break;
+    default: ok = true;
+  }
+  btn.disabled = !ok;
 }
 
-// Análisis live: usa la oferta_vigente más baja entre los chasis seleccionados.
+// ============ Análisis ============
 function calcularAnalisisUnidad(u) {
-  if (!u.modelo || u.chasisSeleccionados.length === 0 || u.precioPedido == null || isNaN(u.precioPedido)) return null;
+  if (!u || !u.modelo || !u.chasisSeleccionados || u.chasisSeleccionados.length === 0 || u.precioPedido == null || isNaN(u.precioPedido)) return null;
   const chasisData = u.chasisSeleccionados.map(s => stockData.find(r => r.serie === s)).filter(Boolean);
   if (chasisData.length === 0) return null;
-  // Oferta más baja (peor caso)
   let oferta_vigente_min = Infinity, gcia_vigente_min = null, precio_lista = null;
   chasisData.forEach(c => {
     if (c.oferta_vigente < oferta_vigente_min) {
@@ -894,201 +1250,58 @@ function calcularAnalisisUnidad(u) {
   };
 }
 
-function recalcAnalisis(idx) {
-  const u = unidades[idx];
-  const cont = document.getElementById('analisisUnidad' + idx);
-  if (!cont) return;
-  const a = calcularAnalisisUnidad(u);
-  if (!a) {
-    cont.innerHTML = `<h5>Análisis</h5><div class="muted" style="font-size:13px">Completá modelo, color(es) y precio pedido.</div>`;
-    return;
-  }
-  const gciaCls = a.gcia_resultante >= 0 ? 'pos' : 'neg';
-  const dtoCls = a.dto_extra_pedido > 0 ? 'neg' : (a.dto_extra_pedido < 0 ? 'pos' : '');
-  cont.innerHTML = `
-    <h5>Análisis automático</h5>
-    <div class="row"><span class="label">Oferta vigente (más baja)</span><span class="val">${fmtMoney(a.oferta_vigente_min)}</span></div>
-    <div class="row"><span class="label">Gcia actual</span><span class="val">${fmtPct(a.gcia_vigente_min)}</span></div>
-    <div class="row"><span class="label">Precio lista</span><span class="val">${fmtMoney(a.precio_lista)}</span></div>
-    <div class="row"><span class="label">Dto extra pedido</span><span class="val ${dtoCls}">${fmtPct(a.dto_extra_pedido)}</span></div>
-    <div class="row"><span class="label">Gcia resultante</span><span class="val ${gciaCls}">${fmtPct(a.gcia_resultante)}</span></div>
-  `;
-}
-
-// ============ Datos cliente — toggles ============
-function onTipoClienteChange() {
-  const tipo = (document.querySelector('input[name=tipoCliente]:checked') || {}).value;
-  document.getElementById('formParticular').classList.toggle('hidden', tipo !== 'particular');
-  document.getElementById('formReventa').classList.toggle('hidden', tipo !== 'reventa');
-  document.getElementById('formFuenteDato').classList.toggle('hidden', tipo !== 'particular');
-  document.getElementById('formUsado').classList.toggle('hidden', tipo !== 'particular');
-  document.getElementById('formUbicacion').classList.toggle('hidden', !tipo);
-  document.getElementById('formFinancia').classList.toggle('hidden', !tipo);
-  document.getElementById('formVsOtro').classList.toggle('hidden', !tipo);
-  // Label de financia varía
-  document.getElementById('financiaLabel').textContent =
-    tipo === 'reventa' ? '¿Financia con VWFS? *' : '¿Financia? *';
-  // Mostrar entidad solo en particular
-  document.getElementById('financiaEntidadWrap').classList.toggle('hidden', tipo !== 'particular');
-  // Reset financia
-  document.querySelectorAll('input[name=financia]').forEach(r => r.checked = false);
-  document.getElementById('financiaDetalle').classList.add('hidden');
-  document.getElementById('finEntidadOtroWrap').classList.add('hidden');
-  document.getElementById('finPctHint').textContent = '';
-}
-function onFuenteDatoChange() {
-  const v = (document.querySelector('input[name=fuenteDato]:checked') || {}).value;
-  document.getElementById('fuenteOtroWrap').classList.toggle('hidden', v !== 'otro');
-}
-function onFinanciaChange() {
-  const v = (document.querySelector('input[name=financia]:checked') || {}).value;
-  document.getElementById('financiaDetalle').classList.toggle('hidden', v !== 'si');
-  if (v !== 'si') {
-    document.getElementById('finPctHint').textContent = '';
-  } else {
-    recalcFinanciacionPct();
-  }
-}
-function onFinEntidadChange() {
-  const v = (document.querySelector('input[name=finEntidad]:checked') || {}).value;
-  document.getElementById('finEntidadOtroWrap').classList.toggle('hidden', v !== 'otros');
-}
-function onVsOtroChange() {
-  const v = (document.querySelector('input[name=vsOtro]:checked') || {}).value;
-  document.getElementById('vsOtroDetalle').classList.toggle('hidden', v !== 'si');
-}
-function onFinMontoInput() {
-  const el = document.getElementById('finMonto');
-  const raw = el.value.replace(/[^\d]/g, '');
-  el.value = raw ? '$' + parseInt(raw, 10).toLocaleString('es-AR') : '';
-  recalcFinanciacionPct();
-}
-function recalcFinanciacionPct() {
-  const monto = parseMoney(document.getElementById('finMonto').value);
-  const hint = document.getElementById('finPctHint');
-  if (isNaN(monto) || monto <= 0) { hint.textContent = ''; return; }
-  // Usamos el precio pedido de la primera unidad como base
-  const u = unidades[0];
-  if (!u || u.precioPedido == null) { hint.textContent = 'Cargá el precio pedido de la unidad 1 para ver el % financiación'; return; }
-  const base = u.precioPedido - FYF;
-  if (base <= 0) { hint.textContent = ''; return; }
-  const pct = monto / base;
-  hint.textContent = '% financiación (sobre precio pedido sin FyF): ' + fmtPct(pct);
-}
-
 // ============ SUBMIT ============
 async function submitConsulta() {
-  // Validar
+  const f = formData;
   const errs = [];
-  if (unidades.length === 0) errs.push('Agregá al menos una unidad');
-  unidades.forEach((u, i) => {
-    if (!u.modelo) errs.push(`Unidad ${i+1}: elegí modelo`);
-    if (u.chasisSeleccionados.length === 0) errs.push(`Unidad ${i+1}: elegí al menos un color`);
-    if (!u.precioPedido || u.precioPedido <= 0) errs.push(`Unidad ${i+1}: cargá precio pedido`);
+  f.unidades.forEach((u, i) => {
+    if (!u.modelo) errs.push(`Unidad ${i+1}: falta modelo`);
+    if (u.chasisSeleccionados.length === 0) errs.push(`Unidad ${i+1}: falta color`);
+    if (!u.precioPedido) errs.push(`Unidad ${i+1}: falta precio`);
   });
-  const tipoCliente = (document.querySelector('input[name=tipoCliente]:checked') || {}).value;
-  if (!tipoCliente) errs.push('Elegí tipo de cliente');
+  if (errs.length) { alert('Faltan datos:\n\n• ' + errs.join('\n• ')); return; }
 
-  let cliNombre = '', cliApellido = '', reventaNombre = '';
-  if (tipoCliente === 'particular') {
-    cliNombre = document.getElementById('cliNombre').value.trim();
-    cliApellido = document.getElementById('cliApellido').value.trim();
-    if (!cliNombre || !cliApellido) errs.push('Cargá nombre y apellido del cliente');
-  } else if (tipoCliente === 'reventa') {
-    reventaNombre = document.getElementById('reventaNombre').value.trim();
-    if (!reventaNombre) errs.push('Cargá el nombre del reventa');
-  }
-  const provincia = document.getElementById('provincia').value;
-  const localidad = document.getElementById('localidad').value.trim();
-  if (!provincia) errs.push('Elegí provincia');
-  if (!localidad) errs.push('Cargá localidad');
-
-  let fuenteDato = null, fuenteDatoOtro = null, tieneUsado = null;
-  if (tipoCliente === 'particular') {
-    fuenteDato = (document.querySelector('input[name=fuenteDato]:checked') || {}).value;
-    if (!fuenteDato) errs.push('Elegí fuente del dato');
-    if (fuenteDato === 'otro') {
-      fuenteDatoOtro = document.getElementById('fuenteOtro').value.trim();
-      if (!fuenteDatoOtro) errs.push('Especificá la fuente del dato');
-    }
-    const usadoVal = (document.querySelector('input[name=tieneUsado]:checked') || {}).value;
-    if (!usadoVal) errs.push('Indicá si tiene usado');
-    tieneUsado = usadoVal === 'si';
-  }
-
-  const financiaVal = (document.querySelector('input[name=financia]:checked') || {}).value;
-  if (!financiaVal) errs.push('Indicá si financia');
-  const financia = financiaVal === 'si';
-  let finEntidad = null, finEntidadOtro = null, finMonto = null, finPct = null;
-  if (financia) {
-    if (tipoCliente === 'particular') {
-      finEntidad = (document.querySelector('input[name=finEntidad]:checked') || {}).value;
-      if (!finEntidad) errs.push('Elegí entidad de financiación');
-      if (finEntidad === 'otros') {
-        finEntidadOtro = document.getElementById('finEntidadOtro').value.trim();
-        if (!finEntidadOtro) errs.push('Especificá la entidad de financiación');
-      }
-    } else {
-      finEntidad = 'vwfs'; // reventa siempre VWFS
-    }
-    finMonto = parseMoney(document.getElementById('finMonto').value);
-    if (isNaN(finMonto) || finMonto <= 0) errs.push('Cargá monto a financiar');
-    else if (unidades[0] && unidades[0].precioPedido && (unidades[0].precioPedido - FYF) > 0) {
-      finPct = finMonto / (unidades[0].precioPedido - FYF);
-    }
-  }
-
-  const vsOtro = (document.querySelector('input[name=vsOtro]:checked') || {}).value;
-  if (!vsOtro) errs.push('Indicá si lo pide vs otro presupuesto');
-  let conceNombre = null, concePrecio = null;
-  if (vsOtro === 'si') {
-    conceNombre = document.getElementById('conceNombre').value.trim();
-    concePrecio = parseMoney(document.getElementById('concePrecio').value);
-    if (!conceNombre) errs.push('Cargá el concesionario');
-    if (isNaN(concePrecio) || concePrecio <= 0) errs.push('Cargá el precio del concesionario');
-  }
-
-  if (errs.length > 0) {
-    alert('Faltan datos:\n\n• ' + errs.join('\n• '));
-    return;
-  }
-
-  showLoading('Enviando consulta...');
+  showLoading('Enviando...');
   try {
-    // Insert cabecera
+    let finPct = null;
+    if (f.financia === 'si' && f.finMonto && f.unidades[0] && f.unidades[0].precioPedido) {
+      const base = f.unidades[0].precioPedido - FYF;
+      if (base > 0) finPct = f.finMonto / base;
+    }
+
     const cabecera = {
       vendedor_id: currentUser.id,
       vendedor_usuario: currentUser.usuario,
       vendedor_nombre: currentUser.nombre || currentUser.usuario,
-      tipo_cliente: tipoCliente,
-      provincia, localidad,
-      cliente_nombre: cliNombre || null,
-      cliente_apellido: cliApellido || null,
-      fuente_dato: fuenteDato || null,
-      fuente_dato_otro: fuenteDatoOtro || null,
-      tiene_usado: tieneUsado,
-      reventa_nombre: reventaNombre || null,
-      financia,
-      financia_entidad: financia ? finEntidad : null,
-      financia_entidad_otro: finEntidadOtro || null,
-      financia_monto: financia ? finMonto : null,
-      financia_pct: financia ? finPct : null,
-      vs_otro_concesionario: vsOtro,
-      concesionario_nombre: conceNombre,
-      concesionario_precio: concePrecio,
+      tipo_cliente: f.tipoCliente,
+      provincia: f.provincia,
+      localidad: f.localidad,
+      cliente_nombre: f.cliNombre || null,
+      cliente_apellido: f.cliApellido || null,
+      fuente_dato: f.fuenteDato || null,
+      fuente_dato_otro: f.fuenteDato === 'otro' ? f.fuenteDatoOtro : null,
+      tiene_usado: f.tipoCliente === 'particular' ? f.tieneUsado : null,
+      reventa_nombre: f.reventaNombre || null,
+      financia: f.financia === 'si',
+      financia_entidad: f.financia === 'si' ? (f.tipoCliente === 'reventa' ? 'vwfs' : f.finEntidad) : null,
+      financia_entidad_otro: f.finEntidad === 'otros' ? f.finEntidadOtro : null,
+      financia_monto: f.financia === 'si' ? f.finMonto : null,
+      financia_pct: finPct,
+      vs_otro_concesionario: f.vsOtro,
+      concesionario_nombre: f.vsOtro === 'si' ? f.conceNombre : null,
+      concesionario_precio: f.vsOtro === 'si' ? f.concePrecio : null,
       estado: 'pendiente'
     };
     const inserted = await sbFetch('consultas_0km', { method: 'POST', body: JSON.stringify(cabecera) });
     const consultaId = inserted[0].id;
 
-    // Insert items
-    const items = unidades.map((u, i) => {
+    const items = f.unidades.map((u, i) => {
       const a = calcularAnalisisUnidad(u);
       return {
         consulta_id: consultaId,
         orden: i + 1,
         modelo: u.modelo,
-        version: u.modelo, // por ahora modelo y versión van en el mismo string del sheet
+        version: u.modelo,
         chasis: a.chasisSnapshot,
         precio_lista: a.precio_lista,
         oferta_vigente_min: a.oferta_vigente_min,
@@ -1100,12 +1313,11 @@ async function submitConsulta() {
     });
     await sbFetch('consultas_0km_items', { method: 'POST', body: JSON.stringify(items) });
 
-    // Notificar a admin por WhatsApp (CallMeBot)
-    notifyAdminNuevaConsulta(consultaId, cabecera, items).catch(e => console.error('notify err', e));
+    notifyAdminNuevaConsulta(consultaId, cabecera, items).catch(e => console.error(e));
 
     hideLoading();
     showToast('Consulta enviada');
-    document.getElementById('vendedorForm').classList.add('hidden');
+    document.getElementById('vendedorWizard').classList.add('hidden');
     document.getElementById('vendedorList').classList.remove('hidden');
     cargarMisConsultas();
   } catch(e) {
@@ -1115,7 +1327,6 @@ async function submitConsulta() {
   }
 }
 
-// ============ NOTIFICAR WhatsApp ============
 async function notifyAdminNuevaConsulta(id, c, items) {
   const lineas = [];
   lineas.push(`🚗 Nueva consulta 0KM #${id}`);
@@ -1140,12 +1351,9 @@ async function cargarMisConsultas() {
   cont.innerHTML = '<div class="empty">Cargando...</div>';
   try {
     const data = await sbFetch(`consultas_0km?vendedor_id=eq.${currentUser.id}&order=created_at.desc`);
-    // Cargar items en una segunda query (RLS-friendly y simple)
     const ids = (data || []).map(c => c.id);
     let items = [];
-    if (ids.length > 0) {
-      items = await sbFetch(`consultas_0km_items?consulta_id=in.(${ids.join(',')})&order=orden.asc`);
-    }
+    if (ids.length > 0) items = await sbFetch(`consultas_0km_items?consulta_id=in.(${ids.join(',')})&order=orden.asc`);
     myConsultas = (data || []).map(c => ({ ...c, items: items.filter(i => i.consulta_id === c.id) }));
     renderVendedorList();
   } catch(e) {
@@ -1153,7 +1361,6 @@ async function cargarMisConsultas() {
     cont.innerHTML = '<div class="empty"><p>Error al cargar</p></div>';
   }
 }
-
 function renderVendedorList() {
   const cont = document.getElementById('misConsultasList');
   const q = (document.getElementById('vSearch').value || '').toLowerCase().trim();
@@ -1165,11 +1372,8 @@ function renderVendedorList() {
   }
   cont.innerHTML = list.map(c => renderConsultaCard(c)).join('');
 }
-
 function renderConsultaCard(c) {
-  const cliente = c.tipo_cliente === 'particular'
-    ? `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}`.trim()
-    : (c.reventa_nombre || '—');
+  const cliente = c.tipo_cliente === 'particular' ? `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}`.trim() : (c.reventa_nombre || '—');
   const unidadesStr = (c.items || []).map(it => escapeHtml(it.modelo)).join(' · ');
   return `
     <div class="card consulta-card" onclick="abrirDetalle(${c.id})">
@@ -1186,14 +1390,13 @@ function renderConsultaCard(c) {
   `;
 }
 
-// ============ ADMIN — LISTA ============
+// ============ ADMIN ============
 function setAdminTab(tab) {
   adminTab = tab;
   document.getElementById('tabPendientes').classList.toggle('active', tab === 'pendiente');
   document.getElementById('tabResueltas').classList.toggle('active', tab === 'resueltas');
   renderAdminList();
 }
-
 async function cargarConsultasAdmin() {
   const cont = document.getElementById('adminConsultasList');
   cont.innerHTML = '<div class="empty">Cargando...</div>';
@@ -1201,9 +1404,7 @@ async function cargarConsultasAdmin() {
     const data = await sbFetch('consultas_0km?order=created_at.desc');
     const ids = (data || []).map(c => c.id);
     let items = [];
-    if (ids.length > 0) {
-      items = await sbFetch(`consultas_0km_items?consulta_id=in.(${ids.join(',')})&order=orden.asc`);
-    }
+    if (ids.length > 0) items = await sbFetch(`consultas_0km_items?consulta_id=in.(${ids.join(',')})&order=orden.asc`);
     adminConsultas = (data || []).map(c => ({ ...c, items: items.filter(i => i.consulta_id === c.id) }));
     renderAdminList();
   } catch(e) {
@@ -1211,7 +1412,6 @@ async function cargarConsultasAdmin() {
     cont.innerHTML = '<div class="empty"><p>Error al cargar</p></div>';
   }
 }
-
 function renderAdminList() {
   const cont = document.getElementById('adminConsultasList');
   const q = (document.getElementById('aSearch').value || '').toLowerCase().trim();
@@ -1245,12 +1445,7 @@ function abrirDetalle(consultaId) {
   if (!c) return;
   const overlay = document.getElementById('modalOverlay');
   const cont = document.getElementById('modalContent');
-
-  const cliente = c.tipo_cliente === 'particular'
-    ? `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}`.trim()
-    : (c.reventa_nombre || '');
-
-  // Items
+  const cliente = c.tipo_cliente === 'particular' ? `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}`.trim() : (c.reventa_nombre || '');
   const itemsHtml = (c.items || []).map((it, i) => {
     const chasis = (it.chasis || []).map(ch =>
       `<div style="font-size:12px; padding:4px 0; border-bottom:1px dashed var(--vw-grey-2)">
@@ -1272,7 +1467,6 @@ function abrirDetalle(consultaId) {
     `;
   }).join('');
 
-  // Datos cliente
   let financiaTxt = 'No financia';
   if (c.financia) {
     const ent = c.financia_entidad === 'otros' ? (c.financia_entidad_otro || 'otros') : (c.financia_entidad || '');
@@ -1282,7 +1476,6 @@ function abrirDetalle(consultaId) {
     : (c.vs_otro_concesionario === 'no_quiere_pasar' ? 'No quiere pasar el concesionario' : 'No');
   let fuenteTxt = c.fuente_dato === 'otro' ? (c.fuente_dato_otro || 'otro') : (c.fuente_dato || '—');
 
-  // Footer
   const isAdmin = currentMode === 'admin';
   const isPending = c.estado === 'pendiente';
   let footerHtml = `<button class="btn-secondary" onclick="closeModal()">Cerrar</button>`;
@@ -1294,7 +1487,7 @@ function abrirDetalle(consultaId) {
           <input id="adminPrecioMax" type="text" inputmode="numeric" placeholder="$0"
             oninput="onAdminPrecioMaxInput(${c.id}, this)"
             style="width:100%; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:14px">
-          <div id="adminPrecioMaxHint" class="hint"></div>
+          <div id="adminPrecioMaxHint" class="field-hint"></div>
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap">
           <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
@@ -1317,7 +1510,6 @@ function abrirDetalle(consultaId) {
         <div class="kv"><span class="k">Fecha</span><span class="v">${fmtDate(c.created_at)}</span></div>
         <div class="kv"><span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${c.estado}</span></span></div>
       </div>
-
       <div class="detalle-section">
         <h4>Cliente</h4>
         <div class="kv">
@@ -1335,12 +1527,10 @@ function abrirDetalle(consultaId) {
           <span class="k">VS otro presupuesto</span><span class="v">${vsOtroTxt}</span>
         </div>
       </div>
-
       <div class="detalle-section">
         <h4>Unidades</h4>
         ${itemsHtml || '<div class="muted">—</div>'}
       </div>
-
       ${(!isPending && (c.precio_max_admin || c.observaciones_admin)) ? `
         <div class="detalle-section">
           <h4>Respuesta</h4>
@@ -1356,10 +1546,8 @@ function abrirDetalle(consultaId) {
   `;
   overlay.classList.remove('hidden');
 }
-
 function closeModal() { document.getElementById('modalOverlay').classList.add('hidden'); }
 
-// Admin — input live "mejor precio máximo"
 function onAdminPrecioMaxInput(consultaId, el) {
   const raw = el.value.replace(/[^\d]/g, '');
   el.value = raw ? '$' + parseInt(raw, 10).toLocaleString('es-AR') : '';
@@ -1368,12 +1556,10 @@ function onAdminPrecioMaxInput(consultaId, el) {
   if (!c || !c.items || c.items.length === 0) { hint.textContent = ''; return; }
   if (!raw) { hint.textContent = ''; return; }
   const precio = parseInt(raw, 10);
-  // Calculo gcia con la primera unidad (la más representativa). Si hay varias, el admin igual ve cada una en el detalle.
   const it = c.items[0];
   if (!it.precio_lista || it.precio_lista <= 0) { hint.textContent = ''; return; }
   const dto = (it.oferta_vigente_min - precio) / it.precio_lista;
   const gcia = (it.gcia_vigente_min || 0) - dto;
-  const sign = gcia >= 0 ? 'pos' : 'neg';
   hint.innerHTML = `Con ${fmtMoney(precio)}: dto extra ${fmtPct(dto)} · <strong style="color:${gcia>=0?'var(--green)':'var(--red)'}">gcia ${fmtPct(gcia)}</strong>`;
 }
 
@@ -1383,24 +1569,15 @@ async function aceptarMejora(consultaId) {
   try {
     await sbFetch(`consultas_0km?id=eq.${consultaId}`, {
       method: 'PATCH',
-      body: JSON.stringify({
-        estado: 'aceptada',
-        admin_user_id: currentUser.id,
-        admin_respuesta_at: new Date().toISOString()
-      })
+      body: JSON.stringify({ estado: 'aceptada', admin_user_id: currentUser.id, admin_respuesta_at: new Date().toISOString() })
     });
     notifyVendedorRespuesta(consultaId, 'aceptada', null).catch(e => console.error(e));
     closeModal();
     await cargarConsultasAdmin();
     hideLoading();
     showToast('Mejora aceptada');
-  } catch(e) {
-    hideLoading();
-    console.error(e);
-    alert('Error: ' + (e.message || e));
-  }
+  } catch(e) { hideLoading(); console.error(e); alert('Error: ' + (e.message || e)); }
 }
-
 async function rechazarMejora(consultaId) {
   const el = document.getElementById('adminPrecioMax');
   const raw = (el.value || '').replace(/[^\d]/g, '');
@@ -1411,27 +1588,16 @@ async function rechazarMejora(consultaId) {
   try {
     await sbFetch(`consultas_0km?id=eq.${consultaId}`, {
       method: 'PATCH',
-      body: JSON.stringify({
-        estado: 'rechazada',
-        admin_user_id: currentUser.id,
-        admin_respuesta_at: new Date().toISOString(),
-        precio_max_admin: precio
-      })
+      body: JSON.stringify({ estado: 'rechazada', admin_user_id: currentUser.id, admin_respuesta_at: new Date().toISOString(), precio_max_admin: precio })
     });
     notifyVendedorRespuesta(consultaId, 'rechazada', precio).catch(e => console.error(e));
     closeModal();
     await cargarConsultasAdmin();
     hideLoading();
     showToast('Respuesta enviada');
-  } catch(e) {
-    hideLoading();
-    console.error(e);
-    alert('Error: ' + (e.message || e));
-  }
+  } catch(e) { hideLoading(); console.error(e); alert('Error: ' + (e.message || e)); }
 }
-
 async function notifyVendedorRespuesta(consultaId, estado, precioMax) {
-  // Busco el vendedor para ver si tiene callmebot
   const c = adminConsultas.find(x => x.id === consultaId);
   if (!c || !c.vendedor_id) return;
   try {
@@ -1446,7 +1612,6 @@ async function notifyVendedorRespuesta(consultaId, estado, precioMax) {
 
 // ============ INIT ============
 async function init() {
-  // Restaurar sesión
   const sess = cargarSesion();
   if (sess && sess.id) {
     showLoading('Restaurando sesión...');
@@ -1458,15 +1623,13 @@ async function init() {
           ? currentUser.roles
           : (currentUser.rol ? [currentUser.rol] : ['vendedor']);
         document.getElementById('loginScreen').classList.add('hidden');
-        await cargarDatos();
-        const modo = sess.mode || (currentUser.rolesArr.includes('admin') ? 'admin' : 'vendedor');
-        // Si tiene 2 roles y la sesión guardada era una, respetarla; si no, mode select
+        await cargarStock();
         if (currentUser.rolesArr.includes('admin') && currentUser.rolesArr.length > 1 && !sess.mode) {
           hideLoading();
           elegirModo();
         } else {
           hideLoading();
-          entrarComo(modo);
+          entrarComo(sess.mode || (currentUser.rolesArr.includes('admin') ? 'admin' : 'vendedor'));
         }
         return;
       }
