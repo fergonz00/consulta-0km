@@ -578,7 +578,7 @@ function getChasisLibresPorModelo(modelo) {
 function showNuevaConsulta() {
   // Reset state
   formData = {
-    unidades: [{ modelo: null, chasisSeleccionados: [], precioPedido: null }],
+    unidades: [], // se setea según cantidad elegida en el primer paso
     tipoCliente: null,
     cliNombre: '', cliApellido: '',
     reventaNombre: '',
@@ -594,7 +594,7 @@ function showNuevaConsulta() {
   currentStep = null;
   document.getElementById('vendedorList').classList.add('hidden');
   document.getElementById('vendedorWizard').classList.remove('hidden');
-  goToStep('u0-modelo');
+  goToStep('cantidad-unidades');
 }
 
 function cancelarNuevaConsulta() {
@@ -625,21 +625,10 @@ function wizardBack() {
 }
 
 function getNextStep(step) {
-  // Unidades (3 grupos: u0, u1, u2)
-  for (let i = 0; i < 3; i++) {
-    if (step === `u${i}-modelo`) return `u${i}-colores`;
-    if (step === `u${i}-colores`) return `u${i}-precio`;
-    if (step === `u${i}-precio`) {
-      // Si la unidad anterior tiene datos completos: ofrece agregar más
-      if (i < 2) return `add-${i+1}`;
-      return 'tipo-cliente';
-    }
-    if (step === `add-${i+1}`) {
-      // Si decidió "no", saltar a tipo-cliente
-      if (formData.unidades.length <= i+1) return 'tipo-cliente';
-      return `u${i+1}-modelo`;
-    }
-  }
+  if (step === 'cantidad-unidades') return 'modelos';
+  if (step === 'modelos') return 'colores';
+  if (step === 'colores') return 'precios';
+  if (step === 'precios') return 'tipo-cliente';
   if (step === 'tipo-cliente') {
     return formData.tipoCliente === 'reventa' ? 'reventa-nombre' : 'cliente-nombre';
   }
@@ -671,19 +660,16 @@ function getNextStep(step) {
 }
 
 function totalSteps() {
-  // Aprox: 3 por unidad + 1 add por unidad agregable + datos cliente
-  // Solo para barra de progreso
-  let n = 0;
-  formData.unidades.forEach(() => n += 3);
-  if (formData.unidades.length < 3) n += 1; // add
-  n += 5; // tipo, nombre, ubicación, financia, vs-otro
+  // Pasos fijos: cantidad, modelos, colores, precios, tipo-cliente, nombre, ubicación, financia, vs-otro, resumen
+  let n = 10;
   if (formData.tipoCliente === 'particular') n += 2; // fuente, usado
+  if (formData.fuenteDato === 'otro') n += 1;
   if (formData.financia === 'si') {
     n += 1; // monto
     if (formData.tipoCliente === 'particular') n += 1; // entidad
+    if (formData.finEntidad === 'otros') n += 1;
   }
   if (formData.vsOtro === 'si') n += 1;
-  n += 1; // resumen
   return n;
 }
 function currentStepIdx() {
@@ -733,126 +719,125 @@ function nextStep() {
 // ============ STEP RENDERERS ============
 const STEP_RENDERERS = {};
 
-// ----- Unidades (modelo / colores / precio) -----
-['u0','u1','u2'].forEach((uid, i) => {
-  STEP_RENDERERS[`${uid}-modelo`] = () => {
-    const u = formData.unidades[i] || (formData.unidades[i] = { modelo: null, chasisSeleccionados: [], precioPedido: null });
-    const modelos = getModelosLibres();
-    const search = (window._modeloSearch || '');
-    const filtered = search ? modelos.filter(m => m.toLowerCase().includes(search.toLowerCase())) : modelos;
-    return {
-      body: `
-        <h2>Unidad ${i+1}: ¿Qué modelo consulta?</h2>
-        <p class="step-hint">${modelos.length} modelos con stock disponible. Tocá uno para seleccionarlo.</p>
-        <input type="text" placeholder="Buscar modelo..." value="${escapeHtml(search)}" oninput="window._modeloSearch=this.value; renderStep()" style="margin-bottom:12px">
-        <div class="scroll-list">
-          ${filtered.length === 0 ? '<div class="empty"><p>Sin resultados</p></div>' : filtered.map(m => {
-            const sel = u.modelo === m;
-            const cnt = getChasisLibresPorModelo(m).length;
-            return `
-              <div class="item ${sel ? 'selected' : ''}" onclick="selectModelo(${i}, '${escapeHtml(m).replace(/'/g, "\\'")}')">
-                <div class="info">
-                  <div class="title">${escapeHtml(m)}</div>
-                  <div class="sub">${cnt} chasis libre${cnt !== 1 ? 's' : ''}</div>
-                </div>
-                ${sel ? '<div style="color:var(--vw-blue); font-size:18px">✓</div>' : ''}
-              </div>
-            `;
-          }).join('')}
-        </div>
-      `,
-      footer: `
-        <button class="btn-back" onclick="wizardBack()">Atrás</button>
-        <button class="btn-next" ${u.modelo ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
-      `
-    };
-  };
-
-  STEP_RENDERERS[`${uid}-colores`] = () => {
-    const u = formData.unidades[i];
-    const chasis = getChasisLibresPorModelo(u.modelo);
-    return {
-      body: `
-        <h2>Colores para ${escapeHtml(u.modelo)}</h2>
-        <p class="step-hint">Seleccioná hasta 3 chasis (mismo modelo, distintos colores). Mostramos la oferta vigente de cada uno.</p>
-        <div class="scroll-list">
-          ${chasis.length === 0 ? '<div class="empty"><p>Sin chasis libres</p></div>' : chasis.map(c => {
-            const checked = u.chasisSeleccionados.includes(c.serie);
-            const disabled = !checked && u.chasisSeleccionados.length >= 3;
-            return `
-              <label class="item ${checked ? 'selected' : ''}" style="${disabled ? 'opacity:.4; cursor:not-allowed' : ''}">
-                <input type="checkbox" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="toggleChasis(${i}, '${escapeHtml(c.serie)}')">
-                <div class="info">
-                  <div class="title">${escapeHtml(c.color || '—')}</div>
-                  <div class="sub">${escapeHtml(c.serie)}</div>
-                </div>
-                <div class="right">
-                  ${fmtMoney(c.oferta_vigente)}
-                  ${c.fuente_oferta === 'stock_limitado' ? '<div><span class="badge">LIM</span></div>' : ''}
-                </div>
-              </label>
-            `;
-          }).join('')}
-        </div>
-      `,
-      footer: `
-        <button class="btn-back" onclick="wizardBack()">Atrás</button>
-        <button class="btn-next" ${u.chasisSeleccionados.length > 0 ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
-      `
-    };
-  };
-
-  STEP_RENDERERS[`${uid}-precio`] = () => {
-    const u = formData.unidades[i];
-    const a = calcularAnalisisUnidad(u);
-    let analHtml = '';
-    if (a) {
-      const gciaCls = a.gcia_resultante >= 0 ? 'pos' : 'neg';
-      const dtoCls = a.dto_extra_pedido > 0 ? 'neg' : (a.dto_extra_pedido < 0 ? 'pos' : '');
-      analHtml = `
-        <div class="analisis-card">
-          <h4>Análisis automático</h4>
-          <div class="row"><span class="label">Oferta vigente</span><span class="val">${fmtMoney(a.oferta_vigente_min)}</span></div>
-          <div class="row"><span class="label">Gcia actual</span><span class="val">${fmtPct(a.gcia_vigente_min)}</span></div>
-          <div class="row"><span class="label">Precio lista</span><span class="val">${fmtMoney(a.precio_lista)}</span></div>
-          <div class="row"><span class="label">Dto extra pedido</span><span class="val ${dtoCls}">${fmtPct(a.dto_extra_pedido)}</span></div>
-          <div class="row"><span class="label">Gcia resultante</span><span class="val ${gciaCls}">${fmtPct(a.gcia_resultante)}</span></div>
-        </div>
-      `;
-    }
-    return {
-      body: `
-        <h2>Precio pedido</h2>
-        <p class="step-hint">¿Qué precio pidió el cliente para esta unidad? <strong>Con flete y formulario incluido</strong>.</p>
-        <input id="precioPedidoInput" type="text" inputmode="numeric" placeholder="$0"
-          value="${u.precioPedido != null ? '$' + Math.round(u.precioPedido).toLocaleString('es-AR') : ''}"
-          oninput="onPrecioPedidoInput(${i}, this)">
-        ${analHtml}
-      `,
-      footer: `
-        <button class="btn-back" onclick="wizardBack()">Atrás</button>
-        <button class="btn-next" ${u.precioPedido && u.precioPedido > 0 ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
-      `,
-      onMount: () => { document.getElementById('precioPedidoInput').focus(); }
-    };
-  };
-
-  STEP_RENDERERS[`add-${i+1}`] = () => ({
-    body: `
-      <h2>¿Querés consultar otra unidad más?</h2>
-      <p class="step-hint">Podés agregar hasta 3 unidades por consulta. Llevás ${i+1}.</p>
-      <div class="opt-list">
-        <div class="opt" onclick="addUnidadDecision(true, ${i+1})">
-          <span class="opt-icon">➕</span> Sí, agregar otra unidad
-        </div>
-        <div class="opt" onclick="addUnidadDecision(false, ${i+1})">
-          <span class="opt-icon">✓</span> No, continuar con datos del cliente
-        </div>
-      </div>
-    `,
-    footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
-  });
+// ----- Cantidad de unidades -----
+STEP_RENDERERS['cantidad-unidades'] = () => ({
+  body: `
+    <h2>¿Cuántas unidades vas a consultar?</h2>
+    <p class="step-hint">Hasta 3 modelos distintos en una misma consulta.</p>
+    <div class="opt-list">
+      <div class="opt ${formData.unidades.length === 1 ? 'selected' : ''}" onclick="selectCantidad(1)">1 unidad</div>
+      <div class="opt ${formData.unidades.length === 2 ? 'selected' : ''}" onclick="selectCantidad(2)">2 unidades</div>
+      <div class="opt ${formData.unidades.length === 3 ? 'selected' : ''}" onclick="selectCantidad(3)">3 unidades</div>
+    </div>
+  `,
+  footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
 });
+
+// ----- Modelos en paralelo (1 select por unidad) -----
+STEP_RENDERERS['modelos'] = () => {
+  const modelos = getModelosLibres();
+  const allOk = formData.unidades.every(u => u.modelo);
+  return {
+    body: `
+      <h2>${formData.unidades.length === 1 ? '¿Qué modelo querés consultar?' : 'Modelo de cada unidad'}</h2>
+      <p class="step-hint">${modelos.length} modelos con stock disponible. (cantidad libre entre paréntesis)</p>
+      ${formData.unidades.map((u, idx) => `
+        <div class="field" style="margin-bottom:14px">
+          <label class="field-label">Unidad ${idx + 1}</label>
+          <select onchange="setUnidadModelo(${idx}, this.value)">
+            <option value="">— Elegir modelo —</option>
+            ${modelos.map(m => {
+              const cnt = getChasisLibresPorModelo(m).length;
+              return `<option value="${escapeHtml(m)}" ${u.modelo === m ? 'selected' : ''}>${escapeHtml(m)} (${cnt})</option>`;
+            }).join('')}
+          </select>
+        </div>
+      `).join('')}
+    `,
+    footer: `
+      <button class="btn-back" onclick="wizardBack()">Atrás</button>
+      <button class="btn-next" id="btnNext" ${allOk ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+    `
+  };
+};
+
+// ----- Colores en paralelo -----
+STEP_RENDERERS['colores'] = () => {
+  const allOk = formData.unidades.every(u => u.chasisSeleccionados.length > 0);
+  return {
+    body: `
+      <h2>Elegí los colores</h2>
+      <p class="step-hint">Hasta 3 chasis por unidad. Tocá para seleccionar.</p>
+      ${formData.unidades.map((u, idx) => {
+        const chasis = getChasisLibresPorModelo(u.modelo);
+        return `
+          <div class="resumen-card" style="margin-bottom:14px">
+            <h5>Unidad ${idx+1}: ${escapeHtml(u.modelo || '—')}</h5>
+            <div class="scroll-list" style="max-height:240px; margin-top:10px">
+              ${chasis.length === 0 ? '<div class="empty"><p>Sin chasis libres</p></div>' : chasis.map(c => {
+                const checked = u.chasisSeleccionados.includes(c.serie);
+                const disabled = !checked && u.chasisSeleccionados.length >= 3;
+                return `
+                  <label class="item ${checked ? 'selected' : ''}" style="${disabled ? 'opacity:.4; cursor:not-allowed' : ''}">
+                    <input type="checkbox" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="toggleChasisParalelo(${idx}, '${escapeHtml(c.serie)}')">
+                    <div class="info">
+                      <div class="title">${escapeHtml(c.color || '—')}</div>
+                      <div class="sub">${escapeHtml(c.serie)}</div>
+                    </div>
+                    <div class="right">
+                      ${fmtMoney(c.oferta_vigente)}
+                      ${c.fuente_oferta === 'stock_limitado' ? '<div><span class="badge">LIM</span></div>' : ''}
+                    </div>
+                  </label>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        `;
+      }).join('')}
+    `,
+    footer: `
+      <button class="btn-back" onclick="wizardBack()">Atrás</button>
+      <button class="btn-next" id="btnNext" ${allOk ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+    `
+  };
+};
+
+// ----- Precios en paralelo (con análisis live por unidad) -----
+STEP_RENDERERS['precios'] = () => {
+  const allOk = formData.unidades.every(u => u.precioPedido && u.precioPedido > 0);
+  return {
+    body: `
+      <h2>Precio pedido</h2>
+      <p class="step-hint">Para cada unidad, ingresá el precio que pidió el cliente. <strong>Con flete y formulario incluido</strong>.</p>
+      ${formData.unidades.map((u, idx) => {
+        const colores = u.chasisSeleccionados.map(s => {
+          const c = stockData.find(r => r.serie === s);
+          return c ? c.color : s;
+        }).join(' / ');
+        return `
+          <div class="resumen-card" style="margin-bottom:14px">
+            <h5>Unidad ${idx+1}: ${escapeHtml(u.modelo || '—')}</h5>
+            <p class="muted">Colores: ${escapeHtml(colores) || '—'}</p>
+            <div class="field" style="margin-top:10px">
+              <input id="precioPedido${idx}" type="text" inputmode="numeric" placeholder="$0"
+                value="${u.precioPedido != null ? '$' + Math.round(u.precioPedido).toLocaleString('es-AR') : ''}"
+                oninput="onPrecioPedidoInput(${idx}, this)">
+            </div>
+            <div id="dtoExtra${idx}" class="field-hint" style="font-size:13px; margin-top:8px"></div>
+          </div>
+        `;
+      }).join('')}
+    `,
+    footer: `
+      <button class="btn-back" onclick="wizardBack()">Atrás</button>
+      <button class="btn-next" id="btnNext" ${allOk ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+    `,
+    onMount: () => {
+      formData.unidades.forEach((_, idx) => updateDtoExtra(idx));
+    }
+  };
+};
 
 // ----- Tipo cliente -----
 STEP_RENDERERS['tipo-cliente'] = () => ({
@@ -1095,7 +1080,7 @@ STEP_RENDERERS['resumen'] = () => {
         <h5>Unidad ${idx+1}: ${escapeHtml(u.modelo)}</h5>
         <p>Colores: ${escapeHtml(colores)}</p>
         <div class="precio-row"><span>Precio pedido:</span><strong>${fmtMoney(u.precioPedido)}</strong></div>
-        ${a ? `<div class="precio-row"><span>Gcia resultante:</span><strong style="color:${a.gcia_resultante >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPct(a.gcia_resultante)}</strong></div>` : ''}
+        ${a ? `<div class="precio-row"><span>Dto extra pedido:</span><strong>${fmtPct(a.dto_extra_pedido)}</strong></div>` : ''}
       </div>
     `;
   }).join('');
@@ -1143,12 +1128,19 @@ STEP_RENDERERS['resumen'] = () => {
 };
 
 // ============ Acciones de los steps ============
-function selectModelo(idx, modelo) {
-  formData.unidades[idx].modelo = modelo;
-  formData.unidades[idx].chasisSeleccionados = [];
-  renderStep();
+function selectCantidad(n) {
+  while (formData.unidades.length > n) formData.unidades.pop();
+  while (formData.unidades.length < n) formData.unidades.push({ modelo: null, chasisSeleccionados: [], precioPedido: null });
+  nextStep();
 }
-function toggleChasis(idx, serie) {
+function setUnidadModelo(idx, modelo) {
+  formData.unidades[idx].modelo = modelo || null;
+  formData.unidades[idx].chasisSeleccionados = [];
+  // Habilitar el botón Siguiente sin re-render full
+  const btn = document.getElementById('btnNext');
+  if (btn) btn.disabled = !formData.unidades.every(u => u.modelo);
+}
+function toggleChasisParalelo(idx, serie) {
   const u = formData.unidades[idx];
   const i = u.chasisSeleccionados.indexOf(serie);
   if (i >= 0) u.chasisSeleccionados.splice(i, 1);
@@ -1159,23 +1151,20 @@ function onPrecioPedidoInput(idx, el) {
   const raw = el.value.replace(/[^\d]/g, '');
   formData.unidades[idx].precioPedido = raw ? parseInt(raw, 10) : null;
   el.value = raw ? '$' + parseInt(raw, 10).toLocaleString('es-AR') : '';
-  // Re-renderizar para mostrar análisis actualizado y habilitar el botón
-  renderStep();
-  // Mantener foco en el input
-  setTimeout(() => {
-    const e = document.getElementById('precioPedidoInput');
-    if (e) { e.focus(); const v = e.value; e.value = ''; e.value = v; }
-  }, 0);
+  // Update solo el análisis live de esta unidad (sin re-render full → no pierde foco)
+  updateDtoExtra(idx);
+  // Habilitar botón Siguiente
+  const btn = document.getElementById('btnNext');
+  if (btn) btn.disabled = !formData.unidades.every(u => u.precioPedido && u.precioPedido > 0);
 }
-function addUnidadDecision(addMore, nextIdx) {
-  if (addMore) {
-    if (formData.unidades.length < nextIdx + 1) formData.unidades.push({ modelo: null, chasisSeleccionados: [], precioPedido: null });
-    goToStep(`u${nextIdx}-modelo`);
-  } else {
-    // Truncar unidades extra (en caso que haya pasado y vuelto)
-    formData.unidades = formData.unidades.slice(0, nextIdx);
-    goToStep('tipo-cliente');
-  }
+function updateDtoExtra(idx) {
+  const div = document.getElementById('dtoExtra' + idx);
+  if (!div) return;
+  const u = formData.unidades[idx];
+  const a = calcularAnalisisUnidad(u);
+  if (!a) { div.innerHTML = '<span style="color:var(--vw-grey-3)">Cargá el precio para ver el análisis</span>'; return; }
+  const color = a.dto_extra_pedido > 0 ? 'var(--red)' : (a.dto_extra_pedido < 0 ? 'var(--green)' : 'var(--vw-grey-4)');
+  div.innerHTML = `Dto extra pedido: <strong style="color:${color}">${fmtPct(a.dto_extra_pedido)}</strong> · Oferta vigente: ${fmtMoney(a.oferta_vigente_min)}`;
 }
 function selectTipoCliente(t) { formData.tipoCliente = t; nextStep(); }
 function selectFuenteDato(v) { formData.fuenteDato = v; nextStep(); }
@@ -1446,6 +1435,7 @@ function abrirDetalle(consultaId) {
   const overlay = document.getElementById('modalOverlay');
   const cont = document.getElementById('modalContent');
   const cliente = c.tipo_cliente === 'particular' ? `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}`.trim() : (c.reventa_nombre || '');
+  const showGcia = currentMode === 'admin'; // gcia solo visible para admin
   const itemsHtml = (c.items || []).map((it, i) => {
     const chasis = (it.chasis || []).map(ch =>
       `<div style="font-size:12px; padding:4px 0; border-bottom:1px dashed var(--vw-grey-2)">
@@ -1461,7 +1451,7 @@ function abrirDetalle(consultaId) {
           <div><span class="muted">Precio pedido:</span> <strong>${fmtMoney(it.precio_pedido)}</strong></div>
           <div><span class="muted">Oferta vigente:</span> <strong>${fmtMoney(it.oferta_vigente_min)}</strong></div>
           <div><span class="muted">Dto extra pedido:</span> <strong>${fmtPct(it.dto_extra_pedido)}</strong></div>
-          <div><span class="muted">Gcia resultante:</span> <strong style="color:${(it.gcia_resultante||0) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPct(it.gcia_resultante)}</strong></div>
+          ${showGcia ? `<div><span class="muted">Gcia resultante:</span> <strong style="color:${(it.gcia_resultante||0) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPct(it.gcia_resultante)}</strong></div>` : ''}
         </div>
       </div>
     `;
