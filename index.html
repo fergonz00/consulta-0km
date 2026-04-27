@@ -1,0 +1,1481 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Consulta 0KM — TGA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --vw-blue: #001E50;
+  --vw-blue-light: #00437A;
+  --vw-white: #FFFFFF;
+  --vw-grey-1: #F5F5F5;
+  --vw-grey-2: #E5E5E5;
+  --vw-grey-3: #999999;
+  --vw-grey-4: #666666;
+  --vw-black: #1A1A1A;
+  --green: #10B981;
+  --green-light: #D1FAE5;
+  --orange: #F59E0B;
+  --orange-light: #FEF3C7;
+  --red: #EF4444;
+  --red-light: #FEE2E2;
+  --radius: 12px;
+  --shadow: 0 2px 12px rgba(0,30,80,0.08);
+  --shadow-lg: 0 8px 32px rgba(0,30,80,0.12);
+  --font: 'DM Sans', sans-serif;
+  --mono: 'JetBrains Mono', monospace;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: var(--font); background: var(--vw-grey-1); color: var(--vw-black); min-height:100vh; -webkit-font-smoothing: antialiased; }
+button { font-family: var(--font); cursor: pointer; border: none; }
+input, select, textarea { font-family: var(--font); }
+.hidden { display:none !important; }
+
+/* ============ LOGIN ============ */
+.login-screen { min-height:100vh; display:flex; align-items:center; justify-content:center;
+  background: linear-gradient(135deg, var(--vw-blue) 0%, var(--vw-blue-light) 100%); padding:20px; }
+.login-box { background:#fff; border-radius:var(--radius); padding:40px 32px;
+  width:100%; max-width:380px; box-shadow:var(--shadow-lg); text-align:center; }
+.login-box h1 { font-size:22px; font-weight:700; color:var(--vw-blue); margin-bottom:6px; }
+.login-box p { font-size:14px; color:var(--vw-grey-3); margin-bottom:28px; }
+.login-box input { width:100%; padding:14px 16px; border:2px solid var(--vw-grey-2); border-radius:8px;
+  font-size:15px; margin-bottom:14px; outline:none; transition:border-color .2s; }
+.login-box input:focus { border-color:var(--vw-blue); }
+.login-box button { width:100%; padding:14px; background:var(--vw-blue); color:#fff;
+  font-size:15px; font-weight:600; border-radius:8px; transition:background .2s; }
+.login-box button:hover { background:var(--vw-blue-light); }
+.login-error { color:var(--red); font-size:13px; margin-top:12px; display:none; }
+
+/* ============ MODE SELECT ============ */
+.mode-screen { min-height:100vh; display:flex; align-items:center; justify-content:center;
+  background:var(--vw-grey-1); padding:20px; }
+.mode-box { background:#fff; border-radius:var(--radius); padding:40px 32px;
+  width:100%; max-width:380px; box-shadow:var(--shadow); text-align:center; }
+.mode-box h2 { color:var(--vw-blue); margin-bottom:20px; }
+.mode-box .modes { display:flex; flex-direction:column; gap:10px; }
+.mode-box button { padding:18px; font-size:16px; font-weight:600; border-radius:8px;
+  background:var(--vw-blue); color:#fff; }
+
+/* ============ HEADER ============ */
+.app-header { background:var(--vw-blue); color:#fff; padding:14px 20px;
+  display:flex; align-items:center; justify-content:space-between;
+  position:sticky; top:0; z-index:100; }
+.app-header h1 { font-size:17px; font-weight:600; }
+.app-header .right { display:flex; align-items:center; gap:12px; }
+.app-header .user-info { font-size:13px; opacity:.85; }
+.app-header button { background:rgba(255,255,255,0.15); color:#fff;
+  padding:8px 14px; border-radius:6px; font-size:13px; font-weight:500; }
+.app-header button:hover { background:rgba(255,255,255,0.25); }
+
+/* ============ TABS ============ */
+.tabs { display:flex; background:#fff; border-bottom:1px solid var(--vw-grey-2);
+  position:sticky; top:50px; z-index:99; }
+.tabs button { flex:1; padding:14px; background:none; color:var(--vw-grey-4);
+  font-size:14px; font-weight:600; border-bottom:3px solid transparent; }
+.tabs button.active { color:var(--vw-blue); border-bottom-color:var(--vw-blue); }
+
+/* ============ MAIN / CONTAINERS ============ */
+.container { max-width:760px; margin:0 auto; padding:20px 16px; }
+.container.narrow { max-width:600px; }
+
+/* ============ TOOLBAR ============ */
+.toolbar { display:flex; gap:10px; margin-bottom:16px; align-items:center; }
+.toolbar input[type=text] { flex:1; padding:10px 14px; border:2px solid var(--vw-grey-2);
+  border-radius:8px; font-size:14px; outline:none; }
+.toolbar input[type=text]:focus { border-color:var(--vw-blue); }
+.btn-primary { padding:11px 18px; background:var(--vw-blue); color:#fff;
+  border-radius:8px; font-size:14px; font-weight:600; }
+.btn-primary:hover { background:var(--vw-blue-light); }
+.btn-secondary { padding:11px 18px; background:var(--vw-grey-2); color:var(--vw-grey-4);
+  border-radius:8px; font-size:14px; font-weight:600; }
+.btn-secondary:hover { background:var(--vw-grey-3); color:#fff; }
+.btn-success { padding:11px 18px; background:var(--green); color:#fff;
+  border-radius:8px; font-size:14px; font-weight:600; }
+.btn-danger { padding:11px 18px; background:var(--red); color:#fff;
+  border-radius:8px; font-size:14px; font-weight:600; }
+
+/* ============ CARDS ============ */
+.card { background:#fff; border-radius:var(--radius); padding:18px 20px;
+  box-shadow:var(--shadow); margin-bottom:14px; }
+.card h3 { font-size:16px; color:var(--vw-blue); margin-bottom:6px; }
+.card .meta { font-size:12px; color:var(--vw-grey-3); }
+
+.consulta-card { cursor:pointer; transition:box-shadow .2s; }
+.consulta-card:hover { box-shadow:var(--shadow-lg); }
+.consulta-card .top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+.consulta-card .top h3 { font-size:15px; }
+.consulta-card .estado { font-size:11px; font-weight:600; padding:4px 10px;
+  border-radius:20px; text-transform:uppercase; letter-spacing:.5px; }
+.estado.pendiente { background:var(--orange-light); color:var(--orange); }
+.estado.aceptada { background:var(--green-light); color:var(--green); }
+.estado.rechazada { background:var(--red-light); color:var(--red); }
+.consulta-card .body { margin-top:10px; font-size:13px; color:var(--vw-grey-4); }
+.consulta-card .body strong { color:var(--vw-black); }
+.consulta-card .resumen-units { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.consulta-card .resumen-units span { background:var(--vw-grey-1); padding:4px 10px;
+  border-radius:6px; font-size:12px; }
+
+/* ============ FORM (nueva consulta) ============ */
+.form-section { background:#fff; border-radius:var(--radius); padding:22px 22px;
+  box-shadow:var(--shadow); margin-bottom:16px; }
+.form-section > h2 { color:var(--vw-blue); font-size:17px; margin-bottom:16px;
+  display:flex; align-items:center; gap:10px; }
+.form-section > h2 .num { background:var(--vw-blue); color:#fff; width:24px; height:24px;
+  border-radius:50%; display:flex; align-items:center; justify-content:center;
+  font-size:13px; font-weight:700; }
+
+.field { margin-bottom:14px; }
+.field label { display:block; font-size:13px; font-weight:500;
+  color:var(--vw-grey-4); margin-bottom:6px; }
+.field .hint { font-size:11px; color:var(--vw-grey-3); margin-top:4px; }
+.field input[type=text], .field input[type=number], .field input[type=tel],
+.field select, .field textarea {
+  width:100%; padding:11px 14px; border:2px solid var(--vw-grey-2); border-radius:8px;
+  font-size:14px; outline:none; background:#fff; transition:border-color .2s;
+  -webkit-appearance:none; }
+.field select { background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23999' stroke-width='2' fill='none'/%3E%3C/svg%3E") no-repeat right 14px center; padding-right:36px; }
+.field input:focus, .field select:focus, .field textarea:focus { border-color:var(--vw-blue); }
+.field-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+@media (max-width:480px) { .field-row { grid-template-columns:1fr; } }
+
+.radio-group, .checkbox-group { display:flex; flex-direction:column; gap:8px; }
+.radio-group label, .checkbox-group label { display:flex; align-items:center; gap:10px;
+  padding:10px 14px; border:2px solid var(--vw-grey-2); border-radius:8px;
+  cursor:pointer; transition:border-color .2s, background .2s; font-weight:500;
+  font-size:14px; color:var(--vw-grey-4); }
+.radio-group label:hover, .checkbox-group label:hover { border-color:var(--vw-blue-light); }
+.radio-group input, .checkbox-group input { width:18px; height:18px; cursor:pointer; }
+.radio-group label:has(input:checked), .checkbox-group label:has(input:checked) {
+  border-color:var(--vw-blue); background:#F0F4FA; color:var(--vw-blue); }
+
+.radio-row { display:flex; gap:8px; flex-wrap:wrap; }
+.radio-row label { flex:1; min-width:120px; justify-content:center; }
+
+/* ============ UNIDAD CARD ============ */
+.unidad-card { background:var(--vw-grey-1); border-radius:10px; padding:18px;
+  margin-bottom:12px; border:1px solid var(--vw-grey-2); }
+.unidad-card .uc-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+.unidad-card .uc-header h4 { color:var(--vw-blue); font-size:14px; }
+.unidad-card .uc-header .remove { background:none; color:var(--red); font-size:13px; font-weight:600; padding:4px 8px; }
+.unidad-card .chasis-grid { display:flex; flex-direction:column; gap:6px; max-height:200px; overflow-y:auto;
+  border:1px solid var(--vw-grey-2); border-radius:8px; padding:6px; background:#fff; }
+.unidad-card .chasis-row { display:flex; align-items:center; gap:10px; padding:8px;
+  border-radius:6px; cursor:pointer; }
+.unidad-card .chasis-row:hover { background:var(--vw-grey-1); }
+.unidad-card .chasis-row.selected { background:#F0F4FA; }
+.unidad-card .chasis-row input { width:16px; height:16px; }
+.unidad-card .chasis-row .info { flex:1; font-size:13px; }
+.unidad-card .chasis-row .color { font-weight:600; color:var(--vw-blue); }
+.unidad-card .chasis-row .serie { font-family:var(--mono); font-size:11px; color:var(--vw-grey-3); }
+.unidad-card .chasis-row .precio { text-align:right; font-weight:600; }
+.unidad-card .chasis-row .precio .badge { display:inline-block; font-size:10px; padding:2px 6px;
+  border-radius:4px; background:var(--orange-light); color:var(--orange); margin-left:6px; }
+
+.unidad-card .analisis { background:#fff; border-radius:8px; padding:14px;
+  margin-top:14px; border:1px solid var(--vw-grey-2); }
+.unidad-card .analisis h5 { font-size:12px; color:var(--vw-grey-3); text-transform:uppercase;
+  letter-spacing:1px; margin-bottom:8px; }
+.unidad-card .analisis .row { display:flex; justify-content:space-between; padding:6px 0;
+  font-size:13px; border-bottom:1px dashed var(--vw-grey-2); }
+.unidad-card .analisis .row:last-child { border-bottom:none; }
+.unidad-card .analisis .row .label { color:var(--vw-grey-4); }
+.unidad-card .analisis .row .val { font-family:var(--mono); font-weight:600; }
+.unidad-card .analisis .row .val.pos { color:var(--green); }
+.unidad-card .analisis .row .val.neg { color:var(--red); }
+
+.btn-add-unidad { width:100%; padding:14px; border:2px dashed var(--vw-grey-3);
+  background:transparent; color:var(--vw-grey-4); border-radius:10px;
+  font-size:14px; font-weight:600; transition:all .2s; }
+.btn-add-unidad:hover { border-color:var(--vw-blue); color:var(--vw-blue); }
+.btn-add-unidad:disabled { opacity:.4; cursor:not-allowed; }
+
+/* ============ MODAL ============ */
+.modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6);
+  display:flex; align-items:center; justify-content:center; z-index:1000;
+  padding:16px; overflow-y:auto; }
+.modal { background:#fff; border-radius:var(--radius); width:100%; max-width:680px;
+  max-height:90vh; overflow-y:auto; box-shadow:var(--shadow-lg); }
+.modal-header { padding:20px 24px; border-bottom:1px solid var(--vw-grey-2);
+  display:flex; justify-content:space-between; align-items:center; position:sticky; top:0; background:#fff; z-index:1; }
+.modal-header h2 { font-size:18px; color:var(--vw-blue); }
+.modal-close { background:none; font-size:24px; color:var(--vw-grey-4); padding:0; line-height:1; }
+.modal-body { padding:20px 24px; }
+.modal-footer { padding:16px 24px; border-top:1px solid var(--vw-grey-2);
+  display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap;
+  position:sticky; bottom:0; background:#fff; }
+
+.detalle-section { margin-bottom:20px; }
+.detalle-section h4 { font-size:12px; color:var(--vw-grey-3); text-transform:uppercase;
+  letter-spacing:1px; margin-bottom:8px; }
+.detalle-section .kv { display:grid; grid-template-columns:140px 1fr; gap:6px 12px; font-size:13px; }
+.detalle-section .kv .k { color:var(--vw-grey-4); }
+.detalle-section .kv .v { color:var(--vw-black); font-weight:500; }
+
+/* ============ TOAST ============ */
+.toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+  background:var(--vw-black); color:#fff; padding:12px 22px; border-radius:8px;
+  font-size:14px; box-shadow:var(--shadow-lg); z-index:2000; opacity:0;
+  transition:opacity .3s, transform .3s; pointer-events:none; }
+.toast.show { opacity:1; transform:translate(-50%, -8px); }
+
+/* ============ LOADING ============ */
+.loading { position:fixed; inset:0; background:rgba(255,255,255,0.85);
+  display:flex; align-items:center; justify-content:center; flex-direction:column;
+  gap:14px; z-index:5000; }
+.spinner { width:40px; height:40px; border:4px solid var(--vw-grey-2);
+  border-top-color:var(--vw-blue); border-radius:50%; animation:spin 0.8s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* ============ EMPTY ============ */
+.empty { text-align:center; padding:40px 20px; color:var(--vw-grey-3); }
+.empty .icon { font-size:42px; margin-bottom:10px; opacity:.6; }
+.empty p { font-size:14px; }
+
+/* ============ MISC ============ */
+.muted { color:var(--vw-grey-3); font-size:12px; }
+.tag-badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; }
+.tag-badge.lim { background:var(--orange-light); color:var(--orange); }
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<div id="loginScreen" class="login-screen">
+  <div class="login-box">
+    <h1>Consulta 0KM</h1>
+    <p>Tito González Automotores</p>
+    <input id="loginUser" type="text" placeholder="Usuario" autocomplete="username">
+    <input id="loginPass" type="password" placeholder="Clave" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
+    <button onclick="login()">Entrar</button>
+    <div id="loginError" class="login-error">Usuario o clave incorrectos</div>
+  </div>
+</div>
+
+<!-- ============ MODE SELECT ============ -->
+<div id="modeScreen" class="mode-screen hidden">
+  <div class="mode-box">
+    <h2>Hola <span id="modeUser"></span></h2>
+    <p style="color:var(--vw-grey-3); margin-bottom:24px; font-size:14px">¿Con qué rol querés entrar?</p>
+    <div class="modes" id="modeButtons"></div>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="appScreen" class="hidden">
+  <header class="app-header">
+    <h1>Consulta 0KM</h1>
+    <div class="right">
+      <span class="user-info" id="userInfo"></span>
+      <button onclick="logout()">Salir</button>
+    </div>
+  </header>
+
+  <!-- ============ VENDEDOR ============ -->
+  <div id="vendedorView" class="hidden">
+    <!-- Lista mis consultas -->
+    <div id="vendedorList">
+      <div class="container">
+        <div class="toolbar">
+          <input type="text" id="vSearch" placeholder="Buscar consulta..." oninput="renderVendedorList()">
+          <button class="btn-primary" onclick="showNuevaConsulta()">+ Nueva consulta</button>
+        </div>
+        <div id="misConsultasList"></div>
+      </div>
+    </div>
+
+    <!-- Form nueva consulta -->
+    <div id="vendedorForm" class="hidden">
+      <div class="container">
+        <div style="margin-bottom:16px">
+          <button class="btn-secondary" onclick="cancelarNuevaConsulta()">← Volver</button>
+        </div>
+
+        <div class="form-section">
+          <h2><span class="num">1</span>Unidades a consultar</h2>
+          <p class="muted" style="margin-bottom:14px">Hasta 3 unidades por consulta. Cada unidad puede tener hasta 3 chasis (mismo modelo y versión, distintos colores).</p>
+          <div id="unidadesContainer"></div>
+          <button class="btn-add-unidad" id="btnAddUnidad" onclick="addUnidad()">+ Agregar otra unidad</button>
+        </div>
+
+        <div class="form-section">
+          <h2><span class="num">2</span>Datos del cliente</h2>
+
+          <div class="field">
+            <label>Tipo de cliente *</label>
+            <div class="radio-row">
+              <label><input type="radio" name="tipoCliente" value="particular" onchange="onTipoClienteChange()"> Particular</label>
+              <label><input type="radio" name="tipoCliente" value="reventa" onchange="onTipoClienteChange()"> Reventa</label>
+            </div>
+          </div>
+
+          <!-- Particular -->
+          <div id="formParticular" class="hidden">
+            <div class="field-row">
+              <div class="field">
+                <label>Nombre *</label>
+                <input id="cliNombre" type="text">
+              </div>
+              <div class="field">
+                <label>Apellido *</label>
+                <input id="cliApellido" type="text">
+              </div>
+            </div>
+          </div>
+
+          <!-- Reventa -->
+          <div id="formReventa" class="hidden">
+            <div class="field">
+              <label>Nombre del reventa *</label>
+              <input id="reventaNombre" type="text">
+            </div>
+          </div>
+
+          <!-- Provincia + Localidad (común) -->
+          <div id="formUbicacion" class="hidden">
+            <div class="field-row">
+              <div class="field">
+                <label>Provincia *</label>
+                <select id="provincia">
+                  <option value="">— Elegir —</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Localidad *</label>
+                <input id="localidad" type="text">
+              </div>
+            </div>
+          </div>
+
+          <!-- Fuente del dato (solo particular) -->
+          <div id="formFuenteDato" class="hidden">
+            <div class="field">
+              <label>¿De dónde vino el dato? *</label>
+              <div class="radio-group" id="fuenteDatoOpts">
+                <label><input type="radio" name="fuenteDato" value="referido" onchange="onFuenteDatoChange()"> Referido</label>
+                <label><input type="radio" name="fuenteDato" value="salon" onchange="onFuenteDatoChange()"> Salón</label>
+                <label><input type="radio" name="fuenteDato" value="redes" onchange="onFuenteDatoChange()"> Instagram o redes</label>
+                <label><input type="radio" name="fuenteDato" value="tu0km" onchange="onFuenteDatoChange()"> Tu0KM</label>
+                <label><input type="radio" name="fuenteDato" value="mercadolibre" onchange="onFuenteDatoChange()"> Mercadolibre</label>
+                <label><input type="radio" name="fuenteDato" value="otro" onchange="onFuenteDatoChange()"> Otro</label>
+              </div>
+            </div>
+            <div class="field hidden" id="fuenteOtroWrap">
+              <label>¿Cuál? *</label>
+              <input id="fuenteOtro" type="text">
+            </div>
+          </div>
+
+          <!-- Tiene usado (solo particular) -->
+          <div id="formUsado" class="hidden">
+            <div class="field">
+              <label>¿Tiene usado para entregar y tasar? *</label>
+              <div class="radio-row">
+                <label><input type="radio" name="tieneUsado" value="si"> Sí</label>
+                <label><input type="radio" name="tieneUsado" value="no"> No</label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Financiación -->
+          <div id="formFinancia" class="hidden">
+            <div class="field">
+              <label id="financiaLabel">¿Financia? *</label>
+              <div class="radio-row">
+                <label><input type="radio" name="financia" value="si" onchange="onFinanciaChange()"> Sí</label>
+                <label><input type="radio" name="financia" value="no" onchange="onFinanciaChange()"> No</label>
+              </div>
+            </div>
+
+            <div id="financiaDetalle" class="hidden">
+              <!-- Entidad (solo particular) -->
+              <div class="field hidden" id="financiaEntidadWrap">
+                <label>¿Con qué entidad? *</label>
+                <div class="radio-group">
+                  <label><input type="radio" name="finEntidad" value="vwfs" onchange="onFinEntidadChange()"> VWFS</label>
+                  <label><input type="radio" name="finEntidad" value="tg" onchange="onFinEntidadChange()"> TG</label>
+                  <label><input type="radio" name="finEntidad" value="otros" onchange="onFinEntidadChange()"> Otros</label>
+                </div>
+              </div>
+              <div class="field hidden" id="finEntidadOtroWrap">
+                <label>¿Cuál entidad? *</label>
+                <input id="finEntidadOtro" type="text">
+              </div>
+
+              <div class="field">
+                <label>Monto a financiar *</label>
+                <input id="finMonto" type="text" inputmode="numeric" oninput="onFinMontoInput()" placeholder="$0">
+                <div class="hint" id="finPctHint"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- VS otro presupuesto -->
+          <div id="formVsOtro" class="hidden">
+            <div class="field">
+              <label>¿Lo pide contra otro presupuesto de otro concesionario? *</label>
+              <div class="radio-group">
+                <label><input type="radio" name="vsOtro" value="si" onchange="onVsOtroChange()"> Sí</label>
+                <label><input type="radio" name="vsOtro" value="no" onchange="onVsOtroChange()"> No</label>
+                <label><input type="radio" name="vsOtro" value="no_quiere_pasar" onchange="onVsOtroChange()"> No quiere pasar el concesionario</label>
+              </div>
+            </div>
+            <div id="vsOtroDetalle" class="hidden">
+              <div class="field-row">
+                <div class="field">
+                  <label>Concesionario *</label>
+                  <input id="conceNombre" type="text">
+                </div>
+                <div class="field">
+                  <label>Precio (con FyF) *</label>
+                  <input id="concePrecio" type="text" inputmode="numeric" placeholder="$0" oninput="formatPrecioInput(this)">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex; gap:10px; margin-bottom:30px">
+          <button class="btn-secondary" style="flex:1" onclick="cancelarNuevaConsulta()">Cancelar</button>
+          <button class="btn-success" style="flex:2" onclick="submitConsulta()">Enviar consulta</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ ADMIN ============ -->
+  <div id="adminView" class="hidden">
+    <div class="tabs">
+      <button id="tabPendientes" class="active" onclick="setAdminTab('pendiente')">Pendientes</button>
+      <button id="tabResueltas" onclick="setAdminTab('resueltas')">Resueltas</button>
+    </div>
+    <div class="container">
+      <div class="toolbar">
+        <input type="text" id="aSearch" placeholder="Buscar por vendedor, modelo, cliente..." oninput="renderAdminList()">
+      </div>
+      <div id="adminConsultasList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL DETALLE ============ -->
+<div id="modalOverlay" class="modal-overlay hidden" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modalContent"></div>
+</div>
+
+<!-- ============ TOAST + LOADING ============ -->
+<div id="toast" class="toast"></div>
+<div id="loading" class="loading hidden"><div class="spinner"></div><div id="loadingMsg" style="color:var(--vw-grey-4); font-size:13px"></div></div>
+
+<script>
+// ============ CONFIG ============
+const SUPABASE_URL = 'https://wjfglsafgaltusmbnccl.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndqZmdsc2FmZ2FsdHVzbWJuY2NsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MzM2OTksImV4cCI6MjA4OTAwOTY5OX0.OOwgyKDNQsbBaGDaL0OhJfc8eOsCClvvAPW0VFBKrOA';
+const STOCK_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=0&single=true&output=csv';
+const STOCK_LIM_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=1137307261&single=true&output=csv';
+const FYF = 1110000;
+const ADMIN_PHONE = '5491156559854';
+const ADMIN_KEY = '6552632';
+const PROVINCIAS_AR = ['CABA','Buenos Aires','Catamarca','Chaco','Chubut','Córdoba','Corrientes','Entre Ríos','Formosa','Jujuy','La Pampa','La Rioja','Mendoza','Misiones','Neuquén','Río Negro','Salta','San Juan','San Luis','Santa Cruz','Santa Fe','Santiago del Estero','Tierra del Fuego','Tucumán'];
+
+// ============ STATE ============
+let currentUser = null;
+let currentMode = null; // 'admin' | 'vendedor'
+let stockData = [];     // chasis libres con su oferta vigente
+let stockLimMap = {};   // serie -> {dto_nuevo, gcia_resultante, oferta_final_fyf}
+let myConsultas = [];
+let adminConsultas = [];
+let adminTab = 'pendiente'; // 'pendiente' | 'resueltas'
+
+// Estado del form de nueva consulta
+let unidades = []; // [{modelo, version, chasisSeleccionados:[serie,...], precioPedido}]
+
+// ============ HELPERS ============
+async function sbFetch(path, options = {}) {
+  const url = SUPABASE_URL + '/rest/v1/' + path;
+  const headers = {
+    'apikey': SUPABASE_KEY,
+    'Authorization': 'Bearer ' + SUPABASE_KEY,
+    'Content-Type': 'application/json',
+    'Prefer': options.prefer || 'return=representation'
+  };
+  const res = await fetch(url, { ...options, headers: { ...headers, ...options.headers } });
+  if (!res.ok) { const t = await res.text(); throw new Error(t); }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+function parseCSVLine(line) {
+  const out = []; let cur = ''; let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+    else if (c === ',' && !inQ) { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+function parseCSV(text) {
+  const lines = text.replace(/\r/g, '').split('\n').filter(l => l.length > 0);
+  if (lines.length < 2) return [];
+  const headers = parseCSVLine(lines[0]).map(h => h.trim().replace(/"/g, ''));
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const vals = parseCSVLine(lines[i]);
+    const obj = {};
+    headers.forEach((h, idx) => obj[h] = (vals[idx] || '').trim().replace(/^"|"$/g, ''));
+    rows.push(obj);
+  }
+  return rows;
+}
+
+// "$52,933,650" -> 52933650 ; "$0" -> 0 ; "" -> NaN
+function parseMoney(s) {
+  if (s == null) return NaN;
+  const clean = String(s).replace(/[^\d.\-]/g, '');
+  if (!clean) return NaN;
+  return parseFloat(clean);
+}
+// "15.00%" -> 0.15 ; "1.67%" -> 0.0167
+function parsePct(s) {
+  if (s == null) return NaN;
+  const clean = String(s).replace(/[^\d.\-]/g, '');
+  if (!clean) return NaN;
+  return parseFloat(clean) / 100;
+}
+function fmtMoney(n) {
+  if (n == null || isNaN(n)) return '—';
+  return '$' + Math.round(n).toLocaleString('es-AR');
+}
+function fmtPct(n) {
+  if (n == null || isNaN(n)) return '—';
+  return (n * 100).toFixed(2) + '%';
+}
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+}
+function fmtDate(s) {
+  if (!s) return '—';
+  const d = new Date(s);
+  return d.toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function showLoading(msg) { document.getElementById('loadingMsg').textContent = msg || ''; document.getElementById('loading').classList.remove('hidden'); }
+function hideLoading() { document.getElementById('loading').classList.add('hidden'); }
+function showToast(msg, dur = 2500) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), dur);
+}
+
+function formatPrecioInput(el) {
+  const raw = el.value.replace(/[^\d]/g, '');
+  if (!raw) { el.value = ''; return; }
+  el.value = '$' + parseInt(raw, 10).toLocaleString('es-AR');
+}
+
+// ============ SESSION ============
+function guardarSesion() {
+  if (!currentUser) return;
+  try { localStorage.setItem('consulta0km_user', JSON.stringify({ id: currentUser.id, mode: currentMode })); } catch(e) {}
+}
+function cargarSesion() {
+  try {
+    const raw = localStorage.getItem('consulta0km_user');
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch(e) { return null; }
+}
+function limpiarSesion() { try { localStorage.removeItem('consulta0km_user'); } catch(e) {} }
+
+// ============ LOGIN ============
+async function login() {
+  const user = (document.getElementById('loginUser').value || '').trim().toLowerCase();
+  const pass = (document.getElementById('loginPass').value || '').trim();
+  if (!user || !pass) return;
+  try {
+    showLoading('Entrando...');
+    const data = await sbFetch(`tasador_usuarios?usuario=eq.${encodeURIComponent(user)}&clave=eq.${encodeURIComponent(pass)}&activo=eq.true`);
+    if (!data || data.length === 0) {
+      hideLoading();
+      document.getElementById('loginError').style.display = 'block';
+      return;
+    }
+    currentUser = data[0];
+    currentUser.rolesArr = (Array.isArray(currentUser.roles) && currentUser.roles.length > 0)
+      ? currentUser.roles
+      : (currentUser.rol ? [currentUser.rol] : ['vendedor']);
+    document.getElementById('loginScreen').classList.add('hidden');
+    await cargarDatos();
+    hideLoading();
+    elegirModo();
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    document.getElementById('loginError').style.display = 'block';
+  }
+}
+
+function logout() {
+  limpiarSesion();
+  currentUser = null;
+  currentMode = null;
+  document.getElementById('appScreen').classList.add('hidden');
+  document.getElementById('modeScreen').classList.add('hidden');
+  document.getElementById('loginScreen').classList.remove('hidden');
+  document.getElementById('loginUser').value = '';
+  document.getElementById('loginPass').value = '';
+  document.getElementById('loginError').style.display = 'none';
+}
+
+function elegirModo() {
+  const roles = currentUser.rolesArr || ['vendedor'];
+  const tieneAdmin = roles.includes('admin');
+  // En este módulo solo aplican 'admin' y 'vendedor'. Cualquier otro rol cae a 'vendedor'.
+  if (tieneAdmin && roles.length > 1) {
+    document.getElementById('modeUser').textContent = currentUser.nombre || currentUser.usuario;
+    const cont = document.getElementById('modeButtons');
+    cont.innerHTML = `
+      <button onclick="entrarComo('vendedor')">Vendedor</button>
+      <button onclick="entrarComo('admin')">Administrador</button>
+    `;
+    document.getElementById('modeScreen').classList.remove('hidden');
+  } else {
+    entrarComo(tieneAdmin ? 'admin' : 'vendedor');
+  }
+}
+function entrarComo(modo) {
+  currentMode = modo;
+  guardarSesion();
+  document.getElementById('modeScreen').classList.add('hidden');
+  document.getElementById('appScreen').classList.remove('hidden');
+  document.getElementById('userInfo').textContent = (currentUser.nombre || currentUser.usuario) + (modo === 'admin' ? ' · Admin' : '');
+  if (modo === 'admin') {
+    document.getElementById('vendedorView').classList.add('hidden');
+    document.getElementById('adminView').classList.remove('hidden');
+    cargarConsultasAdmin();
+  } else {
+    document.getElementById('adminView').classList.add('hidden');
+    document.getElementById('vendedorView').classList.remove('hidden');
+    document.getElementById('vendedorList').classList.remove('hidden');
+    document.getElementById('vendedorForm').classList.add('hidden');
+    cargarMisConsultas();
+  }
+}
+
+// ============ CARGAR DATOS DE STOCK ============
+async function cargarDatos() {
+  showLoading('Cargando stock...');
+  try {
+    const [resStock, resLim] = await Promise.all([
+      fetch(STOCK_CSV).then(r => r.text()),
+      fetch(STOCK_LIM_CSV).then(r => r.text())
+    ]);
+    const rawStock = parseCSV(resStock);
+    const rawLim = parseCSV(resLim);
+
+    stockLimMap = {};
+    rawLim.forEach(r => {
+      const serie = (r.serie || '').trim();
+      if (!serie) return;
+      stockLimMap[serie] = {
+        dto_nuevo: parsePct(r.dto_nuevo),
+        gcia_resultante: parsePct(r.gcia_resultante),
+        oferta_final_fyf: parseMoney(r.oferta_final_fyf)
+      };
+    });
+
+    stockData = rawStock.map(r => {
+      const serie = (r.serie || '').trim();
+      const disponibilidad = (r.disponibilidad || '').trim();
+      const libre = disponibilidad === '#N/A';
+      const oferta_baratito = parseMoney(r.oferta_baratito);
+      const gcia_actual = parsePct(r.gcia_actual);
+      const precio_lista = parseMoney(r.precio_lista);
+      // override stock_limitado
+      const lim = stockLimMap[serie];
+      const oferta_vigente = lim && !isNaN(lim.oferta_final_fyf) ? lim.oferta_final_fyf : oferta_baratito;
+      const gcia_vigente = lim && !isNaN(lim.gcia_resultante) ? lim.gcia_resultante : gcia_actual;
+      const fuente_oferta = lim ? 'stock_limitado' : 'baratito';
+      return {
+        serie, modelo: (r.modelo || '').trim(), color: (r.color || '').trim(),
+        libre, oferta_baratito, gcia_actual, precio_lista,
+        oferta_vigente, gcia_vigente, fuente_oferta
+      };
+    }).filter(r => r.serie && r.modelo);
+  } catch(e) {
+    console.error('Error cargando stock:', e);
+    showToast('Error cargando stock');
+  } finally {
+    hideLoading();
+  }
+}
+
+function getModelosLibres() {
+  const set = new Set();
+  stockData.forEach(r => { if (r.libre && r.modelo) set.add(r.modelo); });
+  return Array.from(set).sort();
+}
+function getVersionesLibres(modelo) {
+  // En este sheet "modelo" ya incluye la versión completa (ej: "VW Amarok Comfortline TDI MT 4x2 G2 MY26").
+  // El dato no separa modelo/versión; usamos el campo modelo entero como llave.
+  // Devolvemos placeholder para forzar el step.
+  return [modelo];
+}
+function getChasisLibres(modelo) {
+  return stockData.filter(r => r.libre && r.modelo === modelo);
+}
+
+// ============ NUEVA CONSULTA ============
+function showNuevaConsulta() {
+  unidades = [];
+  document.getElementById('vendedorList').classList.add('hidden');
+  document.getElementById('vendedorForm').classList.remove('hidden');
+  // Reset form
+  document.querySelectorAll('input[name=tipoCliente]').forEach(r => r.checked = false);
+  ['cliNombre','cliApellido','reventaNombre','localidad','fuenteOtro','finEntidadOtro','finMonto','conceNombre','concePrecio'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  document.querySelectorAll('input[type=radio]').forEach(r => r.checked = false);
+  document.getElementById('formParticular').classList.add('hidden');
+  document.getElementById('formReventa').classList.add('hidden');
+  document.getElementById('formUbicacion').classList.add('hidden');
+  document.getElementById('formFuenteDato').classList.add('hidden');
+  document.getElementById('formUsado').classList.add('hidden');
+  document.getElementById('formFinancia').classList.add('hidden');
+  document.getElementById('formVsOtro').classList.add('hidden');
+  document.getElementById('financiaDetalle').classList.add('hidden');
+  document.getElementById('financiaEntidadWrap').classList.add('hidden');
+  document.getElementById('finEntidadOtroWrap').classList.add('hidden');
+  document.getElementById('vsOtroDetalle').classList.add('hidden');
+  document.getElementById('fuenteOtroWrap').classList.add('hidden');
+  document.getElementById('finPctHint').textContent = '';
+  // Provincia options
+  const sel = document.getElementById('provincia');
+  sel.innerHTML = '<option value="">— Elegir —</option>' + PROVINCIAS_AR.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+  // Una unidad inicial
+  addUnidad();
+}
+
+function cancelarNuevaConsulta() {
+  if (!confirm('¿Cancelar la consulta? Se perderán los datos cargados.')) return;
+  document.getElementById('vendedorForm').classList.add('hidden');
+  document.getElementById('vendedorList').classList.remove('hidden');
+}
+
+function addUnidad() {
+  if (unidades.length >= 3) return;
+  unidades.push({ modelo: '', version: '', chasisSeleccionados: [], precioPedido: null });
+  renderUnidades();
+}
+function removeUnidad(idx) {
+  unidades.splice(idx, 1);
+  if (unidades.length === 0) addUnidad();
+  else renderUnidades();
+}
+
+function renderUnidades() {
+  const cont = document.getElementById('unidadesContainer');
+  cont.innerHTML = unidades.map((u, idx) => renderUnidadCard(u, idx)).join('');
+  document.getElementById('btnAddUnidad').disabled = unidades.length >= 3;
+  // Después de pintar, recalcular análisis de cada una
+  unidades.forEach((_, idx) => recalcAnalisis(idx));
+}
+
+function renderUnidadCard(u, idx) {
+  const modelos = getModelosLibres();
+  const modeloSelHtml = `<option value="">— Modelo —</option>` + modelos.map(m => `<option value="${escapeHtml(m)}" ${u.modelo === m ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('');
+
+  let chasisHtml = '';
+  if (u.modelo) {
+    const chasis = getChasisLibres(u.modelo);
+    if (chasis.length === 0) {
+      chasisHtml = `<div class="muted" style="padding:10px">No hay chasis libres para este modelo.</div>`;
+    } else {
+      chasisHtml = chasis.map(c => {
+        const checked = u.chasisSeleccionados.includes(c.serie);
+        const disabled = !checked && u.chasisSeleccionados.length >= 3;
+        return `
+          <label class="chasis-row ${checked ? 'selected' : ''}" style="${disabled ? 'opacity:.4; cursor:not-allowed' : ''}">
+            <input type="checkbox" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="toggleChasis(${idx}, '${escapeHtml(c.serie)}')">
+            <div class="info">
+              <div class="color">${escapeHtml(c.color || '—')}</div>
+              <div class="serie">${escapeHtml(c.serie)}</div>
+            </div>
+            <div class="precio">
+              ${fmtMoney(c.oferta_vigente)}
+              ${c.fuente_oferta === 'stock_limitado' ? '<span class="badge">LIM</span>' : ''}
+            </div>
+          </label>
+        `;
+      }).join('');
+    }
+  }
+
+  return `
+    <div class="unidad-card">
+      <div class="uc-header">
+        <h4>Unidad ${idx + 1}</h4>
+        ${unidades.length > 1 ? `<button class="remove" onclick="removeUnidad(${idx})">Quitar</button>` : ''}
+      </div>
+
+      <div class="field">
+        <label>Modelo y versión</label>
+        <select onchange="setModelo(${idx}, this.value)">${modeloSelHtml}</select>
+      </div>
+
+      ${u.modelo ? `
+        <div class="field">
+          <label>Color(es) — hasta 3</label>
+          <div class="chasis-grid">${chasisHtml}</div>
+          <div class="hint">Seleccioná hasta 3 colores. El chasis aparece automáticamente.</div>
+        </div>
+
+        <div class="field">
+          <label>Precio pedido — con flete y formulario incluido *</label>
+          <input type="text" inputmode="numeric" placeholder="$0"
+            value="${u.precioPedido != null ? '$' + Math.round(u.precioPedido).toLocaleString('es-AR') : ''}"
+            oninput="onPrecioPedidoInput(${idx}, this)">
+        </div>
+
+        <div class="analisis" id="analisisUnidad${idx}"></div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function setModelo(idx, modelo) {
+  unidades[idx].modelo = modelo;
+  unidades[idx].chasisSeleccionados = [];
+  renderUnidades();
+}
+function toggleChasis(idx, serie) {
+  const u = unidades[idx];
+  const i = u.chasisSeleccionados.indexOf(serie);
+  if (i >= 0) u.chasisSeleccionados.splice(i, 1);
+  else if (u.chasisSeleccionados.length < 3) u.chasisSeleccionados.push(serie);
+  renderUnidades();
+}
+function onPrecioPedidoInput(idx, el) {
+  const raw = el.value.replace(/[^\d]/g, '');
+  if (!raw) { unidades[idx].precioPedido = null; el.value = ''; }
+  else { unidades[idx].precioPedido = parseInt(raw, 10); el.value = '$' + unidades[idx].precioPedido.toLocaleString('es-AR'); }
+  recalcAnalisis(idx);
+  // Si cambia el precio pedido y hay financiación cargada, recalcular % financiación
+  recalcFinanciacionPct();
+}
+
+// Análisis live: usa la oferta_vigente más baja entre los chasis seleccionados.
+function calcularAnalisisUnidad(u) {
+  if (!u.modelo || u.chasisSeleccionados.length === 0 || u.precioPedido == null || isNaN(u.precioPedido)) return null;
+  const chasisData = u.chasisSeleccionados.map(s => stockData.find(r => r.serie === s)).filter(Boolean);
+  if (chasisData.length === 0) return null;
+  // Oferta más baja (peor caso)
+  let oferta_vigente_min = Infinity, gcia_vigente_min = null, precio_lista = null;
+  chasisData.forEach(c => {
+    if (c.oferta_vigente < oferta_vigente_min) {
+      oferta_vigente_min = c.oferta_vigente;
+      gcia_vigente_min = c.gcia_vigente;
+    }
+    if (precio_lista == null || c.precio_lista > precio_lista) precio_lista = c.precio_lista;
+  });
+  if (!isFinite(oferta_vigente_min) || !precio_lista) return null;
+  const dto_extra_pedido = (oferta_vigente_min - u.precioPedido) / precio_lista;
+  const gcia_resultante = (gcia_vigente_min || 0) - dto_extra_pedido;
+  return {
+    oferta_vigente_min, gcia_vigente_min, precio_lista,
+    dto_extra_pedido, gcia_resultante,
+    chasisSnapshot: chasisData.map(c => ({
+      serie: c.serie, color: c.color,
+      oferta_vigente: c.oferta_vigente, gcia_vigente: c.gcia_vigente,
+      fuente_oferta: c.fuente_oferta
+    }))
+  };
+}
+
+function recalcAnalisis(idx) {
+  const u = unidades[idx];
+  const cont = document.getElementById('analisisUnidad' + idx);
+  if (!cont) return;
+  const a = calcularAnalisisUnidad(u);
+  if (!a) {
+    cont.innerHTML = `<h5>Análisis</h5><div class="muted" style="font-size:13px">Completá modelo, color(es) y precio pedido.</div>`;
+    return;
+  }
+  const gciaCls = a.gcia_resultante >= 0 ? 'pos' : 'neg';
+  const dtoCls = a.dto_extra_pedido > 0 ? 'neg' : (a.dto_extra_pedido < 0 ? 'pos' : '');
+  cont.innerHTML = `
+    <h5>Análisis automático</h5>
+    <div class="row"><span class="label">Oferta vigente (más baja)</span><span class="val">${fmtMoney(a.oferta_vigente_min)}</span></div>
+    <div class="row"><span class="label">Gcia actual</span><span class="val">${fmtPct(a.gcia_vigente_min)}</span></div>
+    <div class="row"><span class="label">Precio lista</span><span class="val">${fmtMoney(a.precio_lista)}</span></div>
+    <div class="row"><span class="label">Dto extra pedido</span><span class="val ${dtoCls}">${fmtPct(a.dto_extra_pedido)}</span></div>
+    <div class="row"><span class="label">Gcia resultante</span><span class="val ${gciaCls}">${fmtPct(a.gcia_resultante)}</span></div>
+  `;
+}
+
+// ============ Datos cliente — toggles ============
+function onTipoClienteChange() {
+  const tipo = (document.querySelector('input[name=tipoCliente]:checked') || {}).value;
+  document.getElementById('formParticular').classList.toggle('hidden', tipo !== 'particular');
+  document.getElementById('formReventa').classList.toggle('hidden', tipo !== 'reventa');
+  document.getElementById('formFuenteDato').classList.toggle('hidden', tipo !== 'particular');
+  document.getElementById('formUsado').classList.toggle('hidden', tipo !== 'particular');
+  document.getElementById('formUbicacion').classList.toggle('hidden', !tipo);
+  document.getElementById('formFinancia').classList.toggle('hidden', !tipo);
+  document.getElementById('formVsOtro').classList.toggle('hidden', !tipo);
+  // Label de financia varía
+  document.getElementById('financiaLabel').textContent =
+    tipo === 'reventa' ? '¿Financia con VWFS? *' : '¿Financia? *';
+  // Mostrar entidad solo en particular
+  document.getElementById('financiaEntidadWrap').classList.toggle('hidden', tipo !== 'particular');
+  // Reset financia
+  document.querySelectorAll('input[name=financia]').forEach(r => r.checked = false);
+  document.getElementById('financiaDetalle').classList.add('hidden');
+  document.getElementById('finEntidadOtroWrap').classList.add('hidden');
+  document.getElementById('finPctHint').textContent = '';
+}
+function onFuenteDatoChange() {
+  const v = (document.querySelector('input[name=fuenteDato]:checked') || {}).value;
+  document.getElementById('fuenteOtroWrap').classList.toggle('hidden', v !== 'otro');
+}
+function onFinanciaChange() {
+  const v = (document.querySelector('input[name=financia]:checked') || {}).value;
+  document.getElementById('financiaDetalle').classList.toggle('hidden', v !== 'si');
+  if (v !== 'si') {
+    document.getElementById('finPctHint').textContent = '';
+  } else {
+    recalcFinanciacionPct();
+  }
+}
+function onFinEntidadChange() {
+  const v = (document.querySelector('input[name=finEntidad]:checked') || {}).value;
+  document.getElementById('finEntidadOtroWrap').classList.toggle('hidden', v !== 'otros');
+}
+function onVsOtroChange() {
+  const v = (document.querySelector('input[name=vsOtro]:checked') || {}).value;
+  document.getElementById('vsOtroDetalle').classList.toggle('hidden', v !== 'si');
+}
+function onFinMontoInput() {
+  const el = document.getElementById('finMonto');
+  const raw = el.value.replace(/[^\d]/g, '');
+  el.value = raw ? '$' + parseInt(raw, 10).toLocaleString('es-AR') : '';
+  recalcFinanciacionPct();
+}
+function recalcFinanciacionPct() {
+  const monto = parseMoney(document.getElementById('finMonto').value);
+  const hint = document.getElementById('finPctHint');
+  if (isNaN(monto) || monto <= 0) { hint.textContent = ''; return; }
+  // Usamos el precio pedido de la primera unidad como base
+  const u = unidades[0];
+  if (!u || u.precioPedido == null) { hint.textContent = 'Cargá el precio pedido de la unidad 1 para ver el % financiación'; return; }
+  const base = u.precioPedido - FYF;
+  if (base <= 0) { hint.textContent = ''; return; }
+  const pct = monto / base;
+  hint.textContent = '% financiación (sobre precio pedido sin FyF): ' + fmtPct(pct);
+}
+
+// ============ SUBMIT ============
+async function submitConsulta() {
+  // Validar
+  const errs = [];
+  if (unidades.length === 0) errs.push('Agregá al menos una unidad');
+  unidades.forEach((u, i) => {
+    if (!u.modelo) errs.push(`Unidad ${i+1}: elegí modelo`);
+    if (u.chasisSeleccionados.length === 0) errs.push(`Unidad ${i+1}: elegí al menos un color`);
+    if (!u.precioPedido || u.precioPedido <= 0) errs.push(`Unidad ${i+1}: cargá precio pedido`);
+  });
+  const tipoCliente = (document.querySelector('input[name=tipoCliente]:checked') || {}).value;
+  if (!tipoCliente) errs.push('Elegí tipo de cliente');
+
+  let cliNombre = '', cliApellido = '', reventaNombre = '';
+  if (tipoCliente === 'particular') {
+    cliNombre = document.getElementById('cliNombre').value.trim();
+    cliApellido = document.getElementById('cliApellido').value.trim();
+    if (!cliNombre || !cliApellido) errs.push('Cargá nombre y apellido del cliente');
+  } else if (tipoCliente === 'reventa') {
+    reventaNombre = document.getElementById('reventaNombre').value.trim();
+    if (!reventaNombre) errs.push('Cargá el nombre del reventa');
+  }
+  const provincia = document.getElementById('provincia').value;
+  const localidad = document.getElementById('localidad').value.trim();
+  if (!provincia) errs.push('Elegí provincia');
+  if (!localidad) errs.push('Cargá localidad');
+
+  let fuenteDato = null, fuenteDatoOtro = null, tieneUsado = null;
+  if (tipoCliente === 'particular') {
+    fuenteDato = (document.querySelector('input[name=fuenteDato]:checked') || {}).value;
+    if (!fuenteDato) errs.push('Elegí fuente del dato');
+    if (fuenteDato === 'otro') {
+      fuenteDatoOtro = document.getElementById('fuenteOtro').value.trim();
+      if (!fuenteDatoOtro) errs.push('Especificá la fuente del dato');
+    }
+    const usadoVal = (document.querySelector('input[name=tieneUsado]:checked') || {}).value;
+    if (!usadoVal) errs.push('Indicá si tiene usado');
+    tieneUsado = usadoVal === 'si';
+  }
+
+  const financiaVal = (document.querySelector('input[name=financia]:checked') || {}).value;
+  if (!financiaVal) errs.push('Indicá si financia');
+  const financia = financiaVal === 'si';
+  let finEntidad = null, finEntidadOtro = null, finMonto = null, finPct = null;
+  if (financia) {
+    if (tipoCliente === 'particular') {
+      finEntidad = (document.querySelector('input[name=finEntidad]:checked') || {}).value;
+      if (!finEntidad) errs.push('Elegí entidad de financiación');
+      if (finEntidad === 'otros') {
+        finEntidadOtro = document.getElementById('finEntidadOtro').value.trim();
+        if (!finEntidadOtro) errs.push('Especificá la entidad de financiación');
+      }
+    } else {
+      finEntidad = 'vwfs'; // reventa siempre VWFS
+    }
+    finMonto = parseMoney(document.getElementById('finMonto').value);
+    if (isNaN(finMonto) || finMonto <= 0) errs.push('Cargá monto a financiar');
+    else if (unidades[0] && unidades[0].precioPedido && (unidades[0].precioPedido - FYF) > 0) {
+      finPct = finMonto / (unidades[0].precioPedido - FYF);
+    }
+  }
+
+  const vsOtro = (document.querySelector('input[name=vsOtro]:checked') || {}).value;
+  if (!vsOtro) errs.push('Indicá si lo pide vs otro presupuesto');
+  let conceNombre = null, concePrecio = null;
+  if (vsOtro === 'si') {
+    conceNombre = document.getElementById('conceNombre').value.trim();
+    concePrecio = parseMoney(document.getElementById('concePrecio').value);
+    if (!conceNombre) errs.push('Cargá el concesionario');
+    if (isNaN(concePrecio) || concePrecio <= 0) errs.push('Cargá el precio del concesionario');
+  }
+
+  if (errs.length > 0) {
+    alert('Faltan datos:\n\n• ' + errs.join('\n• '));
+    return;
+  }
+
+  showLoading('Enviando consulta...');
+  try {
+    // Insert cabecera
+    const cabecera = {
+      vendedor_id: currentUser.id,
+      vendedor_usuario: currentUser.usuario,
+      vendedor_nombre: currentUser.nombre || currentUser.usuario,
+      tipo_cliente: tipoCliente,
+      provincia, localidad,
+      cliente_nombre: cliNombre || null,
+      cliente_apellido: cliApellido || null,
+      fuente_dato: fuenteDato || null,
+      fuente_dato_otro: fuenteDatoOtro || null,
+      tiene_usado: tieneUsado,
+      reventa_nombre: reventaNombre || null,
+      financia,
+      financia_entidad: financia ? finEntidad : null,
+      financia_entidad_otro: finEntidadOtro || null,
+      financia_monto: financia ? finMonto : null,
+      financia_pct: financia ? finPct : null,
+      vs_otro_concesionario: vsOtro,
+      concesionario_nombre: conceNombre,
+      concesionario_precio: concePrecio,
+      estado: 'pendiente'
+    };
+    const inserted = await sbFetch('consultas_0km', { method: 'POST', body: JSON.stringify(cabecera) });
+    const consultaId = inserted[0].id;
+
+    // Insert items
+    const items = unidades.map((u, i) => {
+      const a = calcularAnalisisUnidad(u);
+      return {
+        consulta_id: consultaId,
+        orden: i + 1,
+        modelo: u.modelo,
+        version: u.modelo, // por ahora modelo y versión van en el mismo string del sheet
+        chasis: a.chasisSnapshot,
+        precio_lista: a.precio_lista,
+        oferta_vigente_min: a.oferta_vigente_min,
+        gcia_vigente_min: a.gcia_vigente_min,
+        precio_pedido: u.precioPedido,
+        dto_extra_pedido: a.dto_extra_pedido,
+        gcia_resultante: a.gcia_resultante
+      };
+    });
+    await sbFetch('consultas_0km_items', { method: 'POST', body: JSON.stringify(items) });
+
+    // Notificar a admin por WhatsApp (CallMeBot)
+    notifyAdminNuevaConsulta(consultaId, cabecera, items).catch(e => console.error('notify err', e));
+
+    hideLoading();
+    showToast('Consulta enviada');
+    document.getElementById('vendedorForm').classList.add('hidden');
+    document.getElementById('vendedorList').classList.remove('hidden');
+    cargarMisConsultas();
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    alert('Error al enviar: ' + (e.message || e));
+  }
+}
+
+// ============ NOTIFICAR WhatsApp ============
+async function notifyAdminNuevaConsulta(id, c, items) {
+  const lineas = [];
+  lineas.push(`🚗 Nueva consulta 0KM #${id}`);
+  lineas.push(`Vendedor: ${c.vendedor_nombre}`);
+  lineas.push(`Tipo: ${c.tipo_cliente}` + (c.tipo_cliente === 'particular' ? ` — ${c.cliente_nombre} ${c.cliente_apellido}` : ` — ${c.reventa_nombre}`));
+  lineas.push(`${c.provincia} / ${c.localidad}`);
+  items.forEach((it, i) => {
+    const dto = (it.dto_extra_pedido * 100).toFixed(2) + '%';
+    const gcia = (it.gcia_resultante * 100).toFixed(2) + '%';
+    lineas.push(`U${i+1}: ${it.modelo} → pide ${fmtMoney(it.precio_pedido)} (vs ${fmtMoney(it.oferta_vigente_min)}). Dto extra ${dto}. Gcia ${gcia}.`);
+  });
+  if (c.financia) lineas.push(`Financia ${fmtMoney(c.financia_monto)} con ${c.financia_entidad}` + (c.financia_pct ? ` (${(c.financia_pct*100).toFixed(1)}%)` : ''));
+  if (c.vs_otro_concesionario === 'si') lineas.push(`VS ${c.concesionario_nombre}: ${fmtMoney(c.concesionario_precio)}`);
+  const msg = lineas.join('\n');
+  const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(ADMIN_PHONE)}&text=${encodeURIComponent(msg)}&apikey=${encodeURIComponent(ADMIN_KEY)}`;
+  try { await fetch(url, { mode: 'no-cors' }); } catch(e) { console.error(e); }
+}
+
+// ============ MIS CONSULTAS (vendedor) ============
+async function cargarMisConsultas() {
+  const cont = document.getElementById('misConsultasList');
+  cont.innerHTML = '<div class="empty">Cargando...</div>';
+  try {
+    const data = await sbFetch(`consultas_0km?vendedor_id=eq.${currentUser.id}&order=created_at.desc`);
+    // Cargar items en una segunda query (RLS-friendly y simple)
+    const ids = (data || []).map(c => c.id);
+    let items = [];
+    if (ids.length > 0) {
+      items = await sbFetch(`consultas_0km_items?consulta_id=in.(${ids.join(',')})&order=orden.asc`);
+    }
+    myConsultas = (data || []).map(c => ({ ...c, items: items.filter(i => i.consulta_id === c.id) }));
+    renderVendedorList();
+  } catch(e) {
+    console.error(e);
+    cont.innerHTML = '<div class="empty"><p>Error al cargar</p></div>';
+  }
+}
+
+function renderVendedorList() {
+  const cont = document.getElementById('misConsultasList');
+  const q = (document.getElementById('vSearch').value || '').toLowerCase().trim();
+  let list = myConsultas;
+  if (q) list = list.filter(c => JSON.stringify(c).toLowerCase().includes(q));
+  if (list.length === 0) {
+    cont.innerHTML = '<div class="empty"><div class="icon">📋</div><p>Sin consultas todavía. Tocá <strong>+ Nueva consulta</strong> arriba.</p></div>';
+    return;
+  }
+  cont.innerHTML = list.map(c => renderConsultaCard(c)).join('');
+}
+
+function renderConsultaCard(c) {
+  const cliente = c.tipo_cliente === 'particular'
+    ? `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}`.trim()
+    : (c.reventa_nombre || '—');
+  const unidadesStr = (c.items || []).map(it => escapeHtml(it.modelo)).join(' · ');
+  return `
+    <div class="card consulta-card" onclick="abrirDetalle(${c.id})">
+      <div class="top">
+        <h3>#${c.id} — ${escapeHtml(cliente)}</h3>
+        <span class="estado ${c.estado}">${c.estado}</span>
+      </div>
+      <div class="body">
+        <div>${c.tipo_cliente === 'particular' ? 'Particular' : 'Reventa'} · ${escapeHtml(c.provincia || '')} / ${escapeHtml(c.localidad || '')}</div>
+        <div class="resumen-units"><span>${unidadesStr || '—'}</span></div>
+        <div class="meta" style="margin-top:6px">${fmtDate(c.created_at)}${c.estado === 'rechazada' && c.precio_max_admin ? ' · Mejor precio: ' + fmtMoney(c.precio_max_admin) : ''}</div>
+      </div>
+    </div>
+  `;
+}
+
+// ============ ADMIN — LISTA ============
+function setAdminTab(tab) {
+  adminTab = tab;
+  document.getElementById('tabPendientes').classList.toggle('active', tab === 'pendiente');
+  document.getElementById('tabResueltas').classList.toggle('active', tab === 'resueltas');
+  renderAdminList();
+}
+
+async function cargarConsultasAdmin() {
+  const cont = document.getElementById('adminConsultasList');
+  cont.innerHTML = '<div class="empty">Cargando...</div>';
+  try {
+    const data = await sbFetch('consultas_0km?order=created_at.desc');
+    const ids = (data || []).map(c => c.id);
+    let items = [];
+    if (ids.length > 0) {
+      items = await sbFetch(`consultas_0km_items?consulta_id=in.(${ids.join(',')})&order=orden.asc`);
+    }
+    adminConsultas = (data || []).map(c => ({ ...c, items: items.filter(i => i.consulta_id === c.id) }));
+    renderAdminList();
+  } catch(e) {
+    console.error(e);
+    cont.innerHTML = '<div class="empty"><p>Error al cargar</p></div>';
+  }
+}
+
+function renderAdminList() {
+  const cont = document.getElementById('adminConsultasList');
+  const q = (document.getElementById('aSearch').value || '').toLowerCase().trim();
+  let list = adminConsultas;
+  if (adminTab === 'pendiente') list = list.filter(c => c.estado === 'pendiente');
+  else list = list.filter(c => c.estado !== 'pendiente');
+  if (q) list = list.filter(c => JSON.stringify(c).toLowerCase().includes(q));
+  if (list.length === 0) {
+    cont.innerHTML = '<div class="empty"><div class="icon">📭</div><p>No hay consultas en esta vista.</p></div>';
+    return;
+  }
+  cont.innerHTML = list.map(c => `
+    <div class="card consulta-card" onclick="abrirDetalle(${c.id})">
+      <div class="top">
+        <h3>#${c.id} — ${escapeHtml((c.vendedor_nombre || c.vendedor_usuario || ''))}</h3>
+        <span class="estado ${c.estado}">${c.estado}</span>
+      </div>
+      <div class="body">
+        <div>${c.tipo_cliente === 'particular' ? `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}` : (c.reventa_nombre || '')} · ${escapeHtml(c.provincia || '')} / ${escapeHtml(c.localidad || '')}</div>
+        <div class="resumen-units">${(c.items || []).map(it => `<span>${escapeHtml(it.modelo)} → ${fmtMoney(it.precio_pedido)}</span>`).join('')}</div>
+        <div class="meta" style="margin-top:6px">${fmtDate(c.created_at)}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ============ DETALLE / MODAL ============
+function abrirDetalle(consultaId) {
+  const list = currentMode === 'admin' ? adminConsultas : myConsultas;
+  const c = list.find(x => x.id === consultaId);
+  if (!c) return;
+  const overlay = document.getElementById('modalOverlay');
+  const cont = document.getElementById('modalContent');
+
+  const cliente = c.tipo_cliente === 'particular'
+    ? `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}`.trim()
+    : (c.reventa_nombre || '');
+
+  // Items
+  const itemsHtml = (c.items || []).map((it, i) => {
+    const chasis = (it.chasis || []).map(ch =>
+      `<div style="font-size:12px; padding:4px 0; border-bottom:1px dashed var(--vw-grey-2)">
+        <strong>${escapeHtml(ch.color || '—')}</strong> · <span class="muted">${escapeHtml(ch.serie || '')}</span>
+        · ${fmtMoney(ch.oferta_vigente)}${ch.fuente_oferta === 'stock_limitado' ? ' <span class="tag-badge lim">LIM</span>' : ''}
+      </div>`
+    ).join('');
+    return `
+      <div class="card" style="background:var(--vw-grey-1)">
+        <h3 style="font-size:14px; margin-bottom:8px">Unidad ${i + 1}: ${escapeHtml(it.modelo)}</h3>
+        ${chasis}
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; font-size:13px">
+          <div><span class="muted">Precio pedido:</span> <strong>${fmtMoney(it.precio_pedido)}</strong></div>
+          <div><span class="muted">Oferta vigente:</span> <strong>${fmtMoney(it.oferta_vigente_min)}</strong></div>
+          <div><span class="muted">Dto extra pedido:</span> <strong>${fmtPct(it.dto_extra_pedido)}</strong></div>
+          <div><span class="muted">Gcia resultante:</span> <strong style="color:${(it.gcia_resultante||0) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPct(it.gcia_resultante)}</strong></div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Datos cliente
+  let financiaTxt = 'No financia';
+  if (c.financia) {
+    const ent = c.financia_entidad === 'otros' ? (c.financia_entidad_otro || 'otros') : (c.financia_entidad || '');
+    financiaTxt = `Sí · ${ent.toUpperCase()} · ${fmtMoney(c.financia_monto)}` + (c.financia_pct ? ` (${(c.financia_pct*100).toFixed(1)}%)` : '');
+  }
+  let vsOtroTxt = c.vs_otro_concesionario === 'si' ? `Sí — ${escapeHtml(c.concesionario_nombre)}: ${fmtMoney(c.concesionario_precio)}`
+    : (c.vs_otro_concesionario === 'no_quiere_pasar' ? 'No quiere pasar el concesionario' : 'No');
+  let fuenteTxt = c.fuente_dato === 'otro' ? (c.fuente_dato_otro || 'otro') : (c.fuente_dato || '—');
+
+  // Footer
+  const isAdmin = currentMode === 'admin';
+  const isPending = c.estado === 'pendiente';
+  let footerHtml = `<button class="btn-secondary" onclick="closeModal()">Cerrar</button>`;
+  if (isAdmin && isPending) {
+    footerHtml = `
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; width:100%; justify-content:space-between">
+        <div style="flex:1; min-width:240px">
+          <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Mejor precio máximo (con FyF)</label>
+          <input id="adminPrecioMax" type="text" inputmode="numeric" placeholder="$0"
+            oninput="onAdminPrecioMaxInput(${c.id}, this)"
+            style="width:100%; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:14px">
+          <div id="adminPrecioMaxHint" class="hint"></div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
+          <button class="btn-danger" onclick="rechazarMejora(${c.id})">No acepto</button>
+          <button class="btn-success" onclick="aceptarMejora(${c.id})">Aceptar mejora</button>
+        </div>
+      </div>
+    `;
+  }
+
+  cont.innerHTML = `
+    <div class="modal-header">
+      <h2>#${c.id} — ${escapeHtml(cliente)}</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="detalle-section">
+        <h4>Vendedor</h4>
+        <div class="kv"><span class="k">Nombre</span><span class="v">${escapeHtml(c.vendedor_nombre || c.vendedor_usuario || '')}</span></div>
+        <div class="kv"><span class="k">Fecha</span><span class="v">${fmtDate(c.created_at)}</span></div>
+        <div class="kv"><span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${c.estado}</span></span></div>
+      </div>
+
+      <div class="detalle-section">
+        <h4>Cliente</h4>
+        <div class="kv">
+          <span class="k">Tipo</span><span class="v">${c.tipo_cliente === 'particular' ? 'Particular' : 'Reventa'}</span>
+          ${c.tipo_cliente === 'particular' ? `
+            <span class="k">Nombre</span><span class="v">${escapeHtml((c.cliente_nombre||'') + ' ' + (c.cliente_apellido||''))}</span>
+            <span class="k">Fuente dato</span><span class="v">${escapeHtml(fuenteTxt)}</span>
+            <span class="k">Tiene usado</span><span class="v">${c.tiene_usado ? 'Sí' : 'No'}</span>
+          ` : `
+            <span class="k">Reventa</span><span class="v">${escapeHtml(c.reventa_nombre || '')}</span>
+          `}
+          <span class="k">Provincia</span><span class="v">${escapeHtml(c.provincia || '')}</span>
+          <span class="k">Localidad</span><span class="v">${escapeHtml(c.localidad || '')}</span>
+          <span class="k">Financiación</span><span class="v">${financiaTxt}</span>
+          <span class="k">VS otro presupuesto</span><span class="v">${vsOtroTxt}</span>
+        </div>
+      </div>
+
+      <div class="detalle-section">
+        <h4>Unidades</h4>
+        ${itemsHtml || '<div class="muted">—</div>'}
+      </div>
+
+      ${(!isPending && (c.precio_max_admin || c.observaciones_admin)) ? `
+        <div class="detalle-section">
+          <h4>Respuesta</h4>
+          <div class="kv">
+            <span class="k">Estado</span><span class="v">${c.estado}</span>
+            ${c.precio_max_admin ? `<span class="k">Mejor precio máx</span><span class="v">${fmtMoney(c.precio_max_admin)}</span>` : ''}
+            ${c.admin_respuesta_at ? `<span class="k">Respondido</span><span class="v">${fmtDate(c.admin_respuesta_at)}</span>` : ''}
+          </div>
+        </div>
+      ` : ''}
+    </div>
+    <div class="modal-footer">${footerHtml}</div>
+  `;
+  overlay.classList.remove('hidden');
+}
+
+function closeModal() { document.getElementById('modalOverlay').classList.add('hidden'); }
+
+// Admin — input live "mejor precio máximo"
+function onAdminPrecioMaxInput(consultaId, el) {
+  const raw = el.value.replace(/[^\d]/g, '');
+  el.value = raw ? '$' + parseInt(raw, 10).toLocaleString('es-AR') : '';
+  const hint = document.getElementById('adminPrecioMaxHint');
+  const c = adminConsultas.find(x => x.id === consultaId);
+  if (!c || !c.items || c.items.length === 0) { hint.textContent = ''; return; }
+  if (!raw) { hint.textContent = ''; return; }
+  const precio = parseInt(raw, 10);
+  // Calculo gcia con la primera unidad (la más representativa). Si hay varias, el admin igual ve cada una en el detalle.
+  const it = c.items[0];
+  if (!it.precio_lista || it.precio_lista <= 0) { hint.textContent = ''; return; }
+  const dto = (it.oferta_vigente_min - precio) / it.precio_lista;
+  const gcia = (it.gcia_vigente_min || 0) - dto;
+  const sign = gcia >= 0 ? 'pos' : 'neg';
+  hint.innerHTML = `Con ${fmtMoney(precio)}: dto extra ${fmtPct(dto)} · <strong style="color:${gcia>=0?'var(--green)':'var(--red)'}">gcia ${fmtPct(gcia)}</strong>`;
+}
+
+async function aceptarMejora(consultaId) {
+  if (!confirm('¿Aceptar la mejora pedida?')) return;
+  showLoading('Guardando...');
+  try {
+    await sbFetch(`consultas_0km?id=eq.${consultaId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        estado: 'aceptada',
+        admin_user_id: currentUser.id,
+        admin_respuesta_at: new Date().toISOString()
+      })
+    });
+    notifyVendedorRespuesta(consultaId, 'aceptada', null).catch(e => console.error(e));
+    closeModal();
+    await cargarConsultasAdmin();
+    hideLoading();
+    showToast('Mejora aceptada');
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    alert('Error: ' + (e.message || e));
+  }
+}
+
+async function rechazarMejora(consultaId) {
+  const el = document.getElementById('adminPrecioMax');
+  const raw = (el.value || '').replace(/[^\d]/g, '');
+  if (!raw) { alert('Cargá el mejor precio máximo'); return; }
+  const precio = parseInt(raw, 10);
+  if (!confirm(`¿Rechazar la mejora y ofrecer ${fmtMoney(precio)} como mejor precio?`)) return;
+  showLoading('Guardando...');
+  try {
+    await sbFetch(`consultas_0km?id=eq.${consultaId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        estado: 'rechazada',
+        admin_user_id: currentUser.id,
+        admin_respuesta_at: new Date().toISOString(),
+        precio_max_admin: precio
+      })
+    });
+    notifyVendedorRespuesta(consultaId, 'rechazada', precio).catch(e => console.error(e));
+    closeModal();
+    await cargarConsultasAdmin();
+    hideLoading();
+    showToast('Respuesta enviada');
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    alert('Error: ' + (e.message || e));
+  }
+}
+
+async function notifyVendedorRespuesta(consultaId, estado, precioMax) {
+  // Busco el vendedor para ver si tiene callmebot
+  const c = adminConsultas.find(x => x.id === consultaId);
+  if (!c || !c.vendedor_id) return;
+  try {
+    const u = await sbFetch(`tasador_usuarios?id=eq.${c.vendedor_id}&select=telefono_wa,callmebot_key,usuario`);
+    if (!u || u.length === 0 || !u[0].telefono_wa || !u[0].callmebot_key) return;
+    let msg = `Consulta 0KM #${consultaId}: ${estado.toUpperCase()}.`;
+    if (estado === 'rechazada' && precioMax) msg += ` Mejor precio máx ${fmtMoney(precioMax)}.`;
+    const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(u[0].telefono_wa)}&text=${encodeURIComponent(msg)}&apikey=${encodeURIComponent(u[0].callmebot_key)}`;
+    await fetch(url, { mode: 'no-cors' });
+  } catch(e) { console.error(e); }
+}
+
+// ============ INIT ============
+async function init() {
+  // Restaurar sesión
+  const sess = cargarSesion();
+  if (sess && sess.id) {
+    showLoading('Restaurando sesión...');
+    try {
+      const data = await sbFetch(`tasador_usuarios?id=eq.${sess.id}&activo=eq.true`);
+      if (data && data.length > 0) {
+        currentUser = data[0];
+        currentUser.rolesArr = (Array.isArray(currentUser.roles) && currentUser.roles.length > 0)
+          ? currentUser.roles
+          : (currentUser.rol ? [currentUser.rol] : ['vendedor']);
+        document.getElementById('loginScreen').classList.add('hidden');
+        await cargarDatos();
+        const modo = sess.mode || (currentUser.rolesArr.includes('admin') ? 'admin' : 'vendedor');
+        // Si tiene 2 roles y la sesión guardada era una, respetarla; si no, mode select
+        if (currentUser.rolesArr.includes('admin') && currentUser.rolesArr.length > 1 && !sess.mode) {
+          hideLoading();
+          elegirModo();
+        } else {
+          hideLoading();
+          entrarComo(modo);
+        }
+        return;
+      }
+    } catch(e) { console.error(e); }
+    hideLoading();
+    limpiarSesion();
+  }
+}
+init();
+</script>
+</body>
+</html>
