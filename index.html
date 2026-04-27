@@ -1031,33 +1031,21 @@ STEP_RENDERERS['fin-entidad-otro'] = () => ({
   onMount: () => { document.getElementById('finEntidadOtro').focus(); }
 });
 
-// ----- Monto financiación -----
-STEP_RENDERERS['fin-monto'] = () => {
-  const u0 = formData.unidades[0];
-  let pctHint = '';
-  if (formData.finMonto && u0 && u0.precioPedido) {
-    const base = u0.precioPedido - FYF;
-    if (base > 0) {
-      const pct = formData.finMonto / base;
-      pctHint = `% financiación (sobre precio pedido sin FyF): <strong>${fmtPct(pct)}</strong>`;
-    }
-  }
-  return {
-    body: `
-      <h2>Monto a financiar</h2>
-      <p class="step-hint">¿Cuánto quiere financiar?</p>
-      <input id="finMonto" type="text" inputmode="numeric" placeholder="$0"
-        value="${formData.finMonto != null ? '$' + Math.round(formData.finMonto).toLocaleString('es-AR') : ''}"
-        oninput="onFinMontoInput(this)">
-      <div class="field-hint" id="finPctHint">${pctHint}</div>
-    `,
-    footer: `
-      <button class="btn-back" onclick="wizardBack()">Atrás</button>
-      <button class="btn-next" id="btnNext" ${formData.finMonto && formData.finMonto > 0 ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
-    `,
-    onMount: () => { document.getElementById('finMonto').focus(); }
-  };
-};
+// ----- Monto financiación (vendedor solo carga el monto, % es para el admin) -----
+STEP_RENDERERS['fin-monto'] = () => ({
+  body: `
+    <h2>Monto a financiar</h2>
+    <p class="step-hint">¿Cuánto quiere financiar?</p>
+    <input id="finMonto" type="text" inputmode="numeric" placeholder="$0"
+      value="${formData.finMonto != null ? '$' + Math.round(formData.finMonto).toLocaleString('es-AR') : ''}"
+      oninput="onFinMontoInput(this)">
+  `,
+  footer: `
+    <button class="btn-back" onclick="wizardBack()">Atrás</button>
+    <button class="btn-next" id="btnNext" ${formData.finMonto && formData.finMonto > 0 ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+  `,
+  onMount: () => { document.getElementById('finMonto').focus(); }
+});
 
 // ----- VS otro presupuesto -----
 STEP_RENDERERS['vs-otro'] = () => ({
@@ -1120,10 +1108,6 @@ STEP_RENDERERS['resumen'] = () => {
   if (f.financia === 'si') {
     let ent = f.tipoCliente === 'reventa' ? 'VWFS' : (f.finEntidad === 'otros' ? f.finEntidadOtro : (f.finEntidad || '').toUpperCase());
     financiaTxt = `Sí · ${ent} · ${fmtMoney(f.finMonto)}`;
-    if (f.unidades[0] && f.unidades[0].precioPedido) {
-      const base = f.unidades[0].precioPedido - FYF;
-      if (base > 0) financiaTxt += ` (${fmtPct(f.finMonto / base)})`;
-    }
   }
   let vsOtroTxt = f.vsOtro === 'si' ? `${f.conceNombre}: ${fmtMoney(f.concePrecio)}` :
     (f.vsOtro === 'no_quiere_pasar' ? 'No quiere pasar el concesionario' : 'No');
@@ -1208,15 +1192,6 @@ function onFinMontoInput(el) {
   const raw = el.value.replace(/[^\d]/g, '');
   formData.finMonto = raw ? parseInt(raw, 10) : null;
   el.value = raw ? '$' + parseInt(raw, 10).toLocaleString('es-AR') : '';
-  // Update hint
-  const u0 = formData.unidades[0];
-  const hint = document.getElementById('finPctHint');
-  if (formData.finMonto && u0 && u0.precioPedido) {
-    const base = u0.precioPedido - FYF;
-    if (base > 0) hint.innerHTML = `% financiación (sobre precio pedido sin FyF): <strong>${fmtPct(formData.finMonto / base)}</strong>`;
-    else hint.innerHTML = '';
-  } else hint.innerHTML = '';
-  // Habilitar botón
   const btn = document.getElementById('btnNext');
   if (btn) btn.disabled = !(formData.finMonto && formData.finMonto > 0);
 }
@@ -1493,7 +1468,7 @@ function abrirDetalle(consultaId) {
   let financiaTxt = 'No financia';
   if (c.financia) {
     const ent = c.financia_entidad === 'otros' ? (c.financia_entidad_otro || 'otros') : (c.financia_entidad || '');
-    financiaTxt = `Sí · ${ent.toUpperCase()} · ${fmtMoney(c.financia_monto)}` + (c.financia_pct ? ` (${(c.financia_pct*100).toFixed(1)}%)` : '');
+    financiaTxt = `Sí · ${ent.toUpperCase()} · ${fmtMoney(c.financia_monto)}` + (showGcia && c.financia_pct ? ` (${(c.financia_pct*100).toFixed(1)}%)` : '');
   }
   let vsOtroTxt = c.vs_otro_concesionario === 'si' ? `Sí — ${escapeHtml(c.concesionario_nombre)}: ${fmtMoney(c.concesionario_precio)}`
     : (c.vs_otro_concesionario === 'no_quiere_pasar' ? 'No quiere pasar el concesionario' : 'No');
