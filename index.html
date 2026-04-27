@@ -355,6 +355,10 @@ let adminTab = 'pendiente';
 // Form de nueva consulta (state global)
 let formData = null;
 
+// Cuando entra como gerente, primero elige por qué vendedor carga
+let gerenteVendedorActivo = null; // {id, usuario, nombre}
+let vendedoresCache = [];
+
 // Wizard state
 let wizardStack = []; // historial de stepIds (para "atrás")
 let currentStep = null;
@@ -504,29 +508,35 @@ function logout() {
 }
 function elegirModo() {
   const roles = currentUser.rolesArr || ['vendedor'];
-  const tieneAdmin = roles.includes('admin');
-  if (tieneAdmin && roles.length > 1) {
-    document.getElementById('modeUser').textContent = currentUser.nombre || currentUser.usuario;
-    document.getElementById('modeButtons').innerHTML = `
-      <button onclick="entrarComo('vendedor')">Vendedor</button>
-      <button onclick="entrarComo('admin')">Administrador</button>
-    `;
-    document.getElementById('modeScreen').classList.remove('hidden');
-  } else {
-    entrarComo(tieneAdmin ? 'admin' : 'vendedor');
+  const opciones = [];
+  if (roles.includes('vendedor')) opciones.push({ key: 'vendedor', label: 'Vendedor' });
+  if (roles.includes('gerente')) opciones.push({ key: 'gerente', label: 'Gerente' });
+  if (roles.includes('admin')) opciones.push({ key: 'admin', label: 'Administrador' });
+  if (opciones.length === 0) opciones.push({ key: 'vendedor', label: 'Vendedor' });
+  if (opciones.length === 1) {
+    entrarComo(opciones[0].key);
+    return;
   }
+  document.getElementById('modeUser').textContent = currentUser.nombre || currentUser.usuario;
+  document.getElementById('modeButtons').innerHTML = opciones.map(o =>
+    `<button onclick="entrarComo('${o.key}')">${o.label}</button>`
+  ).join('');
+  document.getElementById('modeScreen').classList.remove('hidden');
 }
 function entrarComo(modo) {
   currentMode = modo;
+  gerenteVendedorActivo = null; // reset al entrar a un modo
   guardarSesion();
   document.getElementById('modeScreen').classList.add('hidden');
   document.getElementById('appScreen').classList.remove('hidden');
-  document.getElementById('userInfo').textContent = (currentUser.nombre || currentUser.usuario) + (modo === 'admin' ? ' · Admin' : '');
+  const tag = modo === 'admin' ? ' · Admin' : (modo === 'gerente' ? ' · Gerente' : '');
+  document.getElementById('userInfo').textContent = (currentUser.nombre || currentUser.usuario) + tag;
   if (modo === 'admin') {
     document.getElementById('vendedorView').classList.add('hidden');
     document.getElementById('adminView').classList.remove('hidden');
     cargarConsultasAdmin();
   } else {
+    // vendedor o gerente — misma vista (lista + nueva consulta)
     document.getElementById('adminView').classList.add('hidden');
     document.getElementById('vendedorView').classList.remove('hidden');
     document.getElementById('vendedorList').classList.remove('hidden');
@@ -605,7 +615,7 @@ function getChasisLibresPorModelo(modelo) {
 }
 
 // ============ NUEVA CONSULTA ============
-function showNuevaConsulta() {
+async function showNuevaConsulta() {
   // Reset state
   formData = {
     unidades: [], // se setea según cantidad elegida en el primer paso
@@ -622,9 +632,25 @@ function showNuevaConsulta() {
   };
   wizardStack = [];
   currentStep = null;
+  gerenteVendedorActivo = null;
   document.getElementById('vendedorList').classList.add('hidden');
   document.getElementById('vendedorWizard').classList.remove('hidden');
-  goToStep('cantidad-unidades');
+  if (currentMode === 'gerente') {
+    if (vendedoresCache.length === 0) await cargarVendedores();
+    goToStep('gerente-vendedor');
+  } else {
+    goToStep('cantidad-unidades');
+  }
+}
+
+async function cargarVendedores() {
+  try {
+    const data = await sbFetch('tasador_usuarios?activo=eq.true&select=id,usuario,nombre,roles,rol&order=nombre.asc');
+    vendedoresCache = (data || []).filter(u => {
+      const r = Array.isArray(u.roles) ? u.roles : (u.rol ? [u.rol] : []);
+      return r.includes('vendedor');
+    });
+  } catch(e) { console.error('Error cargando vendedores:', e); vendedoresCache = []; }
 }
 
 function cancelarNuevaConsulta() {
@@ -655,6 +681,7 @@ function wizardBack() {
 }
 
 function getNextStep(step) {
+  if (step === 'gerente-vendedor') return 'cantidad-unidades';
   if (step === 'cantidad-unidades') return 'modelos';
   if (step === 'modelos') return 'colores';
   if (step === 'colores') return 'precios';
@@ -692,6 +719,7 @@ function getNextStep(step) {
 function totalSteps() {
   // Pasos fijos: cantidad, modelos, colores, precios, tipo-cliente, nombre, ubicación, financia, vs-otro, resumen
   let n = 10;
+  if (currentMode === 'gerente') n += 1; // elegir vendedor
   if (formData.tipoCliente === 'particular') n += 2; // fuente, usado
   if (formData.fuenteDato === 'otro') n += 1;
   if (formData.financia === 'si') {
@@ -748,6 +776,23 @@ function nextStep() {
 
 // ============ STEP RENDERERS ============
 const STEP_RENDERERS = {};
+
+// ----- Elegir vendedor (solo modo gerente) -----
+STEP_RENDERERS['gerente-vendedor'] = () => ({
+  body: `
+    <h2>¿Por qué vendedor cargás esta consulta?</h2>
+    <p class="step-hint">La consulta queda asignada al vendedor elegido. Vos figurás como quien la cargó.</p>
+    <div class="opt-list">
+      ${vendedoresCache.length === 0 ? '<div class="empty"><p>No hay vendedores activos.</p></div>' : vendedoresCache.map(v => `
+        <div class="opt ${gerenteVendedorActivo && gerenteVendedorActivo.id === v.id ? 'selected' : ''}"
+          onclick="selectGerenteVendedor('${v.id}', '${escapeHtml(v.usuario).replace(/'/g, "\\'")}', '${escapeHtml(v.nombre || v.usuario).replace(/'/g, "\\'")}')">
+          <span class="opt-icon">👤</span> ${escapeHtml(v.nombre || v.usuario)}
+        </div>
+      `).join('')}
+    </div>
+  `,
+  footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
+});
 
 // ----- Cantidad de unidades -----
 STEP_RENDERERS['cantidad-unidades'] = () => ({
@@ -1143,6 +1188,10 @@ STEP_RENDERERS['resumen'] = () => {
 };
 
 // ============ Acciones de los steps ============
+function selectGerenteVendedor(id, usuario, nombre) {
+  gerenteVendedorActivo = { id, usuario, nombre };
+  nextStep();
+}
 function selectCantidad(n) {
   while (formData.unidades.length > n) formData.unidades.pop();
   while (formData.unidades.length < n) formData.unidades.push({ modelo: null, chasisSeleccionados: [], precioPedido: null });
@@ -1257,6 +1306,11 @@ async function submitConsulta() {
   });
   if (errs.length) { alert('Faltan datos:\n\n• ' + errs.join('\n• ')); return; }
 
+  // En modo gerente, debe haber un vendedor elegido
+  if (currentMode === 'gerente' && !gerenteVendedorActivo) {
+    alert('Falta elegir el vendedor para esta consulta.');
+    return;
+  }
   showLoading('Enviando...');
   try {
     let finPct = null;
@@ -1265,10 +1319,17 @@ async function submitConsulta() {
       if (base > 0) finPct = f.finMonto / base;
     }
 
+    // Si gerente, la consulta queda asignada al vendedor elegido y se registra quién la cargó
+    const vend = currentMode === 'gerente' && gerenteVendedorActivo
+      ? gerenteVendedorActivo
+      : { id: currentUser.id, usuario: currentUser.usuario, nombre: currentUser.nombre || currentUser.usuario };
+
     const cabecera = {
-      vendedor_id: currentUser.id,
-      vendedor_usuario: currentUser.usuario,
-      vendedor_nombre: currentUser.nombre || currentUser.usuario,
+      vendedor_id: vend.id,
+      vendedor_usuario: vend.usuario,
+      vendedor_nombre: vend.nombre,
+      cargada_por_id: currentMode === 'gerente' ? currentUser.id : null,
+      cargada_por_nombre: currentMode === 'gerente' ? (currentUser.nombre || currentUser.usuario) : null,
       tipo_cliente: f.tipoCliente,
       provincia: f.provincia,
       localidad: f.localidad,
@@ -1326,7 +1387,7 @@ async function submitConsulta() {
 async function notifyAdminNuevaConsulta(id, c, items) {
   const lineas = [];
   lineas.push(`🚗 Nueva consulta 0KM #${id}`);
-  lineas.push(`Vendedor: ${c.vendedor_nombre}`);
+  lineas.push(`Vendedor: ${c.vendedor_nombre}${c.cargada_por_nombre ? ` (cargada por ${c.cargada_por_nombre})` : ''}`);
   lineas.push(`Tipo: ${c.tipo_cliente}` + (c.tipo_cliente === 'particular' ? ` — ${c.cliente_nombre} ${c.cliente_apellido}` : ` — ${c.reventa_nombre}`));
   lineas.push(`${c.provincia} / ${c.localidad}`);
   items.forEach((it, i) => {
@@ -1341,12 +1402,14 @@ async function notifyAdminNuevaConsulta(id, c, items) {
   try { await fetch(url, { mode: 'no-cors' }); } catch(e) { console.error(e); }
 }
 
-// ============ MIS CONSULTAS (vendedor) ============
+// ============ MIS CONSULTAS (vendedor / gerente) ============
 async function cargarMisConsultas() {
   const cont = document.getElementById('misConsultasList');
   cont.innerHTML = '<div class="empty">Cargando...</div>';
   try {
-    const data = await sbFetch(`consultas_0km?vendedor_id=eq.${currentUser.id}&order=created_at.desc`);
+    // Gerente ve todas las consultas; vendedor ve solo las suyas
+    const filtro = currentMode === 'gerente' ? '' : `vendedor_id=eq.${currentUser.id}&`;
+    const data = await sbFetch(`consultas_0km?${filtro}order=created_at.desc`);
     const ids = (data || []).map(c => c.id);
     let items = [];
     if (ids.length > 0) items = await sbFetch(`consultas_0km_items?consulta_id=in.(${ids.join(',')})&order=orden.asc`);
@@ -1371,6 +1434,9 @@ function renderVendedorList() {
 function renderConsultaCard(c) {
   const cliente = c.tipo_cliente === 'particular' ? `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}`.trim() : (c.reventa_nombre || '—');
   const unidadesStr = (c.items || []).map(it => escapeHtml(it.modelo)).join(' · ');
+  const vendedorLine = currentMode === 'gerente'
+    ? `<div style="font-size:12px; color:var(--vw-blue); font-weight:600">Vendedor: ${escapeHtml(c.vendedor_nombre || c.vendedor_usuario || '—')}${c.cargada_por_nombre ? ` · cargada por ${escapeHtml(c.cargada_por_nombre)}` : ''}</div>`
+    : '';
   return `
     <div class="card consulta-card" onclick="abrirDetalle(${c.id})">
       <div class="top">
@@ -1378,6 +1444,7 @@ function renderConsultaCard(c) {
         <span class="estado ${c.estado}">${c.estado}</span>
       </div>
       <div class="body">
+        ${vendedorLine}
         <div>${c.tipo_cliente === 'particular' ? 'Particular' : 'Reventa'} · ${escapeHtml(c.provincia || '')} / ${escapeHtml(c.localidad || '')}</div>
         <div class="resumen-units"><span>${unidadesStr || '—'}</span></div>
         <div class="meta" style="margin-top:6px">${fmtDate(c.created_at)}${c.estado === 'rechazada' && c.precio_max_admin ? ' · Mejor precio: ' + fmtMoney(c.precio_max_admin) : ''}</div>
@@ -1442,7 +1509,7 @@ function abrirDetalle(consultaId) {
   const overlay = document.getElementById('modalOverlay');
   const cont = document.getElementById('modalContent');
   const cliente = c.tipo_cliente === 'particular' ? `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}`.trim() : (c.reventa_nombre || '');
-  const showGcia = currentMode === 'admin'; // gcia solo visible para admin
+  const showGcia = currentMode === 'admin' || currentMode === 'gerente'; // gcia visible para admin y gerente
   const itemsHtml = (c.items || []).map((it, i) => {
     const chasis = (it.chasis || []).map(ch =>
       `<div style="font-size:12px; padding:4px 0; border-bottom:1px dashed var(--vw-grey-2)">
@@ -1505,6 +1572,7 @@ function abrirDetalle(consultaId) {
       <div class="detalle-section">
         <h4>Vendedor</h4>
         <div class="kv"><span class="k">Nombre</span><span class="v">${escapeHtml(c.vendedor_nombre || c.vendedor_usuario || '')}</span></div>
+        ${c.cargada_por_nombre ? `<div class="kv"><span class="k">Cargada por</span><span class="v">${escapeHtml(c.cargada_por_nombre)}</span></div>` : ''}
         <div class="kv"><span class="k">Fecha</span><span class="v">${fmtDate(c.created_at)}</span></div>
         <div class="kv"><span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${c.estado}</span></span></div>
       </div>
@@ -1597,14 +1665,30 @@ async function rechazarMejora(consultaId) {
 }
 async function notifyVendedorRespuesta(consultaId, estado, precioMax) {
   const c = adminConsultas.find(x => x.id === consultaId);
-  if (!c || !c.vendedor_id) return;
+  if (!c) return;
+  let msg = `Consulta 0KM #${consultaId}: ${estado.toUpperCase()}.`;
+  if (estado === 'rechazada' && precioMax) msg += ` Mejor precio máx ${fmtMoney(precioMax)}.`;
   try {
-    const u = await sbFetch(`tasador_usuarios?id=eq.${c.vendedor_id}&select=telefono_wa,callmebot_key,usuario`);
-    if (!u || u.length === 0 || !u[0].telefono_wa || !u[0].callmebot_key) return;
-    let msg = `Consulta 0KM #${consultaId}: ${estado.toUpperCase()}.`;
-    if (estado === 'rechazada' && precioMax) msg += ` Mejor precio máx ${fmtMoney(precioMax)}.`;
-    const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(u[0].telefono_wa)}&text=${encodeURIComponent(msg)}&apikey=${encodeURIComponent(u[0].callmebot_key)}`;
-    await fetch(url, { mode: 'no-cors' });
+    // Tomamos vendedor + todos los usuarios con rol gerente
+    const allUsers = await sbFetch(`tasador_usuarios?activo=eq.true&select=id,usuario,nombre,telefono_wa,callmebot_key,roles,rol`);
+    const destinatarios = new Map(); // id -> {phone, key, label}
+    // 1. Vendedor original
+    const v = (allUsers || []).find(u => u.id === c.vendedor_id);
+    if (v && v.telefono_wa && v.callmebot_key) {
+      destinatarios.set(v.id, { phone: v.telefono_wa, key: v.callmebot_key, label: 'vendedor' });
+    }
+    // 2. Gerentes (todos los activos)
+    (allUsers || []).forEach(u => {
+      const r = Array.isArray(u.roles) ? u.roles : (u.rol ? [u.rol] : []);
+      if (r.includes('gerente') && u.telefono_wa && u.callmebot_key) {
+        destinatarios.set(u.id, { phone: u.telefono_wa, key: u.callmebot_key, label: 'gerente' });
+      }
+    });
+    // Disparar a todos
+    for (const d of destinatarios.values()) {
+      const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(d.phone)}&text=${encodeURIComponent(msg)}&apikey=${encodeURIComponent(d.key)}`;
+      try { await fetch(url, { mode: 'no-cors' }); } catch(e) { console.error(e); }
+    }
   } catch(e) { console.error(e); }
 }
 
