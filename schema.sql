@@ -92,3 +92,9 @@ CREATE INDEX idx_consultas_0km_estado     ON consultas_0km(estado);
 CREATE INDEX idx_consultas_0km_vendedor   ON consultas_0km(vendedor_id);
 CREATE INDEX idx_consultas_0km_created_at ON consultas_0km(created_at DESC);
 CREATE INDEX idx_consultas_0km_items_consulta ON consultas_0km_items(consulta_id);
+
+-- Deshabilitar RLS (mismo patrón que tasador_usuarios y resto del stack TGA).
+-- El front usa la anon key directamente; sin RLS deshabilitado, los inserts fallan
+-- con error 42501 "new row violates row-level security policy".
+ALTER TABLE consultas_0km DISABLE ROW LEVEL SECURITY;
+ALTER TABLE consultas_0km_items DISABLE ROW LEVEL SECURITY;
