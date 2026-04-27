@@ -8,12 +8,15 @@
 -- Correr este script desde el SQL Editor del panel de Supabase.
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS consultas_0km (
+DROP TABLE IF EXISTS consultas_0km_items;
+DROP TABLE IF EXISTS consultas_0km;
+
+CREATE TABLE consultas_0km (
   id BIGSERIAL PRIMARY KEY,
   created_at TIMESTAMPTZ DEFAULT NOW(),
 
   -- Vendedor que armó la consulta
-  vendedor_id BIGINT REFERENCES tasador_usuarios(id),
+  vendedor_id UUID REFERENCES tasador_usuarios(id),
   vendedor_usuario TEXT,
   vendedor_nombre TEXT,
 
@@ -53,12 +56,12 @@ CREATE TABLE IF NOT EXISTS consultas_0km (
   -- Estado y respuesta admin
   estado TEXT DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'aceptada', 'rechazada')),
   admin_respuesta_at TIMESTAMPTZ,
-  admin_user_id BIGINT REFERENCES tasador_usuarios(id),
+  admin_user_id UUID REFERENCES tasador_usuarios(id),
   precio_max_admin NUMERIC(14, 2), -- si rechaza, mejor precio máximo (con FyF)
   observaciones_admin TEXT
 );
 
-CREATE TABLE IF NOT EXISTS consultas_0km_items (
+CREATE TABLE consultas_0km_items (
   id BIGSERIAL PRIMARY KEY,
   consulta_id BIGINT NOT NULL REFERENCES consultas_0km(id) ON DELETE CASCADE,
   orden SMALLINT NOT NULL DEFAULT 1, -- 1, 2 o 3 dentro de la consulta
@@ -85,7 +88,7 @@ CREATE TABLE IF NOT EXISTS consultas_0km_items (
   gcia_resultante NUMERIC(8, 4)   -- gcia_vigente_min - dto_extra_pedido
 );
 
-CREATE INDEX IF NOT EXISTS idx_consultas_0km_estado     ON consultas_0km(estado);
-CREATE INDEX IF NOT EXISTS idx_consultas_0km_vendedor   ON consultas_0km(vendedor_id);
-CREATE INDEX IF NOT EXISTS idx_consultas_0km_created_at ON consultas_0km(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_consultas_0km_items_consulta ON consultas_0km_items(consulta_id);
+CREATE INDEX idx_consultas_0km_estado     ON consultas_0km(estado);
+CREATE INDEX idx_consultas_0km_vendedor   ON consultas_0km(vendedor_id);
+CREATE INDEX idx_consultas_0km_created_at ON consultas_0km(created_at DESC);
+CREATE INDEX idx_consultas_0km_items_consulta ON consultas_0km_items(consulta_id);
