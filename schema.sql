@@ -140,3 +140,11 @@ ON CONFLICT (evento) DO NOTHING;
 INSERT INTO consultas_0km_notif_config (evento, incluir_vendedor, incluir_gerente, usuarios_ids)
 VALUES ('consulta_0km_respondida', TRUE, TRUE, '{}'::uuid[])
 ON CONFLICT (evento) DO NOTHING;
+
+-- ============================================================================
+-- Migrations (correr individualmente en SQL Editor sobre instalaciones existentes)
+-- ============================================================================
+
+-- 2026-04-28: campo libre para que el vendedor agregue aclaraciones/pedidos
+-- adicionales al cargar la consulta. Visible para el admin en el detalle.
+ALTER TABLE consultas_0km ADD COLUMN IF NOT EXISTS observaciones_vendedor TEXT;

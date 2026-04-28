@@ -728,7 +728,8 @@ async function showNuevaConsulta() {
     financia: null,
     finEntidad: null, finEntidadOtro: '',
     finMonto: null,
-    vsOtro: null, conceNombre: '', concePrecio: null
+    vsOtro: null, conceNombre: '', concePrecio: null,
+    observaciones: ''
   };
   wizardStack = [];
   currentStep = null;
@@ -810,15 +811,16 @@ function getNextStep(step) {
   if (step === 'fin-entidad-otro') return 'fin-monto';
   if (step === 'fin-monto') return 'vs-otro';
   if (step === 'vs-otro') {
-    return formData.vsOtro === 'si' ? 'concesionario' : 'resumen';
+    return formData.vsOtro === 'si' ? 'concesionario' : 'observaciones';
   }
-  if (step === 'concesionario') return 'resumen';
+  if (step === 'concesionario') return 'observaciones';
+  if (step === 'observaciones') return 'resumen';
   return 'resumen';
 }
 
 function totalSteps() {
-  // Pasos fijos: cantidad, modelos, colores, precios, tipo-cliente, nombre, ubicación, financia, vs-otro, resumen
-  let n = 10;
+  // Pasos fijos: cantidad, modelos, colores, precios, tipo-cliente, nombre, ubicación, financia, vs-otro, observaciones, resumen
+  let n = 11;
   if (currentMode === 'gerente') n += 1; // elegir vendedor
   if (formData.tipoCliente === 'particular') n += 2; // fuente, usado
   if (formData.fuenteDato === 'otro') n += 1;
@@ -1245,6 +1247,22 @@ STEP_RENDERERS['concesionario'] = () => ({
   onMount: () => { document.getElementById('conceNombre').focus(); }
 });
 
+// ----- Observaciones / pedidos adicionales -----
+STEP_RENDERERS['observaciones'] = () => ({
+  body: `
+    <h2>¿Querés agregar alguna aclaración o pedido adicional?</h2>
+    <p class="step-hint">Opcional. Cualquier cosa importante que quieras dejarle al admin sobre esta consulta.</p>
+    <textarea id="obsTxt" rows="6" placeholder="Ej: el cliente está apurado por una respuesta, ya tiene financiación pre-aprobada en otra entidad, etc."
+      style="width:100%; padding:12px; border:1px solid var(--vw-grey-2); border-radius:8px; font-family:inherit; font-size:14px; resize:vertical"
+      oninput="formData.observaciones = this.value">${escapeHtml(formData.observaciones || '')}</textarea>
+  `,
+  footer: `
+    <button class="btn-back" onclick="wizardBack()">Atrás</button>
+    <button class="btn-next" onclick="nextStep()">Siguiente</button>
+  `,
+  onMount: () => { document.getElementById('obsTxt').focus(); }
+});
+
 // ----- Resumen + submit -----
 STEP_RENDERERS['resumen'] = () => {
   const f = formData;
@@ -1295,6 +1313,12 @@ STEP_RENDERERS['resumen'] = () => {
         <h4>Unidades</h4>
         ${unidadesHtml}
       </div>
+      ${(f.observaciones || '').trim() ? `
+        <div class="detalle-section">
+          <h4>Observaciones / pedido adicional</h4>
+          <div style="white-space:pre-wrap; padding:8px 0">${escapeHtml(f.observaciones)}</div>
+        </div>
+      ` : ''}
     `,
     footer: `
       <button class="btn-back" onclick="wizardBack()">Atrás</button>
@@ -1463,6 +1487,7 @@ async function submitConsulta() {
       vs_otro_concesionario: f.vsOtro,
       concesionario_nombre: f.vsOtro === 'si' ? f.conceNombre : null,
       concesionario_precio: f.vsOtro === 'si' ? f.concePrecio : null,
+      observaciones_vendedor: (f.observaciones || '').trim() || null,
       estado: 'pendiente'
     };
     const inserted = await sbFetch('consultas_0km', { method: 'POST', body: JSON.stringify(cabecera) });
@@ -1740,6 +1765,12 @@ function abrirDetalle(consultaId) {
         <h4>Unidades</h4>
         ${itemsHtml || '<div class="muted">—</div>'}
       </div>
+      ${(c.observaciones_vendedor || '').trim() ? `
+        <div class="detalle-section">
+          <h4>Observaciones del vendedor</h4>
+          <div style="white-space:pre-wrap; padding:4px 0">${escapeHtml(c.observaciones_vendedor)}</div>
+        </div>
+      ` : ''}
       ${(!isPending && (c.precio_max_admin || c.observaciones_admin)) ? `
         <div class="detalle-section">
           <h4>Respuesta</h4>
