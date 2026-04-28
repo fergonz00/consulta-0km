@@ -148,3 +148,10 @@ ON CONFLICT (evento) DO NOTHING;
 -- 2026-04-28: campo libre para que el vendedor agregue aclaraciones/pedidos
 -- adicionales al cargar la consulta. Visible para el admin en el detalle.
 ALTER TABLE consultas_0km ADD COLUMN IF NOT EXISTS observaciones_vendedor TEXT;
+
+-- 2026-04-28: estado nuevo "contraoferta" — admin propone algo distinto
+-- (ej: ese precio pero con otro chasis) sin aceptar ni rechazar de plano.
+-- El comentario va en observaciones_admin (que ya existia).
+ALTER TABLE consultas_0km DROP CONSTRAINT IF EXISTS consultas_0km_estado_check;
+ALTER TABLE consultas_0km ADD CONSTRAINT consultas_0km_estado_check
+  CHECK (estado IN ('pendiente', 'aceptada', 'rechazada', 'contraoferta'));

@@ -112,6 +112,7 @@ input, select, textarea { font-family: var(--font); }
 .estado.pendiente { background:var(--orange-light); color:var(--orange); }
 .estado.aceptada { background:var(--green-light); color:var(--green); }
 .estado.rechazada { background:var(--red-light); color:var(--red); }
+.estado.contraoferta { background:#e0e7ff; color:#3730a3; }
 .consulta-card .body { margin-top:10px; font-size:13px; color:var(--vw-grey-4); }
 .consulta-card .body strong { color:var(--vw-black); }
 .consulta-card .resumen-units { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
@@ -1747,18 +1748,26 @@ function abrirDetalle(consultaId) {
     const defaultPrecio = (c.items && c.items[0]) ? c.items[0].oferta_vigente_min : null;
     const defaultVal = defaultPrecio ? '$' + Math.round(defaultPrecio).toLocaleString('es-AR') : '';
     footerHtml = `
-      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; width:100%; justify-content:space-between">
-        <div style="flex:1; min-width:240px">
-          <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Mejor precio máximo (con FyF)</label>
-          <input id="adminPrecioMax" type="text" inputmode="numeric" placeholder="$0"
-            value="${defaultVal}"
-            oninput="onAdminPrecioMaxInput(${c.id}, this)"
-            style="width:100%; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:14px">
-          <div id="adminPrecioMaxHint" class="field-hint"></div>
+      <div style="display:flex; flex-direction:column; gap:10px; width:100%">
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-start">
+          <div style="flex:1; min-width:240px">
+            <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Mejor precio máximo (con FyF)</label>
+            <input id="adminPrecioMax" type="text" inputmode="numeric" placeholder="$0"
+              value="${defaultVal}"
+              oninput="onAdminPrecioMaxInput(${c.id}, this)"
+              style="width:100%; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:14px">
+            <div id="adminPrecioMaxHint" class="field-hint"></div>
+          </div>
+          <div style="flex:2; min-width:240px">
+            <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Comentario (opcional para aceptar/rechazar — obligatorio para contraoferta)</label>
+            <textarea id="adminObs" rows="3" placeholder="Ej: Acepto el precio pero con la unidad gris más vieja del stock"
+              style="width:100%; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:14px; font-family:inherit; resize:vertical"></textarea>
+          </div>
         </div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap">
+        <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end">
           <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
           <button class="btn-danger" onclick="rechazarMejora(${c.id})">No acepto</button>
+          <button onclick="contraofertarMejora(${c.id})" style="background:#3730a3; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">Contraofertar</button>
           <button class="btn-success" onclick="aceptarMejora(${c.id})">Aceptar mejora</button>
         </div>
       </div>
@@ -1809,10 +1818,16 @@ function abrirDetalle(consultaId) {
         <div class="detalle-section">
           <h4>Respuesta</h4>
           <div class="kv">
-            <span class="k">Estado</span><span class="v">${c.estado}</span>
+            <span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${c.estado}</span></span>
             ${c.precio_max_admin ? `<span class="k">Mejor precio máx</span><span class="v">${fmtMoney(c.precio_max_admin)}</span>` : ''}
             ${c.admin_respuesta_at ? `<span class="k">Respondido</span><span class="v">${fmtDate(c.admin_respuesta_at)}</span>` : ''}
           </div>
+          ${(c.observaciones_admin || '').trim() ? `
+            <div style="margin-top:10px">
+              <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Comentario del administrador</div>
+              <div style="white-space:pre-wrap; padding:8px; background:var(--vw-grey-1); border-radius:6px">${escapeHtml(c.observaciones_admin)}</div>
+            </div>
+          ` : ''}
         </div>
       ` : ''}
     </div>
@@ -1844,13 +1859,30 @@ function onAdminPrecioMaxInput(consultaId, el) {
   hint.innerHTML = `Con ${fmtMoney(precio)}: dto extra ${fmtPct(dto)} · <strong style="color:${gcia>=0?'var(--green)':'var(--red)'}">gcia ${fmtPct(gcia)}</strong>`;
 }
 
+function getAdminObs() {
+  const el = document.getElementById('adminObs');
+  return el ? (el.value || '').trim() : '';
+}
+function getAdminPrecioMax() {
+  const el = document.getElementById('adminPrecioMax');
+  if (!el) return null;
+  const raw = (el.value || '').replace(/[^\d]/g, '');
+  return raw ? parseInt(raw, 10) : null;
+}
+
 async function aceptarMejora(consultaId) {
   if (!confirm('¿Aceptar la mejora pedida?')) return;
   showLoading('Guardando...');
   try {
+    const obs = getAdminObs();
     await sbFetch(`consultas_0km?id=eq.${consultaId}`, {
       method: 'PATCH',
-      body: JSON.stringify({ estado: 'aceptada', admin_user_id: currentUser.id, admin_respuesta_at: new Date().toISOString() })
+      body: JSON.stringify({
+        estado: 'aceptada',
+        admin_user_id: currentUser.id,
+        admin_respuesta_at: new Date().toISOString(),
+        observaciones_admin: obs || null
+      })
     });
     notifyVendedorRespuesta(consultaId).catch(e => console.error(e));
     closeModal();
@@ -1860,22 +1892,52 @@ async function aceptarMejora(consultaId) {
   } catch(e) { hideLoading(); console.error(e); alert('Error: ' + (e.message || e)); }
 }
 async function rechazarMejora(consultaId) {
-  const el = document.getElementById('adminPrecioMax');
-  const raw = (el.value || '').replace(/[^\d]/g, '');
-  if (!raw) { alert('Cargá el mejor precio máximo'); return; }
-  const precio = parseInt(raw, 10);
+  const precio = getAdminPrecioMax();
+  if (!precio) { alert('Cargá el mejor precio máximo'); return; }
   if (!confirm(`¿Rechazar la mejora y ofrecer ${fmtMoney(precio)} como mejor precio?`)) return;
   showLoading('Guardando...');
   try {
+    const obs = getAdminObs();
     await sbFetch(`consultas_0km?id=eq.${consultaId}`, {
       method: 'PATCH',
-      body: JSON.stringify({ estado: 'rechazada', admin_user_id: currentUser.id, admin_respuesta_at: new Date().toISOString(), precio_max_admin: precio })
+      body: JSON.stringify({
+        estado: 'rechazada',
+        admin_user_id: currentUser.id,
+        admin_respuesta_at: new Date().toISOString(),
+        precio_max_admin: precio,
+        observaciones_admin: obs || null
+      })
     });
     notifyVendedorRespuesta(consultaId).catch(e => console.error(e));
     closeModal();
     await cargarConsultasAdmin();
     hideLoading();
     showToast('Respuesta enviada');
+  } catch(e) { hideLoading(); console.error(e); alert('Error: ' + (e.message || e)); }
+}
+async function contraofertarMejora(consultaId) {
+  const obs = getAdminObs();
+  if (!obs) { alert('La contraoferta requiere un comentario explicando la condición.'); return; }
+  const precio = getAdminPrecioMax(); // opcional
+  const txtPrecio = precio ? ` con precio ${fmtMoney(precio)}` : '';
+  if (!confirm(`¿Enviar contraoferta${txtPrecio}?`)) return;
+  showLoading('Guardando...');
+  try {
+    await sbFetch(`consultas_0km?id=eq.${consultaId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        estado: 'contraoferta',
+        admin_user_id: currentUser.id,
+        admin_respuesta_at: new Date().toISOString(),
+        precio_max_admin: precio || null,
+        observaciones_admin: obs
+      })
+    });
+    notifyVendedorRespuesta(consultaId).catch(e => console.error(e));
+    closeModal();
+    await cargarConsultasAdmin();
+    hideLoading();
+    showToast('Contraoferta enviada');
   } catch(e) { hideLoading(); console.error(e); alert('Error: ' + (e.message || e)); }
 }
 async function notifyVendedorRespuesta(consultaId) {

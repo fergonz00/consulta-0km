@@ -264,13 +264,16 @@ function buildVariables(evento: string, con: any, items: any[]): string[] {
     // Template: 4 variables = modelo(s), vendedor, estado, monto autorizado
     const modelos = items.map((i) => i.modelo).filter(Boolean).join(" + ") || "—";
     const vendedor = con.vendedor_nombre || con.vendedor_usuario || "—";
-    const estado = con.estado === "aceptada" ? "Aceptada" : (con.estado === "rechazada" ? "Rechazada" : (con.estado || "respondida"));
+    let estado = con.estado || "respondida";
+    if (estado === "aceptada") estado = "Aceptada";
+    else if (estado === "rechazada") estado = "Rechazada";
+    else if (estado === "contraoferta") estado = "Contraoferta (revisá el comentario en el portal)";
     let monto = "—";
     if (con.estado === "aceptada") {
       // Aceptada: el monto autorizado es lo que el vendedor pidio (precio_pedido de la primera unidad).
       const pedido = items[0]?.precio_pedido;
       if (pedido) monto = fmtMoney(pedido);
-    } else if (con.estado === "rechazada" && con.precio_max_admin) {
+    } else if ((con.estado === "rechazada" || con.estado === "contraoferta") && con.precio_max_admin) {
       monto = fmtMoney(con.precio_max_admin);
     }
     return [modelos, vendedor, estado, monto];
