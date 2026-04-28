@@ -313,13 +313,26 @@ input, select, textarea { font-family: var(--font); }
     <div class="tabs">
       <button id="tabPendientes" class="active" onclick="setAdminTab('pendiente')">Pendientes</button>
       <button id="tabResueltas" onclick="setAdminTab('resueltas')">Resueltas</button>
+      <button id="tabUsuarios" onclick="setAdminTab('usuarios')">Usuarios</button>
     </div>
-    <div class="container">
+    <div id="adminConsultasContainer" class="container">
       <div class="toolbar">
         <input type="text" id="aSearch" placeholder="Buscar por vendedor, modelo, cliente..." oninput="renderAdminList()">
       </div>
       <div id="adminConsultasList"></div>
     </div>
+    <div id="adminUsuariosContainer" class="container hidden">
+      <div class="toolbar">
+        <input type="text" id="uSearch" placeholder="Buscar usuario..." oninput="renderUsuariosList()">
+        <button class="btn-primary" onclick="abrirEditarUsuario(null)">+ Nuevo usuario</button>
+      </div>
+      <div id="adminUsuariosList"></div>
+    </div>
+  </div>
+
+  <!-- Banner impersonación -->
+  <div id="impersonateBanner" class="hidden" style="background:var(--orange); color:#fff; padding:10px 16px; text-align:center; font-size:13px; position:sticky; top:50px; z-index:99">
+    Estás viendo como <strong id="impersonateName"></strong> · <button onclick="volverAAdmin()" style="background:rgba(255,255,255,0.25); color:#fff; padding:4px 12px; border-radius:6px; font-size:12px; font-weight:600">Volver a admin</button>
   </div>
 </div>
 
@@ -345,6 +358,8 @@ const PROVINCIAS_AR = ['CABA','Buenos Aires','Catamarca','Chaco','Chubut','Córd
 
 // ============ STATE ============
 let currentUser = null;
+let realUser = null; // user real (admin) cuando se está impersonando otro
+let usuariosList = [];
 let currentMode = null;
 let stockData = [];
 let stockLimMap = {};
@@ -498,7 +513,8 @@ async function login() {
 }
 function logout() {
   limpiarSesion();
-  currentUser = null; currentMode = null;
+  currentUser = null; realUser = null; currentMode = null;
+  document.getElementById('impersonateBanner').classList.add('hidden');
   document.getElementById('appScreen').classList.add('hidden');
   document.getElementById('modeScreen').classList.add('hidden');
   document.getElementById('loginScreen').classList.remove('hidden');
@@ -1465,7 +1481,15 @@ function setAdminTab(tab) {
   adminTab = tab;
   document.getElementById('tabPendientes').classList.toggle('active', tab === 'pendiente');
   document.getElementById('tabResueltas').classList.toggle('active', tab === 'resueltas');
-  renderAdminList();
+  document.getElementById('tabUsuarios').classList.toggle('active', tab === 'usuarios');
+  const isUsuarios = tab === 'usuarios';
+  document.getElementById('adminConsultasContainer').classList.toggle('hidden', isUsuarios);
+  document.getElementById('adminUsuariosContainer').classList.toggle('hidden', !isUsuarios);
+  if (isUsuarios) {
+    cargarUsuarios();
+  } else {
+    renderAdminList();
+  }
 }
 async function cargarConsultasAdmin() {
   const cont = document.getElementById('adminConsultasList');
@@ -1552,11 +1576,16 @@ function abrirDetalle(consultaId) {
   const isPending = c.estado === 'pendiente';
   let footerHtml = `<button class="btn-secondary" onclick="closeModal()">Cerrar</button>`;
   if (isAdmin && isPending) {
+    // Pre-llenar con la oferta vigente actual de la primera unidad para que solo
+    // tenga que ajustarla (en vez de tipear desde cero).
+    const defaultPrecio = (c.items && c.items[0]) ? c.items[0].oferta_vigente_min : null;
+    const defaultVal = defaultPrecio ? '$' + Math.round(defaultPrecio).toLocaleString('es-AR') : '';
     footerHtml = `
       <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; width:100%; justify-content:space-between">
         <div style="flex:1; min-width:240px">
           <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Mejor precio máximo (con FyF)</label>
           <input id="adminPrecioMax" type="text" inputmode="numeric" placeholder="$0"
+            value="${defaultVal}"
             oninput="onAdminPrecioMaxInput(${c.id}, this)"
             style="width:100%; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:14px">
           <div id="adminPrecioMaxHint" class="field-hint"></div>
@@ -1618,6 +1647,13 @@ function abrirDetalle(consultaId) {
     <div class="modal-footer">${footerHtml}</div>
   `;
   overlay.classList.remove('hidden');
+  // Si admin tiene una pendiente con precio pre-llenado, calcular el hint inicial
+  if (isAdmin && isPending) {
+    setTimeout(() => {
+      const el = document.getElementById('adminPrecioMax');
+      if (el && el.value) onAdminPrecioMaxInput(c.id, el);
+    }, 0);
+  }
 }
 function closeModal() { document.getElementById('modalOverlay').classList.add('hidden'); }
 
@@ -1672,6 +1708,260 @@ async function rechazarMejora(consultaId) {
 }
 async function notifyVendedorRespuesta(consultaId) {
   return notifyEvent('consulta_0km_respondida', consultaId);
+}
+
+// ============ ADMIN USUARIOS ============
+async function cargarUsuarios() {
+  const cont = document.getElementById('adminUsuariosList');
+  cont.innerHTML = '<div class="empty">Cargando...</div>';
+  try {
+    const data = await sbFetch('tasador_usuarios?select=id,usuario,nombre,email,telefono_wa,callmebot_key,roles,rol,activo,debe_cambiar_clave&order=usuario.asc');
+    usuariosList = data || [];
+    renderUsuariosList();
+  } catch(e) {
+    console.error(e);
+    cont.innerHTML = '<div class="empty"><p>Error al cargar usuarios</p></div>';
+  }
+}
+
+function renderUsuariosList() {
+  const cont = document.getElementById('adminUsuariosList');
+  const q = (document.getElementById('uSearch').value || '').toLowerCase().trim();
+  let list = usuariosList;
+  if (q) list = list.filter(u =>
+    (u.usuario || '').toLowerCase().includes(q) ||
+    (u.nombre || '').toLowerCase().includes(q) ||
+    (u.email || '').toLowerCase().includes(q)
+  );
+  if (list.length === 0) {
+    cont.innerHTML = '<div class="empty"><p>Sin usuarios.</p></div>';
+    return;
+  }
+  cont.innerHTML = list.map(u => {
+    const roles = Array.isArray(u.roles) ? u.roles : (u.rol ? [u.rol] : []);
+    const rolesTxt = roles.length > 0 ? roles.join(', ') : '—';
+    const activoCls = u.activo === false ? 'rechazada' : 'aceptada';
+    const activoTxt = u.activo === false ? 'Inactivo' : 'Activo';
+    const tieneWA = u.telefono_wa ? '✓' : '✗';
+    return `
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap">
+          <div style="flex:1; min-width:220px">
+            <h3 style="font-size:15px; margin-bottom:4px">${escapeHtml(u.nombre || '—')} <span class="muted" style="font-weight:400">@${escapeHtml(u.usuario || '')}</span></h3>
+            <div style="font-size:13px; color:var(--vw-grey-4); margin-top:4px">
+              ${rolesTxt} · <span class="estado ${activoCls}" style="font-size:11px">${activoTxt}</span>
+              ${u.debe_cambiar_clave ? ' · <span class="tag-badge lim">debe cambiar clave</span>' : ''}
+            </div>
+            <div style="font-size:12px; color:var(--vw-grey-3); margin-top:4px">
+              📱 ${u.telefono_wa || '—'} · WhatsApp ${tieneWA}
+            </div>
+          </div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap">
+            <button class="btn-secondary" style="font-size:12px; padding:8px 12px" onclick="abrirEditarUsuario('${u.id}')">Editar</button>
+            <button class="btn-secondary" style="font-size:12px; padding:8px 12px" onclick="resetClaveUsuario('${u.id}')">Reset clave</button>
+            <button class="btn-primary" style="font-size:12px; padding:8px 12px" onclick="entrarComoUsuario('${u.id}')">Entrar como</button>
+            <button class="btn-secondary" style="font-size:12px; padding:8px 12px" onclick="toggleActivoUsuario('${u.id}', ${u.activo === false})">${u.activo === false ? 'Activar' : 'Desactivar'}</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function abrirEditarUsuario(id) {
+  const u = id ? usuariosList.find(x => x.id === id) : { usuario: '', nombre: '', email: '', telefono_wa: '', callmebot_key: '', roles: ['vendedor'], activo: true };
+  if (!u) return;
+  const isNew = !id;
+  const roles = Array.isArray(u.roles) ? u.roles : (u.rol ? [u.rol] : []);
+  const cont = document.getElementById('modalContent');
+  cont.innerHTML = `
+    <div class="modal-header">
+      <h2>${isNew ? 'Nuevo usuario' : 'Editar usuario'}</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label class="field-label">Usuario (único, sin espacios)</label>
+        <input id="uUsuario" type="text" value="${escapeHtml(u.usuario || '')}" ${isNew ? '' : 'disabled'}>
+      </div>
+      <div class="field">
+        <label class="field-label">Nombre y apellido</label>
+        <input id="uNombre" type="text" value="${escapeHtml(u.nombre || '')}">
+      </div>
+      <div class="field">
+        <label class="field-label">Email</label>
+        <input id="uEmail" type="text" value="${escapeHtml(u.email || '')}">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label class="field-label">WhatsApp (E.164, ej 5491156559854)</label>
+          <input id="uTelefono" type="text" value="${escapeHtml(u.telefono_wa || '')}">
+        </div>
+        <div class="field">
+          <label class="field-label">CallMeBot key (opcional)</label>
+          <input id="uCallmebot" type="text" value="${escapeHtml(u.callmebot_key || '')}">
+        </div>
+      </div>
+      <div class="field">
+        <label class="field-label">Roles</label>
+        <div style="display:flex; gap:14px; flex-wrap:wrap; padding:10px 0">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+            <input type="checkbox" id="uRolVendedor" ${roles.includes('vendedor') ? 'checked' : ''}> Vendedor
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+            <input type="checkbox" id="uRolGerente" ${roles.includes('gerente') ? 'checked' : ''}> Gerente
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+            <input type="checkbox" id="uRolAdmin" ${roles.includes('admin') ? 'checked' : ''}> Administrador
+          </label>
+        </div>
+      </div>
+      <div class="field">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+          <input type="checkbox" id="uActivo" ${u.activo !== false ? 'checked' : ''}> Activo
+        </label>
+      </div>
+      ${isNew ? `
+        <div class="field">
+          <label class="field-label">Clave inicial (la genero o la pongo manual)</label>
+          <input id="uClave" type="text" value="${generarClaveProvisoria()}" placeholder="Clave inicial">
+          <div class="field-hint">El usuario tendrá que cambiarla en su primer login.</div>
+        </div>
+      ` : ''}
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn-success" onclick="guardarUsuario('${id || ''}')">Guardar</button>
+    </div>
+  `;
+  document.getElementById('modalOverlay').classList.remove('hidden');
+}
+
+function generarClaveProvisoria() {
+  const chars = 'abcdefghijkmnpqrstuvwxyz23456789';
+  let p = '';
+  for (let i = 0; i < 8; i++) p += chars[Math.floor(Math.random() * chars.length)];
+  return p;
+}
+
+async function guardarUsuario(id) {
+  const usuario = (document.getElementById('uUsuario').value || '').trim().toLowerCase();
+  const nombre = (document.getElementById('uNombre').value || '').trim();
+  const email = (document.getElementById('uEmail').value || '').trim();
+  const telefono_wa = (document.getElementById('uTelefono').value || '').trim();
+  const callmebot_key = (document.getElementById('uCallmebot').value || '').trim() || null;
+  const activo = document.getElementById('uActivo').checked;
+  const roles = [];
+  if (document.getElementById('uRolVendedor').checked) roles.push('vendedor');
+  if (document.getElementById('uRolGerente').checked) roles.push('gerente');
+  if (document.getElementById('uRolAdmin').checked) roles.push('admin');
+  if (!usuario) { alert('Falta usuario'); return; }
+  if (!nombre) { alert('Falta nombre'); return; }
+  if (roles.length === 0) { alert('Asigná al menos un rol'); return; }
+
+  const isNew = !id;
+  const body = {
+    usuario, nombre, email: email || null, telefono_wa: telefono_wa || null, callmebot_key,
+    roles, rol: roles[0], activo
+  };
+
+  try {
+    showLoading('Guardando...');
+    if (isNew) {
+      const clave = (document.getElementById('uClave').value || '').trim() || generarClaveProvisoria();
+      body.clave = clave;
+      body.debe_cambiar_clave = true;
+      await sbFetch('tasador_usuarios', { method: 'POST', body: JSON.stringify(body) });
+      hideLoading();
+      closeModal();
+      showToast('Usuario creado. Clave: ' + clave);
+      alert(`Usuario creado.\n\nClave provisoria: ${clave}\n\nPasásela al usuario; al primer login va a tener que cambiarla.`);
+    } else {
+      await sbFetch(`tasador_usuarios?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+      hideLoading();
+      closeModal();
+      showToast('Usuario actualizado');
+    }
+    cargarUsuarios();
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    alert('Error al guardar: ' + (e.message || e));
+  }
+}
+
+async function resetClaveUsuario(id) {
+  const u = usuariosList.find(x => x.id === id);
+  if (!u) return;
+  if (!confirm(`¿Resetear la clave de ${u.usuario}? Se va a generar una clave nueva y al loguearse va a tener que cambiarla.`)) return;
+  const clave = generarClaveProvisoria();
+  try {
+    showLoading('Reseteando...');
+    await sbFetch(`tasador_usuarios?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ clave, debe_cambiar_clave: true })
+    });
+    hideLoading();
+    alert(`Clave reseteada para ${u.usuario}.\n\nClave provisoria: ${clave}\n\nPasásela al usuario.`);
+    cargarUsuarios();
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    alert('Error: ' + (e.message || e));
+  }
+}
+
+async function toggleActivoUsuario(id, activarNuevo) {
+  const u = usuariosList.find(x => x.id === id);
+  if (!u) return;
+  if (!confirm(`¿${activarNuevo ? 'Activar' : 'Desactivar'} a ${u.usuario}?`)) return;
+  try {
+    showLoading('Guardando...');
+    await sbFetch(`tasador_usuarios?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ activo: activarNuevo })
+    });
+    hideLoading();
+    cargarUsuarios();
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    alert('Error: ' + (e.message || e));
+  }
+}
+
+async function entrarComoUsuario(id) {
+  const u = usuariosList.find(x => x.id === id);
+  if (!u) return;
+  if (u.id === currentUser.id) { showToast('Ya sos vos'); return; }
+  if (u.activo === false) { alert('Usuario inactivo. Activalo primero.'); return; }
+  if (!confirm(`¿Entrar como ${u.nombre || u.usuario}? Vas a ver lo que ve el usuario.`)) return;
+
+  // Guardamos el admin real (si es la primera impersonación)
+  if (!realUser) realUser = currentUser;
+  currentUser = { ...u };
+  currentUser.rolesArr = (Array.isArray(u.roles) && u.roles.length > 0)
+    ? u.roles
+    : (u.rol ? [u.rol] : ['vendedor']);
+
+  // Banner de impersonación
+  document.getElementById('impersonateName').textContent = u.nombre || u.usuario;
+  document.getElementById('impersonateBanner').classList.remove('hidden');
+
+  // Entrar al rol que corresponda (priorizar vendedor para "ver lo que ve")
+  const targetMode = currentUser.rolesArr.includes('vendedor') ? 'vendedor'
+    : currentUser.rolesArr.includes('gerente') ? 'gerente'
+    : currentUser.rolesArr[0] || 'vendedor';
+  closeModal();
+  entrarComo(targetMode);
+}
+
+function volverAAdmin() {
+  if (!realUser) return;
+  currentUser = realUser;
+  realUser = null;
+  document.getElementById('impersonateBanner').classList.add('hidden');
+  entrarComo('admin');
 }
 
 // ============ INIT ============
