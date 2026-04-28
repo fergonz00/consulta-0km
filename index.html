@@ -277,6 +277,7 @@ input, select, textarea { font-family: var(--font); }
     <h1>Consulta 0KM</h1>
     <div class="right">
       <span class="user-info" id="userInfo"></span>
+      <button id="btnCambiarPerfil" onclick="cambiarPerfil()" class="hidden" style="background:rgba(255,255,255,0.15); color:#fff; padding:8px 14px; border-radius:6px; font-size:13px; font-weight:500">🔄 Cambiar perfil</button>
       <button id="btnUsuarios" onclick="abrirUsuarios()" class="hidden" style="background:rgba(255,255,255,0.15); color:#fff; padding:8px 14px; border-radius:6px; font-size:13px; font-weight:500">👥 Usuarios</button>
       <button onclick="logout()">Salir</button>
     </div>
@@ -524,6 +525,7 @@ function logout() {
   currentUser = null; realUser = null; currentMode = null;
   document.getElementById('impersonateBanner').classList.add('hidden');
   document.getElementById('btnUsuarios').classList.add('hidden');
+  document.getElementById('btnCambiarPerfil').classList.add('hidden');
   document.getElementById('usuariosView').classList.add('hidden');
   document.getElementById('appScreen').classList.add('hidden');
   document.getElementById('modeScreen').classList.add('hidden');
@@ -549,6 +551,11 @@ function elegirModo() {
   ).join('');
   document.getElementById('modeScreen').classList.remove('hidden');
 }
+function cambiarPerfil() {
+  document.getElementById('appScreen').classList.add('hidden');
+  document.getElementById('usuariosView').classList.add('hidden');
+  elegirModo();
+}
 function entrarComo(modo) {
   currentMode = modo;
   gerenteVendedorActivo = null; // reset al entrar a un modo
@@ -560,6 +567,9 @@ function entrarComo(modo) {
   document.getElementById('userInfo').textContent = (currentUser.nombre || currentUser.usuario) + tag;
   // Botón "Usuarios" solo cuando el modo activo es admin
   document.getElementById('btnUsuarios').classList.toggle('hidden', modo !== 'admin');
+  // Botón "Cambiar perfil" solo si el usuario tiene 2+ roles válidos
+  const rolesValidos = (currentUser.rolesArr || []).filter(r => ['vendedor','gerente','admin'].includes(r));
+  document.getElementById('btnCambiarPerfil').classList.toggle('hidden', rolesValidos.length < 2);
   if (modo === 'admin') {
     document.getElementById('vendedorView').classList.add('hidden');
     document.getElementById('adminView').classList.remove('hidden');

@@ -9,7 +9,7 @@
 //   - consulta_0km_respondida  → al vendedor + gerentes (default vendedor.si, gerente.si)
 
 const META_API_URL = "https://graph.facebook.com/v25.0";
-const META_LANGUAGE = "es_AR";
+const META_LANGUAGE = "es";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
