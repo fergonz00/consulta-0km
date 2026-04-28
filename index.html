@@ -807,21 +807,37 @@ function nextStep() {
 const STEP_RENDERERS = {};
 
 // ----- Elegir vendedor (solo modo gerente) -----
-STEP_RENDERERS['gerente-vendedor'] = () => ({
-  body: `
-    <h2>¿Por qué vendedor cargás esta consulta?</h2>
-    <p class="step-hint">La consulta queda asignada al vendedor elegido. Vos figurás como quien la cargó.</p>
-    <div class="opt-list">
-      ${vendedoresCache.length === 0 ? '<div class="empty"><p>No hay vendedores activos.</p></div>' : vendedoresCache.map(v => `
-        <div class="opt ${gerenteVendedorActivo && gerenteVendedorActivo.id === v.id ? 'selected' : ''}"
-          onclick="selectGerenteVendedor('${v.id}', '${escapeHtml(v.usuario).replace(/'/g, "\\'")}', '${escapeHtml(v.nombre || v.usuario).replace(/'/g, "\\'")}')">
-          <span class="opt-icon">👤</span> ${escapeHtml(v.nombre || v.usuario)}
-        </div>
-      `).join('')}
-    </div>
-  `,
-  footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
-});
+STEP_RENDERERS['gerente-vendedor'] = () => {
+  const selVal = gerenteVendedorActivo ? gerenteVendedorActivo.id : '';
+  return {
+    body: `
+      <h2>¿Por qué vendedor cargás esta consulta?</h2>
+      <p class="step-hint">La consulta queda asignada al vendedor elegido. Vos figurás como quien la cargó.</p>
+      <div class="field">
+        <label class="field-label">Vendedor</label>
+        <select id="gerenteVendedorSelect" onchange="onSelectGerenteVendedor(this.value)">
+          <option value="">— Elegir vendedor —</option>
+          ${vendedoresCache.map(v => `<option value="${v.id}" ${selVal === v.id ? 'selected' : ''}>${escapeHtml(v.nombre || v.usuario)}</option>`).join('')}
+        </select>
+      </div>
+    `,
+    footer: `
+      <button class="btn-back" onclick="wizardBack()">Atrás</button>
+      <button class="btn-next" id="btnNext" ${selVal ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+    `
+  };
+};
+
+function onSelectGerenteVendedor(id) {
+  if (!id) {
+    gerenteVendedorActivo = null;
+  } else {
+    const v = vendedoresCache.find(x => x.id === id);
+    if (v) gerenteVendedorActivo = { id: v.id, usuario: v.usuario, nombre: v.nombre || v.usuario };
+  }
+  const btn = document.getElementById('btnNext');
+  if (btn) btn.disabled = !gerenteVendedorActivo;
+}
 
 // ----- Cantidad de unidades -----
 STEP_RENDERERS['cantidad-unidades'] = () => ({
