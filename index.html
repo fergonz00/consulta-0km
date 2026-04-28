@@ -1252,7 +1252,7 @@ STEP_RENDERERS['observaciones'] = () => ({
   body: `
     <h2>¿Querés agregar alguna aclaración o pedido adicional?</h2>
     <p class="step-hint">Opcional. Cualquier cosa importante que quieras dejarle al admin sobre esta consulta.</p>
-    <textarea id="obsTxt" rows="6" placeholder="Ej: el cliente está apurado por una respuesta, ya tiene financiación pre-aprobada en otra entidad, etc."
+    <textarea id="obsTxt" rows="6" placeholder="Ej: es una empresa que retiene, el cliente está apurado por una respuesta, ya tiene financiación pre-aprobada, etc."
       style="width:100%; padding:12px; border:1px solid var(--vw-grey-2); border-radius:8px; font-family:inherit; font-size:14px; resize:vertical"
       oninput="formData.observaciones = this.value">${escapeHtml(formData.observaciones || '')}</textarea>
   `,
