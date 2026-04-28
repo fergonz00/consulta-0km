@@ -320,7 +320,7 @@ input, select, textarea { font-family: var(--font); }
     <div class="container">
       <div class="toolbar">
         <input type="text" id="aSearch" placeholder="Buscar por vendedor, modelo, cliente..." oninput="renderAdminList()">
-        <button id="btnSelMultiple" onclick="toggleSelMultiple()" style="padding:10px 14px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:1px solid var(--vw-grey-2); border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap">☑ Selección múltiple</button>
+        <button id="btnSelMultiple" onclick="toggleSelMultiple()" class="hidden" style="padding:10px 14px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:1px solid var(--vw-grey-2); border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap">☑ Selección múltiple</button>
       </div>
       <div id="adminSelBar" class="hidden" style="margin:8px 0; padding:10px 14px; background:#FEE2E2; border-radius:8px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap">
         <span style="font-size:13px; color:#7F1D1D; font-weight:600"><span id="adminSelCount">0</span> consulta(s) seleccionada(s)</span>
@@ -641,6 +641,9 @@ function entrarComo(modo) {
   document.getElementById('userInfo').textContent = (currentUser.nombre || currentUser.usuario) + tag;
   // Botón "Usuarios" solo cuando el modo activo es admin Y el usuario real es superadmin (fngonzalez)
   document.getElementById('btnUsuarios').classList.toggle('hidden', !(modo === 'admin' && _esSuperadmin()));
+  // Botón "Selección múltiple" (para borrar varias consultas) solo superadmin
+  const btnSel = document.getElementById('btnSelMultiple');
+  if (btnSel) btnSel.classList.toggle('hidden', !(modo === 'admin' && _esSuperadmin()));
   // Botón "Cambiar perfil" solo si el usuario tiene 2+ roles válidos
   const rolesValidos = (currentUser.rolesArr || []).filter(r => ['vendedor','gerente','admin'].includes(r));
   document.getElementById('btnCambiarPerfil').classList.toggle('hidden', rolesValidos.length < 2);
@@ -1709,6 +1712,7 @@ function renderAdminList() {
 }
 
 function toggleSelMultiple() {
+  if (!_esSuperadmin()) { showToast('No autorizado'); return; }
   _selMultipleActivo = !_selMultipleActivo;
   _selMultipleIds.clear();
   const btn = document.getElementById('btnSelMultiple');
@@ -1740,7 +1744,7 @@ function actualizarSelCount() {
 }
 
 async function eliminarConsulta(consultaId) {
-  if (currentMode !== 'admin') { showToast('No autorizado'); return; }
+  if (currentMode !== 'admin' || !_esSuperadmin()) { showToast('No autorizado'); return; }
   const c = (adminConsultas || []).find(x => x.id === consultaId);
   const label = c ? `#${c.id} — ${c.vendedor_nombre || c.vendedor_usuario || ''}` : `#${consultaId}`;
   if (!confirm(`¿Borrar definitivamente esta consulta?\n\n${label}\n\nEsto no se puede deshacer.`)) return;
@@ -1754,7 +1758,7 @@ async function eliminarConsulta(consultaId) {
   } catch(e) { hideLoading(); console.error(e); alert('Error al borrar: ' + (e.message || e)); }
 }
 async function borrarSeleccionadas() {
-  if (currentMode !== 'admin') { showToast('No autorizado'); return; }
+  if (currentMode !== 'admin' || !_esSuperadmin()) { showToast('No autorizado'); return; }
   if (_selMultipleIds.size === 0) { showToast('No hay consultas seleccionadas'); return; }
   const n = _selMultipleIds.size;
   if (!confirm(`¿Borrar ${n} consulta(s)?\n\nEsto no se puede deshacer.`)) return;
@@ -1853,7 +1857,7 @@ function abrirDetalle(consultaId) {
 
   const isAdmin = currentMode === 'admin';
   const isPending = c.estado === 'pendiente';
-  const btnEliminar = isAdmin
+  const btnEliminar = (isAdmin && _esSuperadmin())
     ? `<button onclick="eliminarConsulta(${c.id})" style="background:#991B1B; color:#fff; padding:10px 14px; border-radius:8px; border:none; font-weight:600; cursor:pointer">🗑 Eliminar</button>`
     : '';
   let footerHtml = `${btnEliminar}<button class="btn-secondary" onclick="closeModal()">Cerrar</button>`;
@@ -1880,7 +1884,7 @@ function abrirDetalle(consultaId) {
           </div>
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:space-between; align-items:center">
-          <button onclick="eliminarConsulta(${c.id})" style="background:#991B1B; color:#fff; padding:10px 14px; border-radius:8px; border:none; font-weight:600; cursor:pointer">🗑 Eliminar</button>
+          ${_esSuperadmin() ? `<button onclick="eliminarConsulta(${c.id})" style="background:#991B1B; color:#fff; padding:10px 14px; border-radius:8px; border:none; font-weight:600; cursor:pointer">🗑 Eliminar</button>` : '<div></div>'}
           <div style="display:flex; gap:8px; flex-wrap:wrap">
             <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
             <button class="btn-danger" onclick="rechazarMejora(${c.id})">No acepto</button>
