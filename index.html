@@ -288,10 +288,18 @@ input, select, textarea { font-family: var(--font); }
   <div id="vendedorView" class="hidden">
     <!-- Lista mis consultas -->
     <div id="vendedorList">
+      <!-- Tabs solo para gerente: "Mis cargas" vs "Respondidas (todos los vendedores)" -->
+      <div id="gerenteTabs" class="tabs hidden">
+        <button id="tabGerenteMisCargas" class="active" onclick="setGerenteTab('misCargas')">Mis cargas</button>
+        <button id="tabGerenteRespondidas" onclick="setGerenteTab('respondidas')">Respondidas</button>
+      </div>
       <div class="container">
         <div class="toolbar">
           <input type="text" id="vSearch" placeholder="Buscar consulta..." oninput="renderVendedorList()">
-          <button class="btn-primary" onclick="showNuevaConsulta()">+ Nueva consulta</button>
+          <select id="gerenteVendedorFiltro" class="hidden" onchange="renderVendedorList()" style="padding:10px 14px; border:1px solid var(--vw-grey-2); border-radius:8px; font-size:14px; min-width:180px">
+            <option value="">Todos los vendedores</option>
+          </select>
+          <button id="btnNuevaConsulta" class="btn-primary" onclick="showNuevaConsulta()">+ Nueva consulta</button>
         </div>
         <div id="misConsultasList"></div>
       </div>
@@ -466,6 +474,10 @@ let currentStep = null;
 // Selección múltiple admin (para borrar varias consultas a la vez)
 let _selMultipleActivo = false;
 let _selMultipleIds = new Set();
+
+// Tab activo en la vista del gerente: 'misCargas' (consultas que el cargo) o
+// 'respondidas' (todas las consultas respondidas, con filtro x vendedor)
+let gerenteTab = 'misCargas';
 
 // ============ HELPERS ============
 async function sbFetch(path, options = {}) {
@@ -654,6 +666,11 @@ function entrarComo(modo) {
   // Botón "Cambiar perfil" solo si el usuario tiene 2+ roles válidos
   const rolesValidos = (currentUser.rolesArr || []).filter(r => ['vendedor','gerente','admin'].includes(r));
   document.getElementById('btnCambiarPerfil').classList.toggle('hidden', rolesValidos.length < 2);
+  // Tabs del gerente solo en modo gerente
+  const gtabs = document.getElementById('gerenteTabs');
+  if (gtabs) gtabs.classList.toggle('hidden', modo !== 'gerente');
+  // Reset de tab a "Mis cargas" al entrar a gerente
+  if (modo === 'gerente') gerenteTab = 'misCargas';
   if (modo === 'admin') {
     document.getElementById('vendedorView').classList.add('hidden');
     document.getElementById('adminView').classList.remove('hidden');
@@ -1596,28 +1613,77 @@ async function cargarMisConsultas() {
   const cont = document.getElementById('misConsultasList');
   cont.innerHTML = '<div class="empty">Cargando...</div>';
   try {
-    // Vendedor: ve sus propias consultas. Gerente: ve las consultas que él cargó.
-    const filtro = currentMode === 'gerente'
-      ? `cargada_por_id=eq.${currentUser.id}&`
-      : `vendedor_id=eq.${currentUser.id}&`;
+    // Filtro segun rol y tab activo:
+    // - Vendedor: sus propias consultas (vendedor_id = el).
+    // - Gerente / "Mis cargas": consultas que el cargo (cargada_por_id = el).
+    // - Gerente / "Respondidas": todas las consultas respondidas (estado != pendiente),
+    //   sin filtrar x el — el dropdown de la UI filtra por vendedor despues.
+    let filtro;
+    if (currentMode === 'gerente' && gerenteTab === 'respondidas') {
+      filtro = `estado=neq.pendiente&`;
+    } else if (currentMode === 'gerente') {
+      filtro = `cargada_por_id=eq.${currentUser.id}&`;
+    } else {
+      filtro = `vendedor_id=eq.${currentUser.id}&`;
+    }
     const data = await sbFetch(`consultas_0km?${filtro}order=created_at.desc`);
     const ids = (data || []).map(c => c.id);
     let items = [];
     if (ids.length > 0) items = await sbFetch(`consultas_0km_items?consulta_id=in.(${ids.join(',')})&order=orden.asc`);
     myConsultas = (data || []).map(c => ({ ...c, items: items.filter(i => i.consulta_id === c.id) }));
+    // Si estamos en tab "respondidas", poblar el dropdown de vendedores con
+    // los que aparecen en los resultados (asi solo lista vendedores con consultas respondidas).
+    if (currentMode === 'gerente' && gerenteTab === 'respondidas') {
+      poblarFiltroVendedores();
+    }
     renderVendedorList();
   } catch(e) {
     console.error(e);
     cont.innerHTML = '<div class="empty"><p>Error al cargar</p></div>';
   }
 }
+function poblarFiltroVendedores() {
+  const sel = document.getElementById('gerenteVendedorFiltro');
+  if (!sel) return;
+  // Recolectar vendedores unicos de myConsultas
+  const map = new Map();
+  for (const c of myConsultas) {
+    if (c.vendedor_id && !map.has(c.vendedor_id)) {
+      map.set(c.vendedor_id, c.vendedor_nombre || c.vendedor_usuario || '—');
+    }
+  }
+  const vendedores = Array.from(map.entries()).sort((a,b) => a[1].localeCompare(b[1]));
+  const previo = sel.value;
+  sel.innerHTML = '<option value="">Todos los vendedores</option>' +
+    vendedores.map(([id, nombre]) => `<option value="${id}">${escapeHtml(nombre)}</option>`).join('');
+  if (previo && vendedores.some(([id]) => id === previo)) sel.value = previo;
+}
+function setGerenteTab(tab) {
+  gerenteTab = tab;
+  document.getElementById('tabGerenteMisCargas').classList.toggle('active', tab === 'misCargas');
+  document.getElementById('tabGerenteRespondidas').classList.toggle('active', tab === 'respondidas');
+  // Mostrar/ocultar elementos especificos del tab
+  const dropdown = document.getElementById('gerenteVendedorFiltro');
+  const btnNueva = document.getElementById('btnNuevaConsulta');
+  if (dropdown) dropdown.classList.toggle('hidden', tab !== 'respondidas');
+  if (btnNueva) btnNueva.classList.toggle('hidden', tab === 'respondidas');
+  cargarMisConsultas();
+}
 function renderVendedorList() {
   const cont = document.getElementById('misConsultasList');
   const q = (document.getElementById('vSearch').value || '').toLowerCase().trim();
   let list = myConsultas;
+  // Filtro por vendedor (solo en tab "respondidas" del gerente)
+  if (currentMode === 'gerente' && gerenteTab === 'respondidas') {
+    const filtroVendId = (document.getElementById('gerenteVendedorFiltro').value || '').trim();
+    if (filtroVendId) list = list.filter(c => c.vendedor_id === filtroVendId);
+  }
   if (q) list = list.filter(c => JSON.stringify(c).toLowerCase().includes(q));
   if (list.length === 0) {
-    cont.innerHTML = '<div class="empty"><div class="icon">📋</div><p>Sin consultas todavía. Tocá <strong>+ Nueva consulta</strong> arriba.</p></div>';
+    const empty = (currentMode === 'gerente' && gerenteTab === 'respondidas')
+      ? '<div class="empty"><div class="icon">📭</div><p>Sin consultas respondidas para ese filtro.</p></div>'
+      : '<div class="empty"><div class="icon">📋</div><p>Sin consultas todavía. Tocá <strong>+ Nueva consulta</strong> arriba.</p></div>';
+    cont.innerHTML = empty;
     return;
   }
   cont.innerHTML = list.map(c => renderConsultaCard(c)).join('');
