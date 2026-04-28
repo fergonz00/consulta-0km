@@ -370,6 +370,14 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const STOCK_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=0&single=true&output=csv';
 const STOCK_LIM_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=1137307261&single=true&output=csv';
 const FYF = 1110000;
+// Superadmin: unico que puede gestionar usuarios (alta, edicion, reset clave,
+// activar/desactivar, "entrar como"). Otros admins solo aceptan/rechazan/
+// contraofertan consultas.
+const SUPERADMINS_USUARIOS = ['fngonzalez'];
+function _esSuperadmin() {
+  const real = realUser || currentUser;
+  return real && SUPERADMINS_USUARIOS.includes((real.usuario || '').toLowerCase());
+}
 // Notificaciones WhatsApp via Edge Function notify-whatsapp-consulta (Meta Cloud API).
 // Destinatarios configurados en tabla `consultas_0km_notif_config`.
 const PROVINCIAS_AR = ['CABA','Buenos Aires','Catamarca','Chaco','Chubut','Córdoba','Corrientes','Entre Ríos','Formosa','Jujuy','La Pampa','La Rioja','Mendoza','Misiones','Neuquén','Río Negro','Salta','San Juan','San Luis','Santa Cruz','Santa Fe','Santiago del Estero','Tierra del Fuego','Tucumán'];
@@ -631,8 +639,8 @@ function entrarComo(modo) {
   document.getElementById('usuariosView').classList.add('hidden');
   const tag = modo === 'admin' ? ' · Admin' : (modo === 'gerente' ? ' · Gerente' : '');
   document.getElementById('userInfo').textContent = (currentUser.nombre || currentUser.usuario) + tag;
-  // Botón "Usuarios" solo cuando el modo activo es admin
-  document.getElementById('btnUsuarios').classList.toggle('hidden', modo !== 'admin');
+  // Botón "Usuarios" solo cuando el modo activo es admin Y el usuario real es superadmin (fngonzalez)
+  document.getElementById('btnUsuarios').classList.toggle('hidden', !(modo === 'admin' && _esSuperadmin()));
   // Botón "Cambiar perfil" solo si el usuario tiene 2+ roles válidos
   const rolesValidos = (currentUser.rolesArr || []).filter(r => ['vendedor','gerente','admin'].includes(r));
   document.getElementById('btnCambiarPerfil').classList.toggle('hidden', rolesValidos.length < 2);
@@ -1629,6 +1637,7 @@ function setAdminTab(tab) {
 }
 
 function abrirUsuarios() {
+  if (!_esSuperadmin()) { showToast('No autorizado'); return; }
   document.getElementById('adminView').classList.add('hidden');
   document.getElementById('vendedorView').classList.add('hidden');
   document.getElementById('usuariosView').classList.remove('hidden');
@@ -2211,6 +2220,7 @@ function renderUsuariosList() {
 }
 
 function abrirEditarUsuario(id) {
+  if (!_esSuperadmin()) { showToast('No autorizado'); return; }
   const u = id ? usuariosList.find(x => x.id === id) : { usuario: '', nombre: '', email: '', telefono_wa: '', callmebot_key: '', roles: ['vendedor'], activo: true };
   if (!u) return;
   const isNew = !id;
@@ -2287,6 +2297,7 @@ function generarClaveProvisoria() {
 }
 
 async function guardarUsuario(id) {
+  if (!_esSuperadmin()) { showToast('No autorizado'); return; }
   const usuario = (document.getElementById('uUsuario').value || '').trim().toLowerCase();
   const nombre = (document.getElementById('uNombre').value || '').trim();
   const email = (document.getElementById('uEmail').value || '').trim();
@@ -2333,6 +2344,7 @@ async function guardarUsuario(id) {
 }
 
 async function resetClaveUsuario(id) {
+  if (!_esSuperadmin()) { showToast('No autorizado'); return; }
   const u = usuariosList.find(x => x.id === id);
   if (!u) return;
   if (!confirm(`¿Resetear la clave de ${u.usuario}? Se va a generar una clave nueva y al loguearse va a tener que cambiarla.`)) return;
@@ -2406,6 +2418,7 @@ function cerrarClaveProv() {
 }
 
 async function toggleActivoUsuario(id, activarNuevo) {
+  if (!_esSuperadmin()) { showToast('No autorizado'); return; }
   const u = usuariosList.find(x => x.id === id);
   if (!u) return;
   if (!confirm(`¿${activarNuevo ? 'Activar' : 'Desactivar'} a ${u.usuario}?`)) return;
@@ -2425,6 +2438,7 @@ async function toggleActivoUsuario(id, activarNuevo) {
 }
 
 async function entrarComoUsuario(id) {
+  if (!_esSuperadmin()) { showToast('No autorizado'); return; }
   const u = usuariosList.find(x => x.id === id);
   if (!u) return;
   if (u.id === currentUser.id) { showToast('Ya sos vos'); return; }
