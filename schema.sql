@@ -130,9 +130,10 @@ ALTER TABLE consultas_0km_notif_log DISABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_consultas_0km_notif_log_consulta ON consultas_0km_notif_log(consulta_id);
 
 -- Configuración inicial:
--- Nueva consulta -> al admin (Fer, fngonzalez); no toca al vendedor que la creó
+-- Nueva consulta -> al admin (Fer, fngonzalez) + a todos los gerentes activos
+-- (Daniel). No toca al vendedor que la creó.
 INSERT INTO consultas_0km_notif_config (evento, incluir_vendedor, incluir_gerente, usuarios_ids)
-SELECT 'consulta_0km_nueva', FALSE, FALSE, ARRAY[id]
+SELECT 'consulta_0km_nueva', FALSE, TRUE, ARRAY[id]
 FROM tasador_usuarios WHERE usuario = 'fngonzalez'
 ON CONFLICT (evento) DO NOTHING;
 
@@ -163,3 +164,11 @@ ALTER TABLE consultas_0km ADD COLUMN IF NOT EXISTS resultado_venta TEXT
   CHECK (resultado_venta IS NULL OR resultado_venta IN ('vendida', 'no_vendida'));
 ALTER TABLE consultas_0km ADD COLUMN IF NOT EXISTS motivo_no_venta TEXT;
 ALTER TABLE consultas_0km ADD COLUMN IF NOT EXISTS resultado_venta_at TIMESTAMPTZ;
+
+-- 2026-04-28: notificaciones — al cargar una consulta nueva, sumar a los
+-- gerentes (Daniel) ademas del admin. La respuesta ya incluia gerentes;
+-- ademas, en la edge function se suma automaticamente al admin que
+-- respondio (no requiere config aca).
+UPDATE consultas_0km_notif_config
+SET incluir_gerente = TRUE
+WHERE evento = 'consulta_0km_nueva';

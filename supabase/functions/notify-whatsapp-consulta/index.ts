@@ -77,6 +77,11 @@ Deno.serve(async (req: Request) => {
   const destIds = new Set<string>();
   if (cfg.incluir_vendedor && con.vendedor_id) destIds.add(String(con.vendedor_id));
   for (const u of (cfg.usuarios_ids || [])) destIds.add(String(u));
+  // Para "respondida": sumar tambien al admin que respondio (para que tenga
+  // confirmacion del envio que disparo).
+  if (evento === "consulta_0km_respondida" && con.admin_user_id) {
+    destIds.add(String(con.admin_user_id));
+  }
 
   // Si incluir_gerente, sumar todos los activos con rol 'gerente'
   if (cfg.incluir_gerente) {
