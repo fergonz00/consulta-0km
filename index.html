@@ -2344,13 +2344,65 @@ async function resetClaveUsuario(id) {
       body: JSON.stringify({ clave, debe_cambiar_clave: true })
     });
     hideLoading();
-    alert(`Clave reseteada para ${u.usuario}.\n\nClave provisoria: ${clave}\n\nPasásela al usuario.`);
+    mostrarClaveProvisoria(u.usuario, clave);
     cargarUsuarios();
   } catch(e) {
     hideLoading();
     console.error(e);
     alert('Error: ' + (e.message || e));
   }
+}
+
+function mostrarClaveProvisoria(usuario, clave) {
+  // Modal custom (no alert nativo) para que la clave se pueda copiar facil
+  const html = `
+    <div id="claveProvOverlay" style="position:fixed; inset:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:10000; padding:20px">
+      <div style="background:#fff; border-radius:12px; padding:24px; max-width:420px; width:100%; box-shadow:0 10px 40px rgba(0,0,0,0.3)">
+        <h3 style="margin-bottom:8px; color:var(--vw-blue)">Clave reseteada para <strong>${escapeHtml(usuario)}</strong></h3>
+        <p style="font-size:13px; color:var(--vw-grey-4); margin-bottom:14px">Pasásela al usuario. Al loguearse va a tener que cambiarla.</p>
+        <div style="display:flex; gap:8px; align-items:stretch; margin-bottom:14px">
+          <input id="claveProvInput" type="text" readonly value="${escapeHtml(clave)}"
+            onclick="this.select()"
+            style="flex:1; padding:12px; border:2px solid var(--vw-grey-2); border-radius:8px; font-family:var(--mono,monospace); font-size:16px; font-weight:700; letter-spacing:1px; background:var(--vw-grey-1); color:var(--vw-blue)">
+          <button onclick="copiarClaveProv()" id="claveProvCopyBtn"
+            style="background:var(--vw-blue); color:#fff; padding:0 16px; border:none; border-radius:8px; font-weight:600; cursor:pointer; white-space:nowrap">📋 Copiar</button>
+        </div>
+        <div style="display:flex; justify-content:flex-end">
+          <button onclick="cerrarClaveProv()" class="btn-secondary">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap.firstElementChild);
+  setTimeout(() => document.getElementById('claveProvInput').select(), 50);
+}
+async function copiarClaveProv() {
+  const input = document.getElementById('claveProvInput');
+  const btn = document.getElementById('claveProvCopyBtn');
+  if (!input) return;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(input.value);
+    } else {
+      input.select();
+      document.execCommand('copy');
+    }
+    if (btn) {
+      const orig = btn.innerHTML;
+      btn.innerHTML = '✓ Copiada';
+      btn.style.background = 'var(--green, #16a34a)';
+      setTimeout(() => { btn.innerHTML = orig; btn.style.background = 'var(--vw-blue)'; }, 1500);
+    }
+  } catch(e) {
+    console.error(e);
+    alert('No se pudo copiar automáticamente. Seleccioná y copiá a mano.');
+  }
+}
+function cerrarClaveProv() {
+  const o = document.getElementById('claveProvOverlay');
+  if (o) o.remove();
 }
 
 async function toggleActivoUsuario(id, activarNuevo) {
