@@ -1485,51 +1485,61 @@ async function submitConsulta() {
   }
   showLoading('Enviando...');
   try {
-    let finPct = null;
-    if (f.financia === 'si' && f.finMonto && f.unidades[0] && f.unidades[0].precioPedido) {
-      const base = f.unidades[0].precioPedido - FYF;
-      if (base > 0) finPct = f.finMonto / base;
-    }
-
     // Si gerente, la consulta queda asignada al vendedor elegido y se registra quién la cargó
     const vend = currentMode === 'gerente' && gerenteVendedorActivo
       ? gerenteVendedorActivo
       : { id: currentUser.id, usuario: currentUser.usuario, nombre: currentUser.nombre || currentUser.usuario };
 
-    const cabecera = {
-      vendedor_id: vend.id,
-      vendedor_usuario: vend.usuario,
-      vendedor_nombre: vend.nombre,
-      cargada_por_id: currentMode === 'gerente' ? currentUser.id : null,
-      cargada_por_nombre: currentMode === 'gerente' ? (currentUser.nombre || currentUser.usuario) : null,
-      tipo_cliente: f.tipoCliente,
-      provincia: f.provincia,
-      localidad: f.localidad,
-      cliente_nombre: f.cliNombre || null,
-      cliente_apellido: f.cliApellido || null,
-      fuente_dato: f.fuenteDato || null,
-      fuente_dato_otro: f.fuenteDato === 'otro' ? f.fuenteDatoOtro : null,
-      tiene_usado: f.tipoCliente === 'particular' ? f.tieneUsado : null,
-      reventa_nombre: f.reventaNombre || null,
-      financia: f.financia === 'si',
-      financia_entidad: f.financia === 'si' ? (f.tipoCliente === 'reventa' ? 'vwfs' : f.finEntidad) : null,
-      financia_entidad_otro: f.finEntidad === 'otros' ? f.finEntidadOtro : null,
-      financia_monto: f.financia === 'si' ? f.finMonto : null,
-      financia_pct: finPct,
-      vs_otro_concesionario: f.vsOtro,
-      concesionario_nombre: f.vsOtro === 'si' ? f.conceNombre : null,
-      concesionario_precio: f.vsOtro === 'si' ? f.concePrecio : null,
-      observaciones_vendedor: (f.observaciones || '').trim() || null,
-      estado: 'pendiente'
-    };
-    const inserted = await sbFetch('consultas_0km', { method: 'POST', body: JSON.stringify(cabecera) });
-    const consultaId = inserted[0].id;
-
-    const items = f.unidades.map((u, i) => {
+    // Decision de diseño: cuando el vendedor pide N unidades, creamos N consultas
+    // separadas (cada una con 1 item). El admin las responde individualmente, cada
+    // respuesta dispara su propio WA. Los datos del cliente, ubicacion, financiacion,
+    // observaciones, etc., se duplican en cada cabecera (es OK, son pocos bytes y
+    // permite que cada consulta sea totalmente autocontenida).
+    const N = f.unidades.length;
+    const consultaIds = [];
+    for (let i = 0; i < N; i++) {
+      const u = f.unidades[i];
       const a = calcularAnalisisUnidad(u);
-      return {
+      // % financiacion calculado sobre el precio_pedido de ESTA unidad (antes era
+      // siempre el de la unidad 1 — ahora cada consulta es independiente).
+      let finPct = null;
+      if (f.financia === 'si' && f.finMonto && u.precioPedido) {
+        const base = u.precioPedido - FYF;
+        if (base > 0) finPct = f.finMonto / base;
+      }
+      const cabecera = {
+        vendedor_id: vend.id,
+        vendedor_usuario: vend.usuario,
+        vendedor_nombre: vend.nombre,
+        cargada_por_id: currentMode === 'gerente' ? currentUser.id : null,
+        cargada_por_nombre: currentMode === 'gerente' ? (currentUser.nombre || currentUser.usuario) : null,
+        tipo_cliente: f.tipoCliente,
+        provincia: f.provincia,
+        localidad: f.localidad,
+        cliente_nombre: f.cliNombre || null,
+        cliente_apellido: f.cliApellido || null,
+        fuente_dato: f.fuenteDato || null,
+        fuente_dato_otro: f.fuenteDato === 'otro' ? f.fuenteDatoOtro : null,
+        tiene_usado: f.tipoCliente === 'particular' ? f.tieneUsado : null,
+        reventa_nombre: f.reventaNombre || null,
+        financia: f.financia === 'si',
+        financia_entidad: f.financia === 'si' ? (f.tipoCliente === 'reventa' ? 'vwfs' : f.finEntidad) : null,
+        financia_entidad_otro: f.finEntidad === 'otros' ? f.finEntidadOtro : null,
+        financia_monto: f.financia === 'si' ? f.finMonto : null,
+        financia_pct: finPct,
+        vs_otro_concesionario: f.vsOtro,
+        concesionario_nombre: f.vsOtro === 'si' ? f.conceNombre : null,
+        concesionario_precio: f.vsOtro === 'si' ? f.concePrecio : null,
+        observaciones_vendedor: (f.observaciones || '').trim() || null,
+        estado: 'pendiente'
+      };
+      const inserted = await sbFetch('consultas_0km', { method: 'POST', body: JSON.stringify(cabecera) });
+      const consultaId = inserted[0].id;
+      consultaIds.push(consultaId);
+
+      const item = {
         consulta_id: consultaId,
-        orden: i + 1,
+        orden: 1,
         modelo: u.modelo,
         version: u.modelo,
         chasis: a.chasisSnapshot,
@@ -1540,13 +1550,14 @@ async function submitConsulta() {
         dto_extra_pedido: a.dto_extra_pedido,
         gcia_resultante: a.gcia_resultante
       };
-    });
-    await sbFetch('consultas_0km_items', { method: 'POST', body: JSON.stringify(items) });
+      await sbFetch('consultas_0km_items', { method: 'POST', body: JSON.stringify([item]) });
+    }
 
-    notifyAdminNuevaConsulta(consultaId).catch(e => console.error(e));
+    // Una notificacion WA por consulta (asi cada vehiculo le llega aparte al admin/gerentes).
+    consultaIds.forEach(id => notifyAdminNuevaConsulta(id).catch(e => console.error(e)));
 
     hideLoading();
-    showToast('Consulta enviada');
+    showToast(N === 1 ? 'Consulta enviada' : `${N} consultas enviadas`);
     document.getElementById('vendedorWizard').classList.add('hidden');
     document.getElementById('vendedorList').classList.remove('hidden');
     cargarMisConsultas();
