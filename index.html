@@ -320,6 +320,14 @@ input, select, textarea { font-family: var(--font); }
     <div class="container">
       <div class="toolbar">
         <input type="text" id="aSearch" placeholder="Buscar por vendedor, modelo, cliente..." oninput="renderAdminList()">
+        <button id="btnSelMultiple" onclick="toggleSelMultiple()" style="padding:10px 14px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:1px solid var(--vw-grey-2); border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap">☑ Selección múltiple</button>
+      </div>
+      <div id="adminSelBar" class="hidden" style="margin:8px 0; padding:10px 14px; background:#FEE2E2; border-radius:8px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap">
+        <span style="font-size:13px; color:#7F1D1D; font-weight:600"><span id="adminSelCount">0</span> consulta(s) seleccionada(s)</span>
+        <div style="display:flex; gap:6px">
+          <button onclick="limpiarSelMultiple()" style="padding:6px 12px; background:white; color:var(--vw-grey-4); border:1px solid var(--vw-grey-2); border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">Limpiar</button>
+          <button onclick="borrarSeleccionadas()" style="padding:6px 12px; background:#991B1B; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer">🗑 Borrar seleccionadas</button>
+        </div>
       </div>
       <div id="adminConsultasList"></div>
     </div>
@@ -440,6 +448,10 @@ let vendedoresCache = [];
 // Wizard state
 let wizardStack = []; // historial de stepIds (para "atrás")
 let currentStep = null;
+
+// Selección múltiple admin (para borrar varias consultas a la vez)
+let _selMultipleActivo = false;
+let _selMultipleIds = new Set();
 
 // ============ HELPERS ============
 async function sbFetch(path, options = {}) {
@@ -1650,10 +1662,20 @@ function renderAdminList() {
     cont.innerHTML = '<div class="empty"><div class="icon">📭</div><p>No hay consultas en esta vista.</p></div>';
     return;
   }
-  cont.innerHTML = list.map(c => `
-    <div class="card consulta-card" onclick="abrirDetalle(${c.id})">
+  const selActivo = _selMultipleActivo;
+  cont.innerHTML = list.map(c => {
+    const seleccionada = _selMultipleIds.has(c.id);
+    const onClickAttr = selActivo
+      ? `onclick="toggleCardSeleccion(${c.id}, event)"`
+      : `onclick="abrirDetalle(${c.id})"`;
+    const outlineStyle = seleccionada ? 'outline:3px solid #991B1B; outline-offset:-3px' : '';
+    const checkbox = selActivo
+      ? `<input type="checkbox" ${seleccionada ? 'checked' : ''} onclick="event.stopPropagation(); toggleCardSeleccion(${c.id}, event)" style="margin-right:10px; width:18px; height:18px; cursor:pointer">`
+      : '';
+    return `
+    <div id="adminCard-${c.id}" class="card consulta-card" ${onClickAttr} style="${outlineStyle}">
       <div class="top">
-        <h3>#${c.id} — ${escapeHtml((c.vendedor_nombre || c.vendedor_usuario || ''))}</h3>
+        <h3 style="display:flex; align-items:center">${checkbox}#${c.id} — ${escapeHtml((c.vendedor_nombre || c.vendedor_usuario || ''))}</h3>
         <span class="estado ${c.estado}">${c.estado}</span>
       </div>
       <div class="body">
@@ -1662,7 +1684,77 @@ function renderAdminList() {
         <div class="meta" style="margin-top:6px">${fmtDate(c.created_at)}</div>
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
+}
+
+function toggleSelMultiple() {
+  _selMultipleActivo = !_selMultipleActivo;
+  _selMultipleIds.clear();
+  const btn = document.getElementById('btnSelMultiple');
+  const bar = document.getElementById('adminSelBar');
+  if (btn) {
+    btn.textContent = _selMultipleActivo ? '✖ Cancelar selección' : '☑ Selección múltiple';
+    btn.style.background = _selMultipleActivo ? '#FEE2E2' : 'var(--vw-grey-1)';
+    btn.style.color = _selMultipleActivo ? '#991B1B' : 'var(--vw-grey-4)';
+  }
+  if (bar) bar.classList.toggle('hidden', !_selMultipleActivo);
+  actualizarSelCount();
+  renderAdminList();
+}
+function toggleCardSeleccion(id, event) {
+  if (event) event.stopPropagation();
+  if (_selMultipleIds.has(id)) _selMultipleIds.delete(id);
+  else _selMultipleIds.add(id);
+  actualizarSelCount();
+  renderAdminList();
+}
+function limpiarSelMultiple() {
+  _selMultipleIds.clear();
+  actualizarSelCount();
+  renderAdminList();
+}
+function actualizarSelCount() {
+  const el = document.getElementById('adminSelCount');
+  if (el) el.textContent = _selMultipleIds.size;
+}
+
+async function eliminarConsulta(consultaId) {
+  if (currentMode !== 'admin') { showToast('No autorizado'); return; }
+  const c = (adminConsultas || []).find(x => x.id === consultaId);
+  const label = c ? `#${c.id} — ${c.vendedor_nombre || c.vendedor_usuario || ''}` : `#${consultaId}`;
+  if (!confirm(`¿Borrar definitivamente esta consulta?\n\n${label}\n\nEsto no se puede deshacer.`)) return;
+  showLoading('Borrando...');
+  try {
+    await sbFetch(`consultas_0km?id=eq.${consultaId}`, { method: 'DELETE' });
+    closeModal();
+    await cargarConsultasAdmin();
+    hideLoading();
+    showToast('Consulta borrada');
+  } catch(e) { hideLoading(); console.error(e); alert('Error al borrar: ' + (e.message || e)); }
+}
+async function borrarSeleccionadas() {
+  if (currentMode !== 'admin') { showToast('No autorizado'); return; }
+  if (_selMultipleIds.size === 0) { showToast('No hay consultas seleccionadas'); return; }
+  const n = _selMultipleIds.size;
+  if (!confirm(`¿Borrar ${n} consulta(s)?\n\nEsto no se puede deshacer.`)) return;
+  showLoading('Borrando...');
+  try {
+    const ids = Array.from(_selMultipleIds);
+    await sbFetch(`consultas_0km?id=in.(${ids.join(',')})`, { method: 'DELETE' });
+    _selMultipleIds.clear();
+    _selMultipleActivo = false;
+    const btn = document.getElementById('btnSelMultiple');
+    if (btn) {
+      btn.textContent = '☑ Selección múltiple';
+      btn.style.background = 'var(--vw-grey-1)';
+      btn.style.color = 'var(--vw-grey-4)';
+    }
+    document.getElementById('adminSelBar').classList.add('hidden');
+    await cargarConsultasAdmin();
+    hideLoading();
+    showToast(`${n} consultas borradas`);
+  } catch(e) { hideLoading(); console.error(e); alert('Error al borrar: ' + (e.message || e)); }
 }
 
 // ============ DETALLE / MODAL ============
@@ -1741,7 +1833,10 @@ function abrirDetalle(consultaId) {
 
   const isAdmin = currentMode === 'admin';
   const isPending = c.estado === 'pendiente';
-  let footerHtml = `<button class="btn-secondary" onclick="closeModal()">Cerrar</button>`;
+  const btnEliminar = isAdmin
+    ? `<button onclick="eliminarConsulta(${c.id})" style="background:#991B1B; color:#fff; padding:10px 14px; border-radius:8px; border:none; font-weight:600; cursor:pointer">🗑 Eliminar</button>`
+    : '';
+  let footerHtml = `${btnEliminar}<button class="btn-secondary" onclick="closeModal()">Cerrar</button>`;
   if (isAdmin && isPending) {
     // Pre-llenar con la oferta vigente actual de la primera unidad para que solo
     // tenga que ajustarla (en vez de tipear desde cero).
@@ -1764,11 +1859,14 @@ function abrirDetalle(consultaId) {
               style="width:100%; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:14px; font-family:inherit; resize:vertical"></textarea>
           </div>
         </div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end">
-          <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
-          <button class="btn-danger" onclick="rechazarMejora(${c.id})">No acepto</button>
-          <button onclick="contraofertarMejora(${c.id})" style="background:#3730a3; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">Contraofertar</button>
-          <button class="btn-success" onclick="aceptarMejora(${c.id})">Aceptar mejora</button>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:space-between; align-items:center">
+          <button onclick="eliminarConsulta(${c.id})" style="background:#991B1B; color:#fff; padding:10px 14px; border-radius:8px; border:none; font-weight:600; cursor:pointer">🗑 Eliminar</button>
+          <div style="display:flex; gap:8px; flex-wrap:wrap">
+            <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
+            <button class="btn-danger" onclick="rechazarMejora(${c.id})">No acepto</button>
+            <button onclick="contraofertarMejora(${c.id})" style="background:#3730a3; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">Contraofertar</button>
+            <button class="btn-success" onclick="aceptarMejora(${c.id})">Aceptar mejora</button>
+          </div>
         </div>
       </div>
     `;
