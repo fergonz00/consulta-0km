@@ -1948,12 +1948,16 @@ async function entrarComoUsuario(id) {
   document.getElementById('impersonateName').textContent = u.nombre || u.usuario;
   document.getElementById('impersonateBanner').classList.remove('hidden');
 
-  // Entrar al rol que corresponda (priorizar vendedor para "ver lo que ve")
-  const targetMode = currentUser.rolesArr.includes('vendedor') ? 'vendedor'
-    : currentUser.rolesArr.includes('gerente') ? 'gerente'
-    : currentUser.rolesArr[0] || 'vendedor';
   closeModal();
-  entrarComo(targetMode);
+
+  // Si tiene varios roles (ej: Daniel = vendedor + gerente), mostramos mode-select
+  // así podés elegir desde qué rol probar. Si tiene uno solo, entra directo.
+  const rolesValidos = currentUser.rolesArr.filter(r => ['vendedor', 'gerente', 'admin'].includes(r));
+  if (rolesValidos.length > 1) {
+    elegirModo();
+  } else {
+    entrarComo(rolesValidos[0] || 'vendedor');
+  }
 }
 
 function volverAAdmin() {
