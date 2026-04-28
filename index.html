@@ -365,6 +365,59 @@ const FYF = 1110000;
 // Destinatarios configurados en tabla `consultas_0km_notif_config`.
 const PROVINCIAS_AR = ['CABA','Buenos Aires','Catamarca','Chaco','Chubut','Córdoba','Corrientes','Entre Ríos','Formosa','Jujuy','La Pampa','La Rioja','Mendoza','Misiones','Neuquén','Río Negro','Salta','San Juan','San Luis','Santa Cruz','Santa Fe','Santiago del Estero','Tierra del Fuego','Tucumán'];
 
+// Orden definido por gama (Polo → Tera → Virtus → Nivus → T-Cross → Taos → Vento → Tiguan → Saveiro → Amarok).
+// Modelos que no estén acá se muestran al final alfabéticamente.
+const MODELOS_ORDEN = [
+  'VW Polo Track MSI MT G1 MY26',
+  'VW Nuevo Polo MSI MT MY26',
+  'VW Nuevo Polo Comfortline 170 TSI AT G1 MY26',
+  'VW Nuevo Polo Highline 170TSI AT MY26',
+  'VW Nuevo Polo GTS 250TSI AT',
+  'VW Tera Trend MSI MT',
+  'VW Tera Trend MSI MT + Pack Safe I',
+  'VW Tera Comfort 170TS AT',
+  'VW Tera Comfort 170TS AT + Pack Safe II',
+  'VW Tera High 170TS AT',
+  'VW Tera Outfit 170TS AT',
+  'VW Virtus MSI MT G1 MY26',
+  'VW Virtus Trendline 170TSI AT G1 MY26',
+  'VW Nuevo Virtus Comfortline MSI MT MY26',
+  'VW Nuevo Virtus Highline 170TSI AT MY26',
+  'VW Virtus Exclusive 250TSI AT',
+  'VW Nivus Trendline 170TSI MT G1',
+  'VW Nivus Trendline 200 TSI AT G1',
+  'VW Nivus Comfortline 200 TSI AT G1',
+  'VW Nivus Highline 200 TSI AT G1',
+  'VW Nivus Outfit 200TSI AT G1',
+  'VW T-Cross Trendline 170TSI MT G1 MY26',
+  'VW T-Cross Trendline 200TSI AT G1 MY26',
+  'VW T-Cross Comfortline 200TSI AT G1 MY26',
+  'VW T-Cross Highline 200TSI AT G1 MY26',
+  'VW T-Cross Extreme 200TSI AT G1 MY26',
+  'VW Taos Comfortline 250TSI AT MY26',
+  'VW Taos Highline 250 TSI AT MY26',
+  'VW Taos Highline Bitono 250 TSI AT MY26',
+  'VW Vento GLI 350TSI DSG G2 MY26',
+  'VW Tiguan Life 350 TSI DSG 4X4 MY24',
+  'VW Tiguan Life 350 TSI DSG 4X4 MY25',
+  'VW Tiguan Life 250 TSI DSG MY26',
+  'VW Tiguan R-Line 250 TSI DSG MY26',
+  'VW Nuevo Saveiro Trendline CS MSI MT MY26',
+  'VW Nuevo Saveiro Comfortline CD MSI MT MY26',
+  'VW Saveiro Extreme CD MSI MT G3 MY26',
+  'VW Amarok Trendline TDI MT 4X2 G2 MY26',
+  'VW Amarok Trendline TDI MT 4X4 G2 MY26',
+  'VW Amarok Comfortline TDI MT 4x2 G2 MY26',
+  'VW Amarok Comfortline TDI AT 4x2 G2 MY26',
+  'VW Amarok Highline TDI MT 4x2 G2 MY26',
+  'VW Amarok Highline TDI AT 4X2 G2 MY26',
+  'VW Amarok Comfortline V6 AT 4X4 G2 MY26',
+  'VW Amarok Highline V6 AT 4X4 G2 MY26',
+  'VW Amarok Extreme V6 AT 4X4 G2 MY26',
+  'VW Amarok Hero V6 AT 4X4 G2 PHA MY26',
+  'VW Amarok Black Style V6 AT 4X4 G2 PHG MY26',
+];
+
 // ============ STATE ============
 let currentUser = null;
 let realUser = null; // user real (admin) cuando se está impersonando otro
@@ -638,7 +691,15 @@ async function cargarStock() {
 function getModelosLibres() {
   const set = new Set();
   stockData.forEach(r => { if (r.libre && r.modelo) set.add(r.modelo); });
-  return Array.from(set).sort();
+  const ordenIdx = (m) => {
+    const i = MODELOS_ORDEN.indexOf(m);
+    return i === -1 ? Infinity : i;
+  };
+  return Array.from(set).sort((a, b) => {
+    const ai = ordenIdx(a), bi = ordenIdx(b);
+    if (ai !== bi) return ai - bi;
+    return a.localeCompare(b);
+  });
 }
 function getChasisLibresPorModelo(modelo) {
   // Ordenamos por fecha de factura ascendente (más vieja primero).
