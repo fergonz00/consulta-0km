@@ -101,10 +101,19 @@ Pasos:
 ## Notificaciones WhatsApp
 
 Edge Function `notify-whatsapp-consulta` con templates Meta aprobados:
-- `consulta_0km_nueva` (1 var = id) → al admin (Fer fijo en config)
-- `consulta_0km_respondida` (2 vars = id + resultado) → vendedor + todos los gerentes activos
 
-Configuración inicial cargada en `consultas_0km_notif_config`. Reusa env vars del tasador (`WA_TASADOR_PHONE_ID`, `WA_TASADOR_TOKEN`, `SUPABASE_SERVICE_ROLE_KEY`).
+**`consulta_0km_nueva`** (3 vars = vendedor, modelo, dto%) — actualmente Meta tiene aprobada la v1 con cuerpo equivocado y 24h de cooldown bloqueado. Se está usando un template alternativo `consulta_0km_nueva_v2` con el cuerpo correcto. La Edge Function tiene `EVENT_TO_TEMPLATE` map que traduce `consulta_0km_nueva` → `consulta_0km_nueva_v2` al enviar a Meta. Una vez que se pueda eliminar el template viejo y recrear con el nombre original, sacar el map.
+
+**`consulta_0km_respondida`** (4 vars = modelo, vendedor, estado, monto) — aprobado y funcionando. El estado es "Aceptada", "Rechazada" o "Contraoferta (revisá el comentario en el portal)". El monto es:
+- Aceptada → precio_pedido del primer item.
+- Rechazada → precio_max_admin.
+- Contraoferta → precio_max_admin si hay; "—" si no.
+
+Destinatarios:
+- **Nueva**: fngonzalez (admin) + todos los gerentes activos (Daniel López). NO al vendedor que la creó.
+- **Respondida**: vendedor original + todos los gerentes + admin que respondió (sumado dinámicamente desde `con.admin_user_id` en la Edge Function).
+
+Configuración base en `consultas_0km_notif_config`. Reusa env vars del tasador (`WA_TASADOR_PHONE_ID`, `WA_TASADOR_TOKEN`, `SUPABASE_SERVICE_ROLE_KEY`).
 
 ## Convenciones heredadas del tasador
 
@@ -125,14 +134,74 @@ El usuario tiene **múltiples WhatsApp Business Accounts** en su Business Manage
 
 Link a templates de la WABA correcta: https://business.facebook.com/wa/manage/message-templates/?asset_id=1183788370595856
 
-## Estado al cierre de sesión 2026-04-28
+## Permisología
 
-✅ Producción operativa en consulta0km.titogonzalez.online.
-✅ Schema corrido en Supabase.
-✅ Edge Function deployada.
-✅ Daniel López con rol vendedor + gerente cargado.
-✅ Panel admin de usuarios funcionando.
-✅ Pre-llenar precio admin con oferta vigente.
-✅ Botón "Cambiar perfil" en header para usuarios con múltiples roles.
-✅ WA de "consulta nueva" funcionando end-to-end (templates re-creados en WABA correcta).
-⏳ Falta verificar end-to-end el WA de "consulta respondida" (admin acepta/rechaza → llega a vendedor + gerentes).
+Tres niveles, con dos arrays de configuración en `index.html`:
+
+- `SUPERADMINS_USUARIOS = ['fngonzalez']` — god mode. Helper `_esSuperadmin()`.
+- `RESET_CLAVES_USUARIOS = ['fngonzalez', 'mlubrano']` — puede resetear claves. Helper `_puedeResetClaves()`.
+- Cualquier otro admin (no en arrays) — solo aceptar/rechazar/contraofertar consultas.
+
+Capacidades por nivel:
+| Acción | superadmin | mlubrano (reset) | otro admin |
+|---|---|---|---|
+| Aceptar / Rechazar / Contraofertar | ✅ | ✅ | ✅ |
+| Eliminar consultas (single + bulk) | ✅ | ❌ | ❌ |
+| Botón "👥 Usuarios" visible | ✅ | ✅ | ❌ |
+| Reset clave | ✅ | ✅ | ❌ |
+| Crear / Editar usuarios | ✅ | ❌ | ❌ |
+| Activar / Desactivar | ✅ | ❌ | ❌ |
+| "Entrar como" otro usuario | ✅ | ❌ | ❌ |
+
+Defensa en profundidad: cada función sensible re-checkea el helper al entrar.
+
+## Convenciones de naming / dominio
+
+- **"Tito Gonzalez"** se escribe SIN tilde en la A. Es el nombre comercial. No corregirlo a "González" en copy/UI/samples nuevos. (Hay archivos viejos con tilde — no migrar retroactivamente sin pedido explícito.)
+
+## Decisiones de diseño importantes
+
+### Cada unidad pedida = 1 consulta separada
+Si el vendedor pide precio para 2/3/4 modelos en el wizard, el `submitConsulta` los **divide en N consultas separadas** (cada una con 1 item). El admin las responde independientemente, cada una dispara su propio WA. Datos compartidos (cliente, ubicación, financia, observaciones) se duplican en cada cabecera. Implementación en `submitConsulta` con loop sobre `f.unidades`.
+
+### Resultado de venta (lo carga el vendedor)
+Después que el admin responde, el vendedor abre el detalle y marca:
+- **Vendida** → solo confirma.
+- **No vendida** → motivo obligatorio.
+
+Una vez cargado, queda fijo (no editable). Aparece como badge en las cards (verde "✓ VENDIDA" o rojo "✗ NO VENDIDA").
+
+### Tab "Respondidas" del gerente
+El gerente (Daniel) tiene 2 tabs:
+- "Mis cargas" — consultas que él cargó.
+- "Respondidas" — todas las consultas con estado != pendiente, con dropdown filtro x vendedor. Ve la vista del vendedor (sin gcia ni % financiación).
+
+### Stock comparado en detalle admin
+Solo en modo admin, abajo del análisis de cada unidad: bloque "📦 Stock actual del modelo" con todos los chasis libres ordenados de más viejo a más nuevo. El chasis pedido va resaltado con fondo amarillo + tag "PEDIDO". Lee de `stockData` (en vivo, no del snapshot del item).
+
+## Estado al cierre de sesión 2026-04-28 (noche)
+
+### ✅ Funcionando
+- Producción en https://consulta0km.titogonzalez.online (HTTPS habilitado, cert OK).
+- Schema completo, todas las migraciones corridas en Supabase.
+- Edge Function `notify-whatsapp-consulta` deployada con map evento→template.
+- WA de "consulta nueva" llegando: vendedor + modelo + dto%.
+- WA de "consulta respondida" llegando: modelo + vendedor + estado + monto.
+- Cuando el vendedor pide N modelos → N consultas separadas → N WAs independientes (verificado end-to-end).
+- Permisología 3 niveles (superadmin / reset claves / admin común).
+- Daniel López con rol vendedor + gerente, ve el tab "Respondidas".
+- Botón "Cambiar perfil" para usuarios multi-rol.
+- Eliminar consultas (single + bulk) — solo fngonzalez.
+- Pre-llenar precio admin con oferta vigente.
+- Resultado de venta (vendida / no vendida + motivo) — vendedor lo marca tras respuesta del admin.
+- Contraoferta como 3er estado, con comentario opcional (mientras haya precio o comentario, alguno de los dos).
+- Hasta 4 unidades por consulta en el wizard.
+- Modelos en wizard ordenados por gama (Polo → Tera → Virtus → Nivus → T-Cross → Taos → Vento → Tiguan → Saveiro → Amarok) via `MODELOS_ORDEN`.
+- Observaciones del vendedor (paso opcional al final del wizard).
+- Stock comparado por modelo en detalle del admin con fechas de factura (espejo arregló la columna `fecha_factura`).
+
+### ⏳ Pendiente / a futuro
+- **Borrar templates viejos en WABA "Test"** (`consulta_0km_nueva` y `consulta_0km_respondida` que quedaron del primer intento, no se usan).
+- **Cuando expire el cooldown de 24h** del template `consulta_0km_nueva` original (el que quedó con cuerpo equivocado, ~29-04-2026 noche), eliminarlo y recrearlo con el nombre original + cuerpo correcto. Después sacar el map `EVENT_TO_TEMPLATE` de la Edge Function para volver a usar el nombre original directo.
+- **Verificar propagación DNS final**: GitHub Pages todavía mostraba "DNS check unsuccessful" cuando se cerró la sesión, aunque el cert estaba OK y HTTPS andaba. Es solo cosmético — Google DNS aún no propagó la 4ta IP. TTL de 14400s (4hs), debería estar limpio al volver mañana.
+- **WA "nueva consulta" multiplica WAs** cuando el vendedor pide N autos: ahora llega 1 WA por auto. Si resulta ruidoso, evaluar consolidar (1 WA por submit con resumen).
