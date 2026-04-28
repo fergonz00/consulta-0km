@@ -22,6 +22,15 @@ const EVENTOS_VALIDOS = new Set([
   "consulta_0km_respondida",
 ]);
 
+// Mapeo evento -> nombre del template en Meta. El evento es el identificador
+// interno (DB, frontend, notif_config), el template name es el que figura
+// aprobado en Meta. Util cuando hay que recrear un template con otro nombre
+// (ej: consulta_0km_nueva quedo bloqueada con cuerpo equivocado por 24hs).
+const EVENT_TO_TEMPLATE: Record<string, string> = {
+  "consulta_0km_nueva": "consulta_0km_nueva_v2",
+  "consulta_0km_respondida": "consulta_0km_respondida",
+};
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
   if (req.method !== "POST") return json({ error: "Método no permitido" }, 405);
@@ -119,7 +128,7 @@ Deno.serve(async (req: Request) => {
       to: telE164,
       type: "template",
       template: {
-        name: evento,
+        name: EVENT_TO_TEMPLATE[evento] ?? evento,
         language: { code: META_LANGUAGE },
         components,
       },
