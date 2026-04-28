@@ -41,12 +41,13 @@ Deno.serve(async (req: Request) => {
   if (!consulta_id) return json({ error: "consulta_id requerido" }, 400);
   if (!evento || !EVENTOS_VALIDOS.has(evento)) return json({ error: "evento inválido" }, 400);
 
-  // 1) Traer config + consulta en paralelo
-  let cfgArr: any[], conArr: any[];
+  // 1) Traer config + consulta + items en paralelo
+  let cfgArr: any[], conArr: any[], itemsArr: any[];
   try {
-    [cfgArr, conArr] = await Promise.all([
+    [cfgArr, conArr, itemsArr] = await Promise.all([
       sb(SUPABASE_URL, SERVICE_KEY, `consultas_0km_notif_config?evento=eq.${evento}&select=*`),
       sb(SUPABASE_URL, SERVICE_KEY, `consultas_0km?id=eq.${consulta_id}&select=*`),
+      sb(SUPABASE_URL, SERVICE_KEY, `consultas_0km_items?consulta_id=eq.${consulta_id}&order=orden.asc`),
     ]);
   } catch (e) {
     return json({ error: "Error leyendo Supabase", detalle: String(e) }, 500);
@@ -61,6 +62,7 @@ Deno.serve(async (req: Request) => {
 
   const cfg = cfgArr[0];
   const con = conArr[0];
+  const items = Array.isArray(itemsArr) ? itemsArr : [];
 
   // 2) Resolver destinatarios
   const destIds = new Set<string>();
@@ -101,7 +103,7 @@ Deno.serve(async (req: Request) => {
   }
 
   // 3) Variables del template según evento
-  const vars = buildVariables(evento, con);
+  const vars = buildVariables(evento, con, items);
 
   // 4) Enviar a cada destinatario
   const enviados: any[] = [];
@@ -227,11 +229,27 @@ function fmtMoney(n: any): string {
   return "$" + new Intl.NumberFormat("es-AR").format(Math.round(v));
 }
 
-function buildVariables(evento: string, con: any): string[] {
+function fmtPct(n: any): string {
+  const v = Number(n);
+  if (!isFinite(v)) return "—";
+  const pct = v * 100;
+  const sign = pct > 0 ? "+" : "";
+  return `${sign}${pct.toFixed(1)}%`;
+}
+
+function buildVariables(evento: string, con: any, items: any[]): string[] {
   const id = String(con.id || "");
   if (evento === "consulta_0km_nueva") {
-    // Template: 1 variable = id
-    return [id];
+    // Template: 3 variables = vendedor, modelo(s), dto extra pedido (peor caso)
+    const vendedor = con.vendedor_nombre || con.vendedor_usuario || "—";
+    const modelos = items.map((i) => i.modelo).filter(Boolean).join(" + ") || "—";
+    let dtoMax = -Infinity;
+    for (const it of items) {
+      const d = Number(it.dto_extra_pedido);
+      if (isFinite(d) && d > dtoMax) dtoMax = d;
+    }
+    const dtoStr = isFinite(dtoMax) ? fmtPct(dtoMax) : "—";
+    return [vendedor, modelos, dtoStr];
   }
   if (evento === "consulta_0km_respondida") {
     // Template: 2 variables = id + resultado
