@@ -114,13 +114,24 @@ Configuración inicial cargada en `consultas_0km_notif_config`. Reusa env vars d
 - CSS variables VW (`--vw-blue: #001E50`).
 - Fonts: DM Sans + JetBrains Mono.
 
+## WhatsApp / WABAs (importante)
+
+El usuario tiene **múltiples WhatsApp Business Accounts** en su Business Manager. Los templates de Cloud API SOLO funcionan si están en la misma WABA donde está registrado el número de teléfono.
+
+- **WABA correcta**: `Tito Gonzalez | Tasador` — id `1183788370595856`. Ahí está el número real `+54 9 11 2177-7447` ("Tito Gonzalez | Postventa") y los templates del tasador (`tasacion_pendiente_carga`, etc).
+- **WABA incorrecta (no usar)**: `Test WhatsApp Business Account` — id `26096047046744727`. Tiene un número de prueba `+1 555-...`. Los templates `consulta_0km_nueva` y `consulta_0km_respondida` quedaron acá por error al crearlos.
+
+**Sesión 2026-04-28**: el WA del módulo no llegaba. Diagnóstico via API: los templates están aprobados como `es_AR` pero en la WABA de Test, no en la WABA del Tasador. Por eso al enviar desde el número real, Meta responde error 132001 "template name does not exist in es_AR". El env var de la Edge Function (`WA_TASADOR_PHONE_ID = 955401487647411`) está bien, y `META_LANGUAGE = "es_AR"` también — el bug está en dónde quedaron creados los templates.
+
+**Fix para la próxima**: borrar templates de la WABA incorrecta y re-crearlos en `1183788370595856` con los mismos nombres + textos. Link directo: https://business.facebook.com/wa/manage/message-templates/?asset_id=1183788370595856
+
 ## Estado al cierre de sesión 2026-04-28
 
 ✅ Producción operativa en consulta0km.titogonzalez.online.
 ✅ Schema corrido en Supabase.
 ✅ Edge Function deployada.
-✅ Templates Meta aprobados.
 ✅ Daniel López con rol vendedor + gerente cargado.
 ✅ Panel admin de usuarios funcionando.
 ✅ Pre-llenar precio admin con oferta vigente.
-⏳ Pendiente: probar end-to-end que los WA con templates Meta lleguen correctamente (testear flujo completo: vendedor manda consulta → llega a Fer; Fer responde → llega a vendedor + Daniel).
+✅ Botón "Cambiar perfil" en header para usuarios con múltiples roles.
+⏳ **Templates en WABA equivocada** (ver sección WhatsApp/WABAs arriba). Hay que re-crearlos en la WABA correcta y esperar aprobación de Meta. Hasta entonces, los WhatsApp NO llegan al cargar consultas ni al responderlas.
