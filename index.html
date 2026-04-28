@@ -277,6 +277,7 @@ input, select, textarea { font-family: var(--font); }
     <h1>Consulta 0KM</h1>
     <div class="right">
       <span class="user-info" id="userInfo"></span>
+      <button id="btnUsuarios" onclick="abrirUsuarios()" class="hidden" style="background:rgba(255,255,255,0.15); color:#fff; padding:8px 14px; border-radius:6px; font-size:13px; font-weight:500">👥 Usuarios</button>
       <button onclick="logout()">Salir</button>
     </div>
   </header>
@@ -313,15 +314,22 @@ input, select, textarea { font-family: var(--font); }
     <div class="tabs">
       <button id="tabPendientes" class="active" onclick="setAdminTab('pendiente')">Pendientes</button>
       <button id="tabResueltas" onclick="setAdminTab('resueltas')">Resueltas</button>
-      <button id="tabUsuarios" onclick="setAdminTab('usuarios')">Usuarios</button>
     </div>
-    <div id="adminConsultasContainer" class="container">
+    <div class="container">
       <div class="toolbar">
         <input type="text" id="aSearch" placeholder="Buscar por vendedor, modelo, cliente..." oninput="renderAdminList()">
       </div>
       <div id="adminConsultasList"></div>
     </div>
-    <div id="adminUsuariosContainer" class="container hidden">
+  </div>
+
+  <!-- ============ USUARIOS (vista aparte, abierta desde el botón del header) ============ -->
+  <div id="usuariosView" class="hidden">
+    <div class="container">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px">
+        <h2 style="font-size:20px; color:var(--vw-blue)">👥 Usuarios</h2>
+        <button class="btn-secondary" onclick="cerrarUsuarios()">← Volver</button>
+      </div>
       <div class="toolbar">
         <input type="text" id="uSearch" placeholder="Buscar usuario..." oninput="renderUsuariosList()">
         <button class="btn-primary" onclick="abrirEditarUsuario(null)">+ Nuevo usuario</button>
@@ -515,6 +523,8 @@ function logout() {
   limpiarSesion();
   currentUser = null; realUser = null; currentMode = null;
   document.getElementById('impersonateBanner').classList.add('hidden');
+  document.getElementById('btnUsuarios').classList.add('hidden');
+  document.getElementById('usuariosView').classList.add('hidden');
   document.getElementById('appScreen').classList.add('hidden');
   document.getElementById('modeScreen').classList.add('hidden');
   document.getElementById('loginScreen').classList.remove('hidden');
@@ -545,8 +555,11 @@ function entrarComo(modo) {
   guardarSesion();
   document.getElementById('modeScreen').classList.add('hidden');
   document.getElementById('appScreen').classList.remove('hidden');
+  document.getElementById('usuariosView').classList.add('hidden');
   const tag = modo === 'admin' ? ' · Admin' : (modo === 'gerente' ? ' · Gerente' : '');
   document.getElementById('userInfo').textContent = (currentUser.nombre || currentUser.usuario) + tag;
+  // Botón "Usuarios" solo cuando el modo activo es admin
+  document.getElementById('btnUsuarios').classList.toggle('hidden', modo !== 'admin');
   if (modo === 'admin') {
     document.getElementById('vendedorView').classList.add('hidden');
     document.getElementById('adminView').classList.remove('hidden');
@@ -1481,14 +1494,21 @@ function setAdminTab(tab) {
   adminTab = tab;
   document.getElementById('tabPendientes').classList.toggle('active', tab === 'pendiente');
   document.getElementById('tabResueltas').classList.toggle('active', tab === 'resueltas');
-  document.getElementById('tabUsuarios').classList.toggle('active', tab === 'usuarios');
-  const isUsuarios = tab === 'usuarios';
-  document.getElementById('adminConsultasContainer').classList.toggle('hidden', isUsuarios);
-  document.getElementById('adminUsuariosContainer').classList.toggle('hidden', !isUsuarios);
-  if (isUsuarios) {
-    cargarUsuarios();
+  renderAdminList();
+}
+
+function abrirUsuarios() {
+  document.getElementById('adminView').classList.add('hidden');
+  document.getElementById('vendedorView').classList.add('hidden');
+  document.getElementById('usuariosView').classList.remove('hidden');
+  cargarUsuarios();
+}
+function cerrarUsuarios() {
+  document.getElementById('usuariosView').classList.add('hidden');
+  if (currentMode === 'admin') {
+    document.getElementById('adminView').classList.remove('hidden');
   } else {
-    renderAdminList();
+    document.getElementById('vendedorView').classList.remove('hidden');
   }
 }
 async function cargarConsultasAdmin() {
