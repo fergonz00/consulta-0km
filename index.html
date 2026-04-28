@@ -1896,7 +1896,7 @@ function abrirDetalle(consultaId) {
             <div id="adminPrecioMaxHint" class="field-hint"></div>
           </div>
           <div style="flex:2; min-width:240px">
-            <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Comentario (opcional para aceptar/rechazar — obligatorio para contraoferta)</label>
+            <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Comentario (opcional)</label>
             <textarea id="adminObs" rows="3" placeholder="Ej: Acepto el precio pero con la unidad gris más vieja del stock"
               style="width:100%; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:14px; font-family:inherit; resize:vertical"></textarea>
           </div>
@@ -2156,8 +2156,13 @@ async function rechazarMejora(consultaId) {
 }
 async function contraofertarMejora(consultaId) {
   const obs = getAdminObs();
-  if (!obs) { alert('La contraoferta requiere un comentario explicando la condición.'); return; }
-  const precio = getAdminPrecioMax(); // opcional
+  const precio = getAdminPrecioMax();
+  // Pide al menos uno de los dos para que la contraoferta tenga contenido
+  // (si no, seria una respuesta vacia y no se distinguiria de aceptar).
+  if (!obs && !precio) {
+    alert('Cargá un precio intermedio o un comentario explicando la condición.');
+    return;
+  }
   const txtPrecio = precio ? ` con precio ${fmtMoney(precio)}` : '';
   if (!confirm(`¿Enviar contraoferta${txtPrecio}?`)) return;
   showLoading('Guardando...');
