@@ -155,3 +155,11 @@ ALTER TABLE consultas_0km ADD COLUMN IF NOT EXISTS observaciones_vendedor TEXT;
 ALTER TABLE consultas_0km DROP CONSTRAINT IF EXISTS consultas_0km_estado_check;
 ALTER TABLE consultas_0km ADD CONSTRAINT consultas_0km_estado_check
   CHECK (estado IN ('pendiente', 'aceptada', 'rechazada', 'contraoferta'));
+
+-- 2026-04-28: resultado de venta (lo carga el vendedor despues de tener
+-- respuesta del admin y hablar con el cliente). Si no se vendio, motivo
+-- obligatorio.
+ALTER TABLE consultas_0km ADD COLUMN IF NOT EXISTS resultado_venta TEXT
+  CHECK (resultado_venta IS NULL OR resultado_venta IN ('vendida', 'no_vendida'));
+ALTER TABLE consultas_0km ADD COLUMN IF NOT EXISTS motivo_no_venta TEXT;
+ALTER TABLE consultas_0km ADD COLUMN IF NOT EXISTS resultado_venta_at TIMESTAMPTZ;
