@@ -2,7 +2,7 @@
 
 ## Qué es
 
-Módulo independiente para que los **vendedores de Tito González Automotores (TGA)** carguen consultas de mejora de precio de 0km, con pre-análisis automático que replica la planilla manual de Fer. A futuro lo va a integrar Mati en el CRM.
+Módulo independiente para que los **vendedores de Tito Gonzalez Automotores (TGA)** carguen consultas de mejora de precio de 0km, con pre-análisis automático que replica la planilla manual de Fer. A futuro lo va a integrar Mati en el CRM.
 
 Producción: https://consulta0km.titogonzalez.online (GitHub Pages + dominio custom vía 4 registros A en Donweb).
 
