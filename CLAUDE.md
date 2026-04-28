@@ -34,7 +34,7 @@ Login compartido con tasador (tabla `tasador_usuarios`). Roles relevantes acá:
 
 Ver `schema.sql`. Resumen:
 - `consultas_0km` — cabecera. PK `id BIGSERIAL`. Tiene `cargada_por_id`/`cargada_por_nombre` para auditoría cuando un gerente carga por otro.
-- `consultas_0km_items` — hasta 3 unidades por consulta. JSONB `chasis` con snapshot.
+- `consultas_0km_items` — hasta 4 unidades por consulta. JSONB `chasis` con snapshot.
 - `consultas_0km_notif_config` — destinatarios por evento.
 - `consultas_0km_notif_log` — log de envíos WA.
 
@@ -78,7 +78,7 @@ Una pregunta por pantalla, auto-avance al elegir radios. Inputs de texto requier
 
 Pasos:
 1. (solo gerente) `gerente-vendedor` — dropdown nativo para elegir vendedor
-2. `cantidad-unidades` — 1, 2 o 3 unidades
+2. `cantidad-unidades` — 1, 2, 3 o 4 unidades
 3. `modelos` — un select por unidad EN PARALELO (todas en una pantalla)
 4. `colores` — lista chasis por unidad en paralelo
 5. `precios` — input + análisis live (solo dto_extra_pedido + oferta_vigente)
