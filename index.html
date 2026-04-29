@@ -2067,7 +2067,8 @@ function abrirDetalle(consultaId, editMode = false) {
             <input id="adminPrecioMax" type="text" inputmode="numeric" placeholder="$0"
               value="${defaultVal}"
               oninput="onAdminPrecioMaxInput(${c.id}, this)"
-              style="width:100%; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:14px">
+              style="width:100%; padding:14px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:20px; font-weight:600; letter-spacing:0.5px">
+            <div id="adminPrecioMaxWords" style="font-size:13px; color:var(--vw-grey-4); margin-top:6px; min-height:18px; font-style:italic"></div>
             <div id="adminPrecioMaxHint" class="field-hint"></div>
           </div>
           <div style="flex:2; min-width:240px">
@@ -2169,6 +2170,11 @@ function closeModal() { document.getElementById('modalOverlay').classList.add('h
 function onAdminPrecioMaxInput(consultaId, el) {
   const raw = el.value.replace(/[^\d]/g, '');
   el.value = raw ? '$' + parseInt(raw, 10).toLocaleString('es-AR') : '';
+  const wordsDiv = document.getElementById('adminPrecioMaxWords');
+  if (wordsDiv) {
+    const t = numToTextES(raw ? parseInt(raw, 10) : 0);
+    wordsDiv.textContent = t ? `≈ ${t}` : '';
+  }
   const hint = document.getElementById('adminPrecioMaxHint');
   const c = adminConsultas.find(x => x.id === consultaId);
   if (!c || !c.items || c.items.length === 0) { hint.textContent = ''; return; }
