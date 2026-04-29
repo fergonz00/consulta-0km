@@ -542,6 +542,17 @@ function fmtMoney(n) {
   if (n == null || isNaN(n)) return '—';
   return '$' + Math.round(n).toLocaleString('es-AR');
 }
+// Texto aproximado del monto en palabras (millones / mil) para evitar errores de ceros.
+// Ej: 41800000 -> "41 millones 800 mil", 1200000 -> "1 millón 200 mil".
+function numToTextES(n) {
+  if (!n || isNaN(n) || n < 1000) return '';
+  const millones = Math.floor(n / 1_000_000);
+  const restoMiles = Math.floor((n % 1_000_000) / 1000);
+  const parts = [];
+  if (millones > 0) parts.push(millones + (millones === 1 ? ' millón' : ' millones'));
+  if (restoMiles > 0) parts.push(restoMiles + ' mil');
+  return parts.join(' ');
+}
 function fmtPct(n) {
   if (n == null || isNaN(n)) return '—';
   return (n * 100).toFixed(2) + '%';
@@ -1102,8 +1113,10 @@ STEP_RENDERERS['precios'] = () => {
             <div class="field" style="margin-top:10px">
               <input id="precioPedido${idx}" type="text" inputmode="numeric" placeholder="$0"
                 value="${u.precioPedido != null ? '$' + Math.round(u.precioPedido).toLocaleString('es-AR') : ''}"
-                oninput="onPrecioPedidoInput(${idx}, this)">
+                oninput="onPrecioPedidoInput(${idx}, this)"
+                style="font-size:20px; font-weight:600; padding:14px; letter-spacing:0.5px">
             </div>
+            <div id="precioWords${idx}" style="font-size:13px; color:var(--vw-grey-4); margin-top:6px; min-height:18px; font-style:italic"></div>
             <div id="dtoExtra${idx}" class="field-hint" style="font-size:13px; margin-top:8px"></div>
           </div>
         `;
@@ -1114,7 +1127,7 @@ STEP_RENDERERS['precios'] = () => {
       <button class="btn-next" id="btnNext" ${allOk ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
     `,
     onMount: () => {
-      formData.unidades.forEach((_, idx) => updateDtoExtra(idx));
+      formData.unidades.forEach((_, idx) => { updateDtoExtra(idx); updatePrecioWords(idx); });
     }
   };
 };
@@ -1443,9 +1456,17 @@ function onPrecioPedidoInput(idx, el) {
   el.value = raw ? '$' + parseInt(raw, 10).toLocaleString('es-AR') : '';
   // Update solo el análisis live de esta unidad (sin re-render full → no pierde foco)
   updateDtoExtra(idx);
+  updatePrecioWords(idx);
   // Habilitar botón Siguiente
   const btn = document.getElementById('btnNext');
   if (btn) btn.disabled = !formData.unidades.every(u => u.precioPedido && u.precioPedido > 0);
+}
+function updatePrecioWords(idx) {
+  const div = document.getElementById('precioWords' + idx);
+  if (!div) return;
+  const u = formData.unidades[idx];
+  const txt = numToTextES(u && u.precioPedido);
+  div.textContent = txt ? `≈ ${txt}` : '';
 }
 function updateDtoExtra(idx) {
   const div = document.getElementById('dtoExtra' + idx);
