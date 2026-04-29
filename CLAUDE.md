@@ -47,6 +47,7 @@ Sheet espejo público "Tito — espejo público consulta0km" (CSV publicado), IM
 URLs CSV (constantes en `index.html`):
 - stock (gid=0): `https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=0&single=true&output=csv`
 - stock_limitado (gid=1137307261): misma URL con otro gid.
+- competencia (gid=132095265): IMPORTRANGE de `Resumen Competencia 2!A:K` del maestro. Lee modelo (col A), precio ElCeroKm c/fyf (col D) y precio Espasa c/fyf (col H). Solo se muestra al admin en el detalle de cada unidad.
 
 Columnas `stock`: `serie, fecha_factura, modelo, color, disponibilidad, oferta_baratito, gcia_actual, precio_lista, dto_baratito` (9).
 Columnas `stock_limitado`: `serie, dto_nuevo, gcia_resultante, oferta_final_fyf` (4).
