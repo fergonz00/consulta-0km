@@ -1962,12 +1962,15 @@ function abrirDetalle(consultaId, editMode = false) {
         const diff = (ped - precio) / precio;
         const isHigher = diff > 0;
         const color = isHigher ? 'var(--red)' : 'var(--green)';
-        const sign = diff > 0 ? '+' : '';
+        const pctTxt = (Math.abs(diff) * 100).toFixed(2) + '%';
+        const txt = isHigher ? `${pctTxt} más caro` : `${pctTxt} más barato`;
+        const dolarDiff = ped - precio;
+        const dolarTxt = (dolarDiff >= 0 ? '+' : '−') + fmtMoney(Math.abs(dolarDiff)).replace('$', '$');
         return `
-          <div style="display:grid; grid-template-columns:1fr auto auto; gap:8px; padding:4px 6px; border-bottom:1px dashed var(--vw-grey-2); font-size:12px; align-items:center">
-            <span><strong>${escapeHtml(label)}</strong></span>
-            <span class="muted">${fmtMoney(precio)}</span>
-            <span style="color:${color}; font-weight:600; min-width:64px; text-align:right">${sign}${(diff * 100).toFixed(2)}%</span>
+          <div style="display:grid; grid-template-columns:1fr auto auto; gap:10px; padding:6px 6px; border-bottom:1px dashed var(--vw-grey-2); font-size:12px; align-items:center">
+            <span><strong>${escapeHtml(label)}</strong> <span class="muted">${fmtMoney(precio)}</span></span>
+            <span class="muted" style="font-size:11px">(${dolarTxt})</span>
+            <span style="color:${color}; font-weight:600; text-align:right; white-space:nowrap">${txt}</span>
           </div>
         `;
       };
@@ -1977,7 +1980,7 @@ function abrirDetalle(consultaId, editMode = false) {
           <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--vw-grey-2)">
             <div style="font-size:13px; margin-bottom:6px">
               <strong>📊 Vs competencia</strong>
-              <span class="muted" style="font-size:11px">(precio pedido ${fmtMoney(ped)} — verde = pedido más barato, rojo = más caro)</span>
+              <span class="muted" style="font-size:11px">(comparado con precio pedido ${fmtMoney(ped)})</span>
             </div>
             ${filasComp}
           </div>
