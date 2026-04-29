@@ -377,6 +377,9 @@ const SUPABASE_URL = 'https://wjfglsafgaltusmbnccl.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndqZmdsc2FmZ2FsdHVzbWJuY2NsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MzM2OTksImV4cCI6MjA4OTAwOTY5OX0.OOwgyKDNQsbBaGDaL0OhJfc8eOsCClvvAPW0VFBKrOA';
 const STOCK_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=0&single=true&output=csv';
 const STOCK_LIM_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=1137307261&single=true&output=csv';
+// Competencia (tu0km y espasaonline) — col A modelo, col D precio ElCeroKm, col H precio EspasaOnline.
+// Setear el gid del tab "competencia" en el espejo publico una vez publicado.
+const COMPETENCIA_CSV = '';
 const FYF = 1110000;
 // Superadmin: god mode — alta/edicion/desactivar/entrar como otros + borrar consultas.
 // Solo fngonzalez.
@@ -456,6 +459,8 @@ let usuariosList = [];
 let currentMode = null;
 let stockData = [];
 let stockLimMap = {};
+// Map modelo -> {tu0km, espasa} con precios FyF incluido. Vacio si el CSV no esta seteado.
+let competenciaMap = {};
 let myConsultas = [];
 let adminConsultas = [];
 let adminTab = 'pendiente';
@@ -688,6 +693,8 @@ function entrarComo(modo) {
 // ============ CARGAR STOCK ============
 async function cargarStock() {
   showLoading('Cargando stock...');
+  // La competencia carga en paralelo con stock pero no bloquea (si falla, se ignora).
+  cargarCompetencia();
   try {
     const [resStock, resLim] = await Promise.all([
       fetch(STOCK_CSV).then(r => r.text()),
@@ -733,6 +740,36 @@ async function cargarStock() {
     showToast('Error al cargar stock');
   } finally {
     hideLoading();
+  }
+}
+
+// Carga el sheet de competencia (tu0km y espasaonline). Tolerante a errores:
+// si la URL no esta seteada o falla la fetch, deja competenciaMap vacio y la UI no muestra la seccion.
+async function cargarCompetencia() {
+  if (!COMPETENCIA_CSV) {
+    console.log('[Competencia] CSV no configurado, sin datos de comparacion.');
+    return;
+  }
+  try {
+    let txt = await fetch(COMPETENCIA_CSV).then(r => r.text());
+    if (txt.charCodeAt(0) === 0xFEFF) txt = txt.slice(1);
+    const lines = txt.replace(/\r/g, '').split('\n').filter(l => l.length > 0);
+    if (lines.length < 2) return;
+    const map = {};
+    // Salteamos la fila 0 (header). A=modelo, D=ElCeroKm, H=EspasaOnline.
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseCSVLine(lines[i]).map(v => v.trim().replace(/^"|"$/g, ''));
+      const modelo = cols[0] || '';
+      if (!modelo) continue;
+      const tu0km = parseMoney(cols[3]);
+      const espasa = parseMoney(cols[7]);
+      if (isNaN(tu0km) && isNaN(espasa)) continue;
+      map[modelo] = { tu0km, espasa };
+    }
+    competenciaMap = map;
+    console.log(`[Competencia] ${Object.keys(map).length} modelos cargados.`);
+  } catch(e) {
+    console.warn('[Competencia] error al cargar (no critico):', e.message || e);
   }
 }
 
@@ -1866,7 +1903,7 @@ async function borrarSeleccionadas() {
 }
 
 // ============ DETALLE / MODAL ============
-function abrirDetalle(consultaId) {
+function abrirDetalle(consultaId, editMode = false) {
   const list = currentMode === 'admin' ? adminConsultas : myConsultas;
   const c = list.find(x => x.id === consultaId);
   if (!c) return;
@@ -1915,6 +1952,38 @@ function abrirDetalle(consultaId) {
         </div>
       `;
     }
+    // Comparativa vs competencia (tu0km y espasaonline) — solo admin, solo si el modelo aparece en el sheet.
+    let competenciaHtml = '';
+    if (showGcia && competenciaMap[it.modelo]) {
+      const comp = competenciaMap[it.modelo];
+      const ped = it.precio_pedido;
+      const filaComp = (label, precio) => {
+        if (!precio || isNaN(precio)) return '';
+        const diff = (ped - precio) / precio;
+        const isHigher = diff > 0;
+        const color = isHigher ? 'var(--red)' : 'var(--green)';
+        const sign = diff > 0 ? '+' : '';
+        return `
+          <div style="display:grid; grid-template-columns:1fr auto auto; gap:8px; padding:4px 6px; border-bottom:1px dashed var(--vw-grey-2); font-size:12px; align-items:center">
+            <span><strong>${escapeHtml(label)}</strong></span>
+            <span class="muted">${fmtMoney(precio)}</span>
+            <span style="color:${color}; font-weight:600; min-width:64px; text-align:right">${sign}${(diff * 100).toFixed(2)}%</span>
+          </div>
+        `;
+      };
+      const filasComp = [filaComp('ElCeroKm', comp.tu0km), filaComp('EspasaOnline', comp.espasa)].filter(Boolean).join('');
+      if (filasComp) {
+        competenciaHtml = `
+          <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--vw-grey-2)">
+            <div style="font-size:13px; margin-bottom:6px">
+              <strong>📊 Vs competencia</strong>
+              <span class="muted" style="font-size:11px">(precio pedido ${fmtMoney(ped)} — verde = pedido más barato, rojo = más caro)</span>
+            </div>
+            ${filasComp}
+          </div>
+        `;
+      }
+    }
     return `
       <div class="card" style="background:var(--vw-grey-1)">
         <h3 style="font-size:14px; margin-bottom:8px">Unidad ${i + 1}: ${escapeHtml(it.modelo)}</h3>
@@ -1925,6 +1994,7 @@ function abrirDetalle(consultaId) {
           <div><span class="muted">Dto extra pedido:</span> <strong>${fmtPct(it.dto_extra_pedido)}</strong></div>
           ${showGcia ? `<div><span class="muted">Gcia resultante:</span> <strong style="color:${(it.gcia_resultante||0) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPct(it.gcia_resultante)}</strong></div>` : ''}
         </div>
+        ${competenciaHtml}
         ${stockHtml}
       </div>
     `;
@@ -1941,17 +2011,32 @@ function abrirDetalle(consultaId) {
 
   const isAdmin = currentMode === 'admin';
   const isPending = c.estado === 'pendiente';
+  const showEditForm = isAdmin && (isPending || editMode);
   const btnEliminar = (isAdmin && _esSuperadmin())
     ? `<button onclick="eliminarConsulta(${c.id})" style="background:#991B1B; color:#fff; padding:10px 14px; border-radius:8px; border:none; font-weight:600; cursor:pointer">🗑 Eliminar</button>`
     : '';
   let footerHtml = `${btnEliminar}<button class="btn-secondary" onclick="closeModal()">Cerrar</button>`;
-  if (isAdmin && isPending) {
-    // Pre-llenar con la oferta vigente actual de la primera unidad para que solo
-    // tenga que ajustarla (en vez de tipear desde cero).
-    const defaultPrecio = (c.items && c.items[0]) ? c.items[0].oferta_vigente_min : null;
-    const defaultVal = defaultPrecio ? '$' + Math.round(defaultPrecio).toLocaleString('es-AR') : '';
+  if (showEditForm) {
+    let defaultVal = '';
+    let defaultObs = '';
+    if (editMode) {
+      defaultVal = c.precio_max_admin ? '$' + Math.round(c.precio_max_admin).toLocaleString('es-AR') : '';
+      defaultObs = c.observaciones_admin || '';
+    } else {
+      // Pre-llenar con la oferta vigente actual de la primera unidad para que solo
+      // tenga que ajustarla (en vez de tipear desde cero).
+      const defaultPrecio = (c.items && c.items[0]) ? c.items[0].oferta_vigente_min : null;
+      defaultVal = defaultPrecio ? '$' + Math.round(defaultPrecio).toLocaleString('es-AR') : '';
+    }
+    const cancelBtn = editMode
+      ? `<button class="btn-secondary" onclick="abrirDetalle(${c.id}, false)">Cancelar</button>`
+      : `<button class="btn-secondary" onclick="closeModal()">Cancelar</button>`;
+    const editBanner = editMode
+      ? `<div style="background:#fff3cd; border:1px solid #f59e0b; border-radius:8px; padding:8px 12px; font-size:13px; color:#7c2d12">✏️ Editando respuesta — al guardar se reenviará el WhatsApp al vendedor.</div>`
+      : '';
     footerHtml = `
       <div style="display:flex; flex-direction:column; gap:10px; width:100%">
+        ${editBanner}
         <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-start">
           <div style="flex:1; min-width:240px">
             <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Mejor precio máximo (con FyF)</label>
@@ -1964,13 +2049,13 @@ function abrirDetalle(consultaId) {
           <div style="flex:2; min-width:240px">
             <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Comentario (opcional)</label>
             <textarea id="adminObs" rows="3" placeholder="Ej: Acepto el precio pero con la unidad gris más vieja del stock"
-              style="width:100%; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:14px; font-family:inherit; resize:vertical"></textarea>
+              style="width:100%; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:14px; font-family:inherit; resize:vertical">${escapeHtml(defaultObs)}</textarea>
           </div>
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:space-between; align-items:center">
           ${_esSuperadmin() ? `<button onclick="eliminarConsulta(${c.id})" style="background:#991B1B; color:#fff; padding:10px 14px; border-radius:8px; border:none; font-weight:600; cursor:pointer">🗑 Eliminar</button>` : '<div></div>'}
           <div style="display:flex; gap:8px; flex-wrap:wrap">
-            <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
+            ${cancelBtn}
             <button class="btn-danger" onclick="rechazarMejora(${c.id})">No acepto</button>
             <button onclick="contraofertarMejora(${c.id})" style="background:#3730a3; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">Contraofertar</button>
             <button class="btn-success" onclick="aceptarMejora(${c.id})">Aceptar mejora</button>
@@ -2020,7 +2105,7 @@ function abrirDetalle(consultaId) {
           <div style="white-space:pre-wrap; padding:4px 0">${escapeHtml(c.observaciones_vendedor)}</div>
         </div>
       ` : ''}
-      ${(!isPending && (c.precio_max_admin || c.observaciones_admin)) ? `
+      ${(!isPending && !editMode && (isAdmin || c.precio_max_admin || c.observaciones_admin)) ? `
         <div class="detalle-section">
           <h4>Respuesta</h4>
           <div class="kv">
@@ -2034,6 +2119,11 @@ function abrirDetalle(consultaId) {
               <div style="white-space:pre-wrap; padding:8px; background:var(--vw-grey-1); border-radius:6px">${escapeHtml(c.observaciones_admin)}</div>
             </div>
           ` : ''}
+          ${isAdmin ? `
+            <div style="margin-top:12px; display:flex; justify-content:flex-end">
+              <button onclick="abrirDetalle(${c.id}, true)" class="btn-secondary" style="font-size:13px; padding:8px 14px">✏️ Editar respuesta</button>
+            </div>
+          ` : ''}
         </div>
       ` : ''}
       ${renderResultadoVentaSection(c)}
@@ -2041,8 +2131,9 @@ function abrirDetalle(consultaId) {
     <div class="modal-footer">${footerHtml}</div>
   `;
   overlay.classList.remove('hidden');
-  // Si admin tiene una pendiente con precio pre-llenado, calcular el hint inicial
-  if (isAdmin && isPending) {
+  // Si admin tiene una pendiente con precio pre-llenado, calcular el hint inicial.
+  // Tambien aplica al modo edicion (admin reabriendo una resuelta para modificarla).
+  if (showEditForm) {
     setTimeout(() => {
       const el = document.getElementById('adminPrecioMax');
       if (el && el.value) onAdminPrecioMaxInput(c.id, el);
@@ -2186,6 +2277,7 @@ async function aceptarMejora(consultaId) {
         estado: 'aceptada',
         admin_user_id: currentUser.id,
         admin_respuesta_at: new Date().toISOString(),
+        precio_max_admin: null,
         observaciones_admin: obs || null
       })
     });
