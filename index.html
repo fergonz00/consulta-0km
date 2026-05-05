@@ -275,7 +275,10 @@ input, select, textarea { font-family: var(--font); }
 <!-- ============ APP ============ -->
 <div id="appScreen" class="hidden">
   <header class="app-header">
-    <h1>Consulta 0KM</h1>
+    <div style="display:flex; align-items:center; gap:12px">
+      <a href="https://titogonzalez.online/" style="background:rgba(255,255,255,0.15); color:#fff; padding:8px 12px; border-radius:6px; font-size:13px; font-weight:500; text-decoration:none; white-space:nowrap">← Portal</a>
+      <h1>Consulta 0KM</h1>
+    </div>
     <div class="right">
       <span class="user-info" id="userInfo"></span>
       <button id="btnCambiarPerfil" onclick="cambiarPerfil()" class="hidden" style="background:rgba(255,255,255,0.15); color:#fff; padding:8px 14px; border-radius:6px; font-size:13px; font-weight:500">🔄 Cambiar perfil</button>
@@ -380,6 +383,9 @@ const STOCK_LIM_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIa
 // Competencia (tu0km y espasaonline) — col A modelo, col D precio ElCeroKm, col H precio EspasaOnline.
 // Tab "competencia" del espejo publico con IMPORTRANGE de "Resumen Competencia 2!A:K" del maestro.
 const COMPETENCIA_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=132095265&single=true&output=csv';
+// Ventas BT — tab "bt" del espejo publico con IMPORTRANGE de "Actual BT!A:EM" del maestro.
+// col B (idx 1) = modelo, col M (idx 12) = vendidos en el ultimo mes.
+const VENTAS_BT_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=332004614&single=true&output=csv';
 const FYF = 1110000;
 // Superadmin: god mode — alta/edicion/desactivar/entrar como otros + borrar consultas.
 // Solo fngonzalez.
@@ -461,6 +467,8 @@ let stockData = [];
 let stockLimMap = {};
 // Map modelo -> {tu0km, espasa} con precios FyF incluido. Vacio si el CSV no esta seteado.
 let competenciaMap = {};
+// Map modelo -> cantidad vendida en el ultimo mes (col M de tab "bt"). Vacio si falla.
+let ventasBtMap = {};
 let myConsultas = [];
 let adminConsultas = [];
 let adminTab = 'pendiente';
@@ -704,8 +712,9 @@ function entrarComo(modo) {
 // ============ CARGAR STOCK ============
 async function cargarStock() {
   showLoading('Cargando stock...');
-  // La competencia carga en paralelo con stock pero no bloquea (si falla, se ignora).
+  // La competencia y ventas-bt cargan en paralelo con stock pero no bloquean (si fallan, se ignoran).
   cargarCompetencia();
+  cargarVentasBt();
   try {
     const [resStock, resLim] = await Promise.all([
       fetch(STOCK_CSV).then(r => r.text()),
@@ -781,6 +790,34 @@ async function cargarCompetencia() {
     console.log(`[Competencia] ${Object.keys(map).length} modelos cargados.`);
   } catch(e) {
     console.warn('[Competencia] error al cargar (no critico):', e.message || e);
+  }
+}
+
+// Carga el sheet "bt" (modelo -> vendidos en el ultimo mes). Tolerante a errores: si
+// falla la fetch, deja ventasBtMap vacio y la UI no muestra el dato.
+async function cargarVentasBt() {
+  if (!VENTAS_BT_CSV) return;
+  try {
+    let txt = await fetch(VENTAS_BT_CSV).then(r => r.text());
+    if (txt.charCodeAt(0) === 0xFEFF) txt = txt.slice(1);
+    const lines = txt.replace(/\r/g, '').split('\n').filter(l => l.length > 0);
+    if (lines.length < 2) return;
+    const map = {};
+    // Salteamos fila 0 (header). B=modelo (idx 1), M=vendidos en el mes (idx 12).
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseCSVLine(lines[i]).map(v => v.trim().replace(/^"|"$/g, ''));
+      const modelo = (cols[1] || '').trim();
+      if (!modelo) continue;
+      const raw = (cols[12] || '').replace(/[^\d\-]/g, '');
+      if (!raw) continue;
+      const vendidos = parseInt(raw, 10);
+      if (isNaN(vendidos)) continue;
+      map[modelo] = vendidos;
+    }
+    ventasBtMap = map;
+    console.log(`[VentasBt] ${Object.keys(map).length} modelos cargados.`);
+  } catch(e) {
+    console.warn('[VentasBt] error al cargar (no critico):', e.message || e);
   }
 }
 
@@ -2008,10 +2045,22 @@ function abrirDetalle(consultaId, editMode = false) {
         `;
       }
     }
+    // Vendidos en el ultimo mes — solo admin, solo si el modelo aparece en la pestaña "bt".
+    let ventasMesHtml = '';
+    if (showGcia) {
+      const v = ventasBtMap[it.modelo];
+      if (v != null && !isNaN(v)) {
+        ventasMesHtml = `
+          <div style="margin-top:8px; padding:6px 8px; background:#e7f1ff; border-left:3px solid var(--vw-blue); border-radius:4px; font-size:12px">
+            <strong>📈 Vendidos último mes:</strong> ${v} ${v === 1 ? 'unidad' : 'unidades'} de <strong>${escapeHtml(it.modelo)}</strong>
+          </div>`;
+      }
+    }
     return `
       <div class="card" style="background:var(--vw-grey-1)">
         <h3 style="font-size:14px; margin-bottom:8px">Unidad ${i + 1}: ${escapeHtml(it.modelo)}</h3>
         ${chasis}
+        ${ventasMesHtml}
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; font-size:13px">
           <div><span class="muted">Precio pedido:</span> <strong>${fmtMoney(it.precio_pedido)}</strong></div>
           <div><span class="muted">Oferta vigente:</span> <strong>${fmtMoney(it.oferta_vigente_min)}</strong></div>
