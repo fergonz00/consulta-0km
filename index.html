@@ -2192,6 +2192,29 @@ function abrirDetalle(consultaId, editMode = false) {
   const cliente = c.tipo_cliente === 'particular' ? `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}`.trim() : (c.reventa_nombre || '');
   const showGcia = currentMode === 'admin'; // gcia y % financiación SOLO admin (fngonzalez)
   const itemsHtml = (c.items || []).map((it, i) => {
+    // Para items de reparto creados antes del fix, los campos del analisis vienen en null
+    // y el modelo guardado puede ser el alias (sin "VW " ni "MY##"). Recalculamos en vivo
+    // usando stockData / bt actuales y normalizamos el modelo al canonico para que
+    // todos los lookups posteriores (competencia, stock del modelo, ventasMes) matcheen.
+    if (it.es_reparto) {
+      const canon = resolveModeloCanonico(it.modelo) || it.modelo;
+      if (it.oferta_vigente_min == null) {
+        const pseudoU = { modelo: canon, esReparto: true, chasisSeleccionados: [], precioPedido: it.precio_pedido };
+        const a = calcularAnalisisUnidad(pseudoU);
+        if (a) {
+          it = { ...it, modelo: canon,
+            oferta_vigente_min: a.oferta_vigente_min,
+            gcia_vigente_min: a.gcia_vigente_min,
+            precio_lista: it.precio_lista || a.precio_lista,
+            dto_extra_pedido: a.dto_extra_pedido,
+            gcia_resultante: a.gcia_resultante };
+        } else {
+          it = { ...it, modelo: canon };
+        }
+      } else if (canon !== it.modelo) {
+        it = { ...it, modelo: canon };
+      }
+    }
     const chasis = (it.chasis || []).map(ch =>
       `<div style="font-size:12px; padding:4px 0; border-bottom:1px dashed var(--vw-grey-2)">
         <strong>${escapeHtml(ch.color || '—')}</strong> · <span class="muted">${escapeHtml(ch.serie || '')}</span>
