@@ -172,3 +172,9 @@ ALTER TABLE consultas_0km ADD COLUMN IF NOT EXISTS resultado_venta_at TIMESTAMPT
 UPDATE consultas_0km_notif_config
 SET incluir_gerente = TRUE
 WHERE evento = 'consulta_0km_nueva';
+
+-- 2026-05-11: items "en reparto" (modelos sin stock libre, llegan en reparto).
+-- Cuando es_reparto=TRUE el item no tiene chasis seleccionados; chasis JSONB
+-- queda como '[]' y oferta_vigente_min / gcia_vigente_min / dto_extra_pedido /
+-- gcia_resultante quedan en NULL.
+ALTER TABLE consultas_0km_items ADD COLUMN IF NOT EXISTS es_reparto BOOLEAN DEFAULT FALSE;
