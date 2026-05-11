@@ -1236,6 +1236,25 @@ STEP_RENDERERS['colores'] = () => {
 
 // ----- Precios en paralelo (con análisis live por unidad) -----
 STEP_RENDERERS['precios'] = () => {
+  // Pre-cargamos precio_pedido con la oferta vigente del modelo como referencia
+  // (el vendedor lo ajusta segun lo que pidio el cliente). Vale tanto para stock como
+  // para reparto, donde la oferta sale de cualquier registro de stockData del modelo.
+  formData.unidades.forEach(u => {
+    if (u.precioPedido != null || !u.modelo) return;
+    let registros;
+    if (u.esReparto) {
+      registros = stockData.filter(r => r.modelo === u.modelo);
+    } else if (u.chasisSeleccionados && u.chasisSeleccionados.length > 0) {
+      registros = u.chasisSeleccionados.map(s => stockData.find(r => r.serie === s)).filter(Boolean);
+    } else {
+      registros = stockData.filter(r => r.libre && r.modelo === u.modelo);
+    }
+    let min = Infinity;
+    registros.forEach(c => {
+      if (!isNaN(c.oferta_vigente) && c.oferta_vigente < min) min = c.oferta_vigente;
+    });
+    if (isFinite(min) && min > 0) u.precioPedido = Math.round(min);
+  });
   const allOk = formData.unidades.every(u => u.precioPedido && u.precioPedido > 0);
   return {
     body: `
@@ -1589,14 +1608,19 @@ function selectCantidad(n) {
   nextStep();
 }
 function setUnidadModelo(idx, modelo) {
-  formData.unidades[idx].modelo = modelo || null;
-  formData.unidades[idx].chasisSeleccionados = [];
+  const u = formData.unidades[idx];
+  const modeloAnterior = u.modelo;
+  u.modelo = modelo || null;
+  u.chasisSeleccionados = [];
   // Si el modelo elegido esta solo en reparto (sin chasis libres), marcamos la unidad.
-  // En ese caso el paso "colores" se saltea y el analisis de precio se hace sin oferta vigente.
-  formData.unidades[idx].esReparto = !!(modelo && repartoMap[modelo] && getChasisLibresPorModelo(modelo).length === 0);
+  // En ese caso el paso "colores" se saltea.
+  u.esReparto = !!(modelo && repartoMap[modelo] && getChasisLibresPorModelo(modelo).length === 0);
+  // Si cambio el modelo, limpiamos el precio para que se pre-cargue con la oferta del nuevo
+  // modelo cuando se llegue al paso de precios.
+  if (modelo !== modeloAnterior) u.precioPedido = null;
   // Habilitar el botón Siguiente sin re-render full
   const btn = document.getElementById('btnNext');
-  if (btn) btn.disabled = !formData.unidades.every(u => u.modelo);
+  if (btn) btn.disabled = !formData.unidades.every(uu => uu.modelo);
 }
 function toggleChasisParalelo(idx, serie) {
   const u = formData.unidades[idx];
