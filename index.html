@@ -1627,20 +1627,14 @@ function updateDtoExtra(idx) {
   const div = document.getElementById('dtoExtra' + idx);
   if (!div) return;
   const u = formData.unidades[idx];
-  // Reparto: sin oferta vigente, no hay analisis live de dto_extra. Solo mostramos
-  // el precio de lista como referencia (el admin resuelve manualmente con su criterio).
-  if (u && u.esReparto) {
-    const pl = getPrecioListaModelo(u.modelo);
-    const plTxt = (!isNaN(pl) && pl > 0) ? ` · Precio lista: ${fmtMoney(pl)}` : '';
-    if (u.precioPedido && u.precioPedido > 0) {
-      div.innerHTML = `<span style="color:var(--vw-grey-4)">Análisis manual del admin (sin oferta vigente — unidad en reparto)${plTxt}</span>`;
-    } else {
-      div.innerHTML = `<span style="color:var(--vw-grey-3)">Cargá el precio. La unidad está en reparto: la responde el admin.${plTxt}</span>`;
-    }
-    return;
-  }
   const a = calcularAnalisisUnidad(u);
   if (!a) { div.innerHTML = '<span style="color:var(--vw-grey-3)">Cargá el precio para ver el análisis</span>'; return; }
+  // Si no hay oferta vigente (caso muy raro de reparto sin registros en stockData),
+  // mostramos solo el precio de lista.
+  if (a.oferta_vigente_min == null) {
+    div.innerHTML = `Precio lista: <strong>${fmtMoney(a.precio_lista)}</strong> <span class="muted">· sin oferta vigente disponible</span>`;
+    return;
+  }
   const color = a.dto_extra_pedido > 0 ? 'var(--red)' : (a.dto_extra_pedido < 0 ? 'var(--green)' : 'var(--vw-grey-4)');
   div.innerHTML = `Dto extra pedido: <strong style="color:${color}">${fmtPct(a.dto_extra_pedido)}</strong> · Oferta vigente: ${fmtMoney(a.oferta_vigente_min)}`;
 }
@@ -1683,24 +1677,55 @@ function updateNextEnabled() {
 
 // ============ Análisis ============
 function calcularAnalisisUnidad(u) {
-  if (!u || !u.modelo || !u.chasisSeleccionados || u.chasisSeleccionados.length === 0 || u.precioPedido == null || isNaN(u.precioPedido)) return null;
-  const chasisData = u.chasisSeleccionados.map(s => stockData.find(r => r.serie === s)).filter(Boolean);
-  if (chasisData.length === 0) return null;
+  if (!u || !u.modelo || u.precioPedido == null || isNaN(u.precioPedido)) return null;
+  // Para unidades en reparto no hay chasis seleccionados, pero el analisis se calcula igual:
+  // tomamos cualquier registro de stockData con el mismo modelo (libre o vendido — los modelos
+  // en reparto tipicamente tienen chasis pasados con su oferta_vigente y gcia_actual). Y para
+  // el precio de lista usamos como override el de la tab "bt" del espejo, que cubre TODOS los
+  // modelos del catalogo (esten o no en stock).
+  let chasisData;
+  if (u.esReparto) {
+    chasisData = stockData.filter(r => r.modelo === u.modelo);
+  } else {
+    if (!u.chasisSeleccionados || u.chasisSeleccionados.length === 0) return null;
+    chasisData = u.chasisSeleccionados.map(s => stockData.find(r => r.serie === s)).filter(Boolean);
+  }
+  if (chasisData.length === 0) {
+    // Sin registros en stockData. Para reparto, devolvemos al menos el precio_lista de bt.
+    if (u.esReparto) {
+      const pl = getPrecioListaModelo(u.modelo);
+      if (isNaN(pl) || pl <= 0) return null;
+      return { oferta_vigente_min: null, gcia_vigente_min: null, precio_lista: pl,
+        dto_extra_pedido: null, gcia_resultante: null, chasisSnapshot: [] };
+    }
+    return null;
+  }
   let oferta_vigente_min = Infinity, gcia_vigente_min = null, precio_lista = null;
   chasisData.forEach(c => {
-    if (c.oferta_vigente < oferta_vigente_min) {
+    if (!isNaN(c.oferta_vigente) && c.oferta_vigente < oferta_vigente_min) {
       oferta_vigente_min = c.oferta_vigente;
       gcia_vigente_min = c.gcia_vigente;
     }
     if (precio_lista == null || c.precio_lista > precio_lista) precio_lista = c.precio_lista;
   });
-  if (!isFinite(oferta_vigente_min) || !precio_lista) return null;
+  // Reparto: override del precio_lista con el de bt si lo tenemos (mas actualizado y cubre catalogo entero).
+  if (u.esReparto) {
+    const pl = getPrecioListaModelo(u.modelo);
+    if (!isNaN(pl) && pl > 0) precio_lista = pl;
+  }
+  if (!isFinite(oferta_vigente_min) || !precio_lista) {
+    if (u.esReparto && precio_lista) {
+      return { oferta_vigente_min: null, gcia_vigente_min: null, precio_lista,
+        dto_extra_pedido: null, gcia_resultante: null, chasisSnapshot: [] };
+    }
+    return null;
+  }
   const dto_extra_pedido = (oferta_vigente_min - u.precioPedido) / precio_lista;
   const gcia_resultante = (gcia_vigente_min || 0) - dto_extra_pedido;
   return {
     oferta_vigente_min, gcia_vigente_min, precio_lista,
     dto_extra_pedido, gcia_resultante,
-    chasisSnapshot: chasisData.map(c => ({
+    chasisSnapshot: u.esReparto ? [] : chasisData.map(c => ({
       serie: c.serie, color: c.color,
       oferta_vigente: c.oferta_vigente, gcia_vigente: c.gcia_vigente,
       fuente_oferta: c.fuente_oferta,
@@ -1779,16 +1804,16 @@ async function submitConsulta() {
       const consultaId = inserted[0].id;
       consultaIds.push(consultaId);
 
-      // Para unidades de reparto, calcularAnalisisUnidad devuelve null: no hay chasis
-      // ni oferta vigente. Solo el precio_lista se resuelve via fallback (stockData o tab bt).
-      const precioListaReparto = u.esReparto ? getPrecioListaModelo(u.modelo) : null;
+      // calcularAnalisisUnidad ya funciona igual para stock y reparto: para reparto toma
+      // los datos del analisis de cualquier registro de stockData con el mismo modelo y
+      // el precio_lista de la tab "bt".
       const item = {
         consulta_id: consultaId,
         orden: 1,
         modelo: u.modelo,
         version: u.modelo,
         chasis: a ? a.chasisSnapshot : [],
-        precio_lista: a ? a.precio_lista : (isNaN(precioListaReparto) ? null : precioListaReparto),
+        precio_lista: a ? a.precio_lista : null,
         oferta_vigente_min: a ? a.oferta_vigente_min : null,
         gcia_vigente_min: a ? a.gcia_vigente_min : null,
         precio_pedido: u.precioPedido,
@@ -2200,21 +2225,17 @@ function abrirDetalle(consultaId, editMode = false) {
       ? ' <span style="background:#fbbf24; color:#78350f; padding:2px 7px; border-radius:8px; font-size:10px; font-weight:700; margin-left:6px">REPARTO</span>'
       : '';
     const noChasisMsg = it.es_reparto
-      ? `<div class="muted" style="font-size:12px; padding:6px 0">Sin chasis seleccionados — la unidad viene en reparto.</div>`
+      ? `<div class="muted" style="font-size:12px; padding:6px 0">Sin chasis en stock libre — la unidad viene en reparto.</div>`
       : '';
-    // En reparto no hay oferta vigente ni dto_extra: mostramos precio pedido + precio lista (si lo tenemos).
-    const analisisHtml = it.es_reparto
-      ? `<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; font-size:13px">
-          <div><span class="muted">Precio pedido:</span> <strong>${fmtMoney(it.precio_pedido)}</strong></div>
-          ${it.precio_lista ? `<div><span class="muted">Precio lista:</span> <strong>${fmtMoney(it.precio_lista)}</strong></div>` : ''}
-        </div>`
-      : `
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; font-size:13px">
-          <div><span class="muted">Precio pedido:</span> <strong>${fmtMoney(it.precio_pedido)}</strong></div>
-          <div><span class="muted">Oferta vigente:</span> <strong>${fmtMoney(it.oferta_vigente_min)}</strong></div>
-          <div><span class="muted">Dto extra pedido:</span> <strong>${fmtPct(it.dto_extra_pedido)}</strong></div>
-          ${showGcia ? `<div><span class="muted">Gcia resultante:</span> <strong style="color:${(it.gcia_resultante||0) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPct(it.gcia_resultante)}</strong></div>` : ''}
-        </div>`;
+    // El analisis se calcula igual para reparto y stock (oferta_vigente y gcia salen de cualquier
+    // chasis del modelo en stockData, precio_lista override de bt para reparto).
+    const analisisHtml = `
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; font-size:13px">
+        <div><span class="muted">Precio pedido:</span> <strong>${fmtMoney(it.precio_pedido)}</strong></div>
+        <div><span class="muted">Oferta vigente:</span> <strong>${fmtMoney(it.oferta_vigente_min)}</strong></div>
+        <div><span class="muted">Dto extra pedido:</span> <strong>${fmtPct(it.dto_extra_pedido)}</strong></div>
+        ${showGcia ? `<div><span class="muted">Gcia resultante:</span> <strong style="color:${(it.gcia_resultante||0) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPct(it.gcia_resultante)}</strong></div>` : ''}
+      </div>`;
     return `
       <div class="card" style="background:var(--vw-grey-1)">
         <h3 style="font-size:14px; margin-bottom:8px">Unidad ${i + 1}: ${escapeHtml(it.modelo)}${repartoBadge}</h3>
@@ -2252,11 +2273,11 @@ function abrirDetalle(consultaId, editMode = false) {
       defaultObs = c.observaciones_admin || '';
     } else {
       // Pre-llenar con la oferta vigente actual de la primera unidad para que solo
-      // tenga que ajustarla (en vez de tipear desde cero). Para reparto no hay
-      // oferta vigente: pre-llenamos con el precio pedido como referencia.
+      // tenga que ajustarla (en vez de tipear desde cero). Si por algun motivo no hay
+      // oferta vigente (reparto sin registros en stockData), caemos al precio pedido.
       const first = (c.items && c.items[0]) || null;
       const defaultPrecio = first
-        ? (first.es_reparto ? first.precio_pedido : first.oferta_vigente_min)
+        ? (first.oferta_vigente_min || first.precio_pedido)
         : null;
       defaultVal = defaultPrecio ? '$' + Math.round(defaultPrecio).toLocaleString('es-AR') : '';
     }
