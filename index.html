@@ -883,6 +883,35 @@ function getModelosLibres() {
     return a.localeCompare(b);
   });
 }
+// Normaliza el nombre del modelo para comparaciones: minusculas, sin "vw " prefix
+// ni sufijos de model year (" my26", " my25"), y colapsa espacios. Necesario porque
+// la solapa "reparto" del maestro suele venir sin "VW " y sin sufijo "MY##", mientras
+// que stock, bt y competencia los tienen.
+function _normalizeModelo(s) {
+  return (s || '').toLowerCase()
+    .replace(/^\s*vw\s+/, '')
+    .replace(/\s+my\d+\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+// Resuelve un nombre de modelo (alias) al nombre canonico usado en stockData / bt /
+// competencia. Devuelve null si no hay match. Match exacto primero, despues relajado.
+function resolveModeloCanonico(alias) {
+  if (!alias) return null;
+  if (preciosListaBtMap[alias]) return alias;
+  for (const r of stockData) if (r.modelo === alias) return r.modelo;
+  const norm = _normalizeModelo(alias);
+  if (!norm) return null;
+  for (const m of Object.keys(preciosListaBtMap)) if (_normalizeModelo(m) === norm) return m;
+  for (const r of stockData) if (_normalizeModelo(r.modelo) === norm) return r.modelo;
+  return null;
+}
+// Set de modelos en reparto (con nombre canonico resuelto cuando es posible).
+function getModelosEnReparto() {
+  const set = new Set();
+  Object.keys(repartoMap).forEach(m => set.add(resolveModeloCanonico(m) || m));
+  return set;
+}
 // Modelos a mostrar en el selector del wizard: libres en stock + en reparto (stock 0).
 // Devuelve [{modelo, esReparto, cantLibres}] ordenado.
 function getModelosDisponibles() {
@@ -891,11 +920,13 @@ function getModelosDisponibles() {
   const out = [];
   // Modelos con stock libre (uno o mas chasis)
   libres.forEach(m => out.push({ modelo: m, esReparto: false, cantLibres: getChasisLibresPorModelo(m).length }));
-  // Modelos en reparto (sin chasis libres). Si un modelo tiene libres y tambien aparece en
-  // reparto, gana stock libre (no se duplica).
+  // Modelos en reparto (sin chasis libres). Resolvemos al nombre canonico para que
+  // todos los lookups (bt, competencia, stockData) matcheen.
   Object.keys(repartoMap).forEach(m => {
-    if (libres.has(m)) return;
-    out.push({ modelo: m, esReparto: true, cantLibres: 0 });
+    const canon = resolveModeloCanonico(m) || m;
+    if (libres.has(canon)) return;
+    if (out.some(x => x.modelo === canon)) return;
+    out.push({ modelo: canon, esReparto: true, cantLibres: 0 });
   });
   const ordenIdx = (m) => {
     const i = MODELOS_ORDEN.indexOf(m);
@@ -1613,8 +1644,10 @@ function setUnidadModelo(idx, modelo) {
   u.modelo = modelo || null;
   u.chasisSeleccionados = [];
   // Si el modelo elegido esta solo en reparto (sin chasis libres), marcamos la unidad.
-  // En ese caso el paso "colores" se saltea.
-  u.esReparto = !!(modelo && repartoMap[modelo] && getChasisLibresPorModelo(modelo).length === 0);
+  // En ese caso el paso "colores" se saltea. Usamos el set canonico porque el modelo
+  // viene del selector con el nombre canonico (resuelto contra stockData/bt).
+  const modelosReparto = getModelosEnReparto();
+  u.esReparto = !!(modelo && modelosReparto.has(modelo) && getChasisLibresPorModelo(modelo).length === 0);
   // Si cambio el modelo, limpiamos el precio para que se pre-cargue con la oferta del nuevo
   // modelo cuando se llegue al paso de precios.
   if (modelo !== modeloAnterior) u.precioPedido = null;
