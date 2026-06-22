@@ -19,6 +19,11 @@
 // El precio y la ganancia salen del snapshot del Motor Baratito (lo calcula gestion-tga,
 // fuente unica de verdad) -> aca NO se reimplementa ninguna formula.
 //
+// GANANCIA BLINDADA: la gcia (gcia_actual/gcia_vigente) es dato sensible y SOLO se
+// devuelve si el request trae credenciales validas de un usuario ADMIN (POST con
+// {usuario, clave}, validadas server-side contra tasador_usuarios). Vendedor/gerente
+// y cualquier GET sin credenciales reciben el stock SIN gcia.
+//
 // Secrets requeridos: OVERSOFT_URL, OVERSOFT_KEY (replica solo-lectura).
 // SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY los inyecta el runtime.
 
@@ -66,6 +71,29 @@ Deno.serve(async (req: Request) => {
   if (!SUPA_URL || !SUPA_KEY) return json({ ok: false, error: "SUPABASE env vars missing" }, 500);
   if (!OV_URL || !OV_KEY) return json({ ok: false, error: "OVERSOFT env vars missing" }, 500);
   const W = SUPA_URL + "/rest/v1";
+
+  // Credenciales opcionales (POST) para desbloquear la gcia. Validadas contra
+  // tasador_usuarios; solo cuentas con rol admin reciben ganancia.
+  let includeGcia = false;
+  if (req.method === "POST") {
+    let body: any = {};
+    try { body = await req.json(); } catch { body = {}; }
+    const usuario = String(body?.usuario || "").trim().toLowerCase();
+    const clave = String(body?.clave || "");
+    if (usuario && clave) {
+      try {
+        const u = await rest(
+          W, SUPA_KEY,
+          `/tasador_usuarios?usuario=eq.${encodeURIComponent(usuario)}&clave=eq.${encodeURIComponent(clave)}&activo=eq.true&select=usuario,roles,rol`
+        );
+        if (u.length > 0) {
+          const r = u[0];
+          const roles: string[] = Array.isArray(r.roles) ? r.roles : (r.rol ? [r.rol] : []);
+          includeGcia = roles.includes("admin");
+        }
+      } catch (_) { includeGcia = false; }
+    }
+  }
 
   try {
     // 1) Unidades disponibles + catalogos Oversoft (modelos paginado, colores).
@@ -133,7 +161,7 @@ Deno.serve(async (req: Request) => {
 
       const fecha = u.facturafecha || u.fechaderecepcion || u.fechadepedido || null;
 
-      out.push({
+      const row: any = {
         serie: String(u.serie || "").trim(),
         modelo: price.modelo || nc, // nombre amigable (nombre_bt)
         nombreCorto: nc,
@@ -144,12 +172,13 @@ Deno.serve(async (req: Request) => {
         fecha_factura: fecha, // ISO; el cliente lo parsea a Date
         precio_lista,
         oferta_baratito,
-        gcia_actual,
         dto_baratito,
         oferta_vigente,
-        gcia_vigente,
         fuente_oferta,
-      });
+      };
+      // gcia solo para admin (ver bloque de credenciales arriba).
+      if (includeGcia) { row.gcia_actual = gcia_actual; row.gcia_vigente = gcia_vigente; }
+      out.push(row);
     }
 
     // Orden: por modelo, y dentro del modelo del mas viejo al mas nuevo (prioriza unidades antiguas).
@@ -164,6 +193,7 @@ Deno.serve(async (req: Request) => {
       ok: true,
       updatedAt: payload.updatedAt || null,
       mesUsado: payload.mesUsado || null,
+      gciaIncluida: includeGcia,
       count: out.length,
       fisico: out.filter((r) => !r.aRecibir).length,
       aRecibir: out.filter((r) => r.aRecibir).length,

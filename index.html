@@ -748,8 +748,14 @@ async function cargarStock() {
 
 // Stock EN VIVO desde Oversoft (Edge Function stock-disponible). Devuelve fisico libre + a recibir.
 async function cargarStockOversoft() {
+  // Mandamos credenciales del usuario logueado: la Edge devuelve la gcia SOLO si es admin.
+  // Vendedor/gerente reciben el stock sin ganancia (blindada server-side).
+  const creds = (currentUser && currentUser.usuario && currentUser.clave)
+    ? { usuario: currentUser.usuario, clave: currentUser.clave } : {};
   const res = await fetch(STOCK_EDGE_URL, {
-    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+    method: 'POST',
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify(creds)
   });
   if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text()));
   const data = await res.json();
