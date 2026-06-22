@@ -20,9 +20,9 @@
 // fuente unica de verdad) -> aca NO se reimplementa ninguna formula.
 //
 // GANANCIA BLINDADA: la gcia (gcia_actual/gcia_vigente) es dato sensible y SOLO se
-// devuelve si el request trae credenciales validas de un usuario ADMIN (POST con
-// {usuario, clave}, validadas server-side contra tasador_usuarios). Vendedor/gerente
-// y cualquier GET sin credenciales reciben el stock SIN gcia.
+// devuelve a los usuarios de GCIA_USUARIOS (hoy: solo fngonzalez), validados
+// server-side con {usuario, clave} (POST) contra tasador_usuarios. El resto
+// (otros admin incluidos), vendedor/gerente y cualquier GET reciben stock SIN gcia.
 //
 // Secrets requeridos: OVERSOFT_URL, OVERSOFT_KEY (replica solo-lectura).
 // SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY los inyecta el runtime.
@@ -32,6 +32,9 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
 };
+
+// Usuarios autorizados a ver la ganancia. Solo Fer; otros admin NO.
+const GCIA_USUARIOS = new Set(["fngonzalez"]);
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -82,14 +85,12 @@ Deno.serve(async (req: Request) => {
     const clave = String(body?.clave || "");
     if (usuario && clave) {
       try {
-        const u = await rest(
-          W, SUPA_KEY,
-          `/tasador_usuarios?usuario=eq.${encodeURIComponent(usuario)}&clave=eq.${encodeURIComponent(clave)}&activo=eq.true&select=usuario,roles,rol`
-        );
-        if (u.length > 0) {
-          const r = u[0];
-          const roles: string[] = Array.isArray(r.roles) ? r.roles : (r.rol ? [r.rol] : []);
-          includeGcia = roles.includes("admin");
+        if (GCIA_USUARIOS.has(usuario)) {
+          const u = await rest(
+            W, SUPA_KEY,
+            `/tasador_usuarios?usuario=eq.${encodeURIComponent(usuario)}&clave=eq.${encodeURIComponent(clave)}&activo=eq.true&select=usuario`
+          );
+          includeGcia = u.length > 0; // credenciales validas del usuario autorizado
         }
       } catch (_) { includeGcia = false; }
     }
