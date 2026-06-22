@@ -378,6 +378,9 @@ input, select, textarea { font-family: var(--font); }
 // ============ CONFIG ============
 const SUPABASE_URL = 'https://wjfglsafgaltusmbnccl.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndqZmdsc2FmZ2FsdHVzbWJuY2NsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MzM2OTksImV4cCI6MjA4OTAwOTY5OX0.OOwgyKDNQsbBaGDaL0OhJfc8eOsCClvvAPW0VFBKrOA';
+// Stock EN VIVO desde Oversoft (incluye unidades "a recibir"). Edge Function en wjfgl.
+// Fuente principal; si falla, cae al CSV espejo (STOCK_CSV) como fallback.
+const STOCK_EDGE_URL = SUPABASE_URL + '/functions/v1/stock-disponible';
 const STOCK_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=0&single=true&output=csv';
 const STOCK_LIM_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=1137307261&single=true&output=csv';
 // Reparto — modelos sin stock libre que vienen en camino. Tab "reparto" del espejo publico,
@@ -728,53 +731,92 @@ async function cargarStock() {
   cargarCompetencia();
   cargarVentasBt();
   try {
-    const [resStock, resLim] = await Promise.all([
-      fetch(STOCK_CSV).then(r => r.text()),
-      fetch(STOCK_LIM_CSV).then(r => r.text())
-    ]);
-    const rawStock = parseCSV(resStock);
-    const rawLim = parseCSV(resLim);
-
-    stockLimMap = {};
-    rawLim.forEach(r => {
-      const serie = (r.serie || '').trim();
-      if (!serie) return;
-      stockLimMap[serie] = {
-        dto_nuevo: parsePct(r.dto_nuevo),
-        gcia_resultante: parsePct(r.gcia_resultante),
-        oferta_final_fyf: parseMoney(r.oferta_final_fyf)
-      };
-    });
-
-    stockData = rawStock.map(r => {
-      const serie = (r.serie || '').trim();
-      const disponibilidad = (r.disponibilidad || '').trim();
-      const libre = disponibilidad === '#N/A';
-      const oferta_baratito = parseMoney(r.oferta_baratito);
-      const gcia_actual = parsePct(r.gcia_actual);
-      const precio_lista = parseMoney(r.precio_lista);
-      const fecha_factura_str = (r.fecha_factura || '').trim();
-      const fecha_factura = parseFechaAR(fecha_factura_str);
-      const lim = stockLimMap[serie];
-      const oferta_vigente = lim && !isNaN(lim.oferta_final_fyf) ? lim.oferta_final_fyf : oferta_baratito;
-      const gcia_vigente = lim && !isNaN(lim.gcia_resultante) ? lim.gcia_resultante : gcia_actual;
-      const fuente_oferta = lim ? 'stock_limitado' : 'baratito';
-      return { serie, modelo: (r.modelo || '').trim(), color: (r.color || '').trim(),
-        libre, oferta_baratito, gcia_actual, precio_lista, oferta_vigente, gcia_vigente, fuente_oferta,
-        fecha_factura, fecha_factura_str };
-    }).filter(r => r.serie && r.modelo);
-
-    const libres = stockData.filter(r => r.libre).length;
-    console.log(`[Stock] ${stockData.length} registros (${libres} libres). LimMap: ${Object.keys(stockLimMap).length} entradas.`);
-    if (libres === 0) showToast('Atención: no hay unidades disponibles en el stock.');
+    // Fuente principal: Oversoft EN VIVO via Edge Function (incluye unidades "a recibir").
+    await cargarStockOversoft();
   } catch(e) {
-    console.error('Error cargando stock:', e);
-    showToast('Error al cargar stock');
+    // Fallback: CSV espejo (solo stock fisico). Mejor algo que nada si la Edge esta caida.
+    console.error('[Stock] Edge Oversoft fallo, fallback a CSV espejo:', e);
+    showToast('Stock en vivo no disponible, usando respaldo');
+    try { await cargarStockCSV(); }
+    catch(e2) { console.error('Error cargando stock (fallback):', e2); showToast('Error al cargar stock'); }
   } finally {
     hideLoading();
   }
   // Reparto se carga aparte, no bloquea ni rompe si falla.
   cargarReparto();
+}
+
+// Stock EN VIVO desde Oversoft (Edge Function stock-disponible). Devuelve fisico libre + a recibir.
+async function cargarStockOversoft() {
+  const res = await fetch(STOCK_EDGE_URL, {
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text()));
+  const data = await res.json();
+  if (!data || data.ok === false) throw new Error(data && data.error ? data.error : 'respuesta invalida');
+
+  stockLimMap = {}; // sin uso en modo Oversoft (el precio especial ya viene resuelto en oferta_vigente)
+  stockData = (data.unidades || []).map(u => {
+    const fecha_factura = u.fecha_factura ? parseFechaAR(u.fecha_factura) : null;
+    return {
+      serie: u.serie, modelo: (u.modelo || '').trim(), nombreCorto: u.nombreCorto || null,
+      color: (u.color || '').trim(), libre: true, aRecibir: !!u.aRecibir,
+      oferta_baratito: Number(u.oferta_baratito) || 0,
+      gcia_actual: Number(u.gcia_actual) || 0,
+      precio_lista: Number(u.precio_lista) || 0,
+      oferta_vigente: Number(u.oferta_vigente) || 0,
+      gcia_vigente: Number(u.gcia_vigente) || 0,
+      fuente_oferta: u.fuente_oferta || 'baratito',
+      fecha_factura, fecha_factura_str: fmtFechaCorta(fecha_factura)
+    };
+  }).filter(r => r.serie && r.modelo);
+
+  const aRecibir = stockData.filter(r => r.aRecibir).length;
+  console.log(`[Stock] EN VIVO Oversoft: ${stockData.length} disponibles (${stockData.length - aRecibir} fisico, ${aRecibir} a recibir). Snapshot ${data.updatedAt || '?'}.`);
+  if (stockData.length === 0) showToast('Atención: no hay unidades disponibles en el stock.');
+}
+
+// Fallback CSV espejo (legacy). Solo stock fisico recibido; NO trae "a recibir".
+async function cargarStockCSV() {
+  const [resStock, resLim] = await Promise.all([
+    fetch(STOCK_CSV).then(r => r.text()),
+    fetch(STOCK_LIM_CSV).then(r => r.text())
+  ]);
+  const rawStock = parseCSV(resStock);
+  const rawLim = parseCSV(resLim);
+
+  stockLimMap = {};
+  rawLim.forEach(r => {
+    const serie = (r.serie || '').trim();
+    if (!serie) return;
+    stockLimMap[serie] = {
+      dto_nuevo: parsePct(r.dto_nuevo),
+      gcia_resultante: parsePct(r.gcia_resultante),
+      oferta_final_fyf: parseMoney(r.oferta_final_fyf)
+    };
+  });
+
+  stockData = rawStock.map(r => {
+    const serie = (r.serie || '').trim();
+    const disponibilidad = (r.disponibilidad || '').trim();
+    const libre = disponibilidad === '#N/A';
+    const oferta_baratito = parseMoney(r.oferta_baratito);
+    const gcia_actual = parsePct(r.gcia_actual);
+    const precio_lista = parseMoney(r.precio_lista);
+    const fecha_factura_str = (r.fecha_factura || '').trim();
+    const fecha_factura = parseFechaAR(fecha_factura_str);
+    const lim = stockLimMap[serie];
+    const oferta_vigente = lim && !isNaN(lim.oferta_final_fyf) ? lim.oferta_final_fyf : oferta_baratito;
+    const gcia_vigente = lim && !isNaN(lim.gcia_resultante) ? lim.gcia_resultante : gcia_actual;
+    const fuente_oferta = lim ? 'stock_limitado' : 'baratito';
+    return { serie, modelo: (r.modelo || '').trim(), color: (r.color || '').trim(),
+      libre, aRecibir: false, oferta_baratito, gcia_actual, precio_lista, oferta_vigente, gcia_vigente, fuente_oferta,
+      fecha_factura, fecha_factura_str };
+  }).filter(r => r.serie && r.modelo);
+
+  const libres = stockData.filter(r => r.libre).length;
+  console.log(`[Stock] CSV espejo (fallback): ${stockData.length} registros (${libres} libres). LimMap: ${Object.keys(stockLimMap).length} entradas.`);
+  if (libres === 0) showToast('Atención: no hay unidades disponibles en el stock.');
 }
 
 // Carga la tab "reparto" del espejo publico. Headers esperados: 'modelo', 'stock_actual'.
@@ -1243,12 +1285,12 @@ STEP_RENDERERS['colores'] = () => {
                   <label class="item ${checked ? 'selected' : ''}" style="${disabled ? 'opacity:.4; cursor:not-allowed' : ''}">
                     <input type="checkbox" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="toggleChasisParalelo(${idx}, '${escapeHtml(c.serie)}')">
                     <div class="info">
-                      <div class="title">${escapeHtml(c.color || '—')}</div>
-                      <div class="sub">${escapeHtml(c.serie)}${fechaTxt ? ' · Fact ' + fechaTxt : ''}</div>
+                      <div class="title">${escapeHtml(c.color || '—')}${c.aRecibir ? ' <span class="badge" style="background:#fbbf24; color:#78350f">A RECIBIR</span>' : ''}</div>
+                      <div class="sub">${escapeHtml(c.serie)}${fechaTxt ? (c.aRecibir ? ' · Pedido ' : ' · Fact ') + fechaTxt : ''}</div>
                     </div>
                     <div class="right">
                       ${fmtMoney(c.oferta_vigente)}
-                      ${c.fuente_oferta === 'stock_limitado' ? '<div><span class="badge">LIM</span></div>' : ''}
+                      ${c.fuente_oferta === 'stock_limitado' || c.fuente_oferta === 'unidad' ? '<div><span class="badge">' + (c.fuente_oferta === 'unidad' ? 'ESP' : 'LIM') + '</span></div>' : ''}
                     </div>
                   </label>
                 `;
@@ -2242,6 +2284,7 @@ function abrirDetalle(consultaId, editMode = false) {
           ${pedido ? '<strong>► </strong>' : ''}<strong>${escapeHtml(r.color || '—')}</strong>
           · <span class="muted">${escapeHtml(r.serie)}</span>
           ${r.fecha_factura_str ? `· <span class="muted">${escapeHtml(r.fecha_factura_str)}</span>` : ''}
+          ${r.aRecibir ? ' <span class="tag-badge" style="background:#fbbf24; color:#78350f">A RECIBIR</span>' : ''}
           ${pedido ? ' <span style="color:var(--orange); font-weight:700; font-size:11px">PEDIDO</span>' : ''}
         </div>`;
       }).join('') || '<div class="muted" style="font-size:12px; padding:6px 0">Sin stock libre actual.</div>';
