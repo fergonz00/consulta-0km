@@ -1839,6 +1839,24 @@ function calcularAnalisisUnidad(u) {
   };
 }
 
+// Analisis EN VIVO para el admin a partir de un item ya guardado. La gcia guardada en el item
+// la calculo el VENDEDOR, y a los vendedores la Edge les blinda la ganancia (vuelve 0), por eso
+// gcia_vigente_min quedo en 0 y gcia_resultante = -dto_extra. Para el admin recalculamos contra
+// stockData actual (que para el admin SI trae la ganancia real). Devuelve null si no hay datos.
+function analisisAdminVivo(it) {
+  if (!it || it.precio_pedido == null) return null;
+  const series = (it.chasis || []).map(ch => ch.serie).filter(Boolean);
+  const base = { modelo: it.modelo, precioPedido: Number(it.precio_pedido) };
+  // 1) por los chasis pedidos (si siguen en stock).
+  let a = calcularAnalisisUnidad({ ...base, esReparto: false, chasisSeleccionados: series });
+  // 2) fallback: cualquier chasis del modelo (la gcia es por-modelo) + precio_lista de bt.
+  if (!a || a.gcia_vigente_min == null) {
+    a = calcularAnalisisUnidad({ ...base, esReparto: true, chasisSeleccionados: [] });
+  }
+  if (!a || a.gcia_vigente_min == null) return null;
+  return a;
+}
+
 // ============ SUBMIT ============
 async function submitConsulta() {
   const f = formData;
@@ -2263,6 +2281,20 @@ function abrirDetalle(consultaId, editMode = false) {
         it = { ...it, modelo: canon };
       }
     }
+    // Admin: la gcia que importa es la de HOY. La guardada la calculo el vendedor con la ganancia
+    // blindada (0), asi que recalculamos el analisis en vivo desde stockData. Mantiene el precio
+    // pedido; oferta/dto/gcia pasan a reflejar el stock y la ganancia reales del momento.
+    if (showGcia && it.precio_pedido != null) {
+      const aLive = analisisAdminVivo(it);
+      if (aLive) {
+        it = { ...it,
+          oferta_vigente_min: aLive.oferta_vigente_min,
+          gcia_vigente_min: aLive.gcia_vigente_min,
+          precio_lista: aLive.precio_lista || it.precio_lista,
+          dto_extra_pedido: aLive.dto_extra_pedido,
+          gcia_resultante: aLive.gcia_resultante };
+      }
+    }
     const chasis = (it.chasis || []).map(ch =>
       `<div style="font-size:12px; padding:4px 0; border-bottom:1px dashed var(--vw-grey-2)">
         <strong>${escapeHtml(ch.color || '—')}</strong> · <span class="muted">${escapeHtml(ch.serie || '')}</span>
@@ -2539,9 +2571,14 @@ function onAdminPrecioMaxInput(consultaId, el) {
   if (!raw) { hint.textContent = ''; return; }
   const precio = parseInt(raw, 10);
   const it = c.items[0];
-  if (!it.precio_lista || it.precio_lista <= 0) { hint.textContent = ''; return; }
-  const dto = (it.oferta_vigente_min - precio) / it.precio_lista;
-  const gcia = (it.gcia_vigente_min || 0) - dto;
+  // Gcia/oferta de HOY (no la guardada por el vendedor con ganancia blindada). Ver analisisAdminVivo.
+  const aLive = analisisAdminVivo(it);
+  const oferta_vigente = aLive ? aLive.oferta_vigente_min : it.oferta_vigente_min;
+  const precio_lista = (aLive && aLive.precio_lista) ? aLive.precio_lista : it.precio_lista;
+  const gcia_vigente = aLive ? aLive.gcia_vigente_min : it.gcia_vigente_min;
+  if (!precio_lista || precio_lista <= 0) { hint.textContent = ''; return; }
+  const dto = (oferta_vigente - precio) / precio_lista;
+  const gcia = (gcia_vigente || 0) - dto;
   hint.innerHTML = `Con ${fmtMoney(precio)}: dto extra ${fmtPct(dto)} · <strong style="color:${gcia>=0?'var(--green)':'var(--red)'}">gcia ${fmtPct(gcia)}</strong>`;
 }
 
