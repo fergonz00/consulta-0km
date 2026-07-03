@@ -2391,8 +2391,7 @@ function abrirDetalle(consultaId, editMode = false) {
     // el panel Baratito de precios.
     let rotacionHtml = '';
     if (showGcia) {
-      const ncRot = (stockMismoModelo[0] && stockMismoModelo[0].nombreCorto)
-        || ((stockData.find(s => s.modelo === it.modelo) || {}).nombreCorto);
+      const ncRot = (((stockData || []).find(s => s.modelo === it.modelo)) || {}).nombreCorto;
       const rot = ncRot ? rotacionData[ncRot] : null;
       if (rot) {
         const MES_ABR = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
