@@ -471,6 +471,7 @@ let realUser = null; // user real (admin) cuando se está impersonando otro
 let usuariosList = [];
 let currentMode = null;
 let stockData = [];
+let rotacionData = {}; // nombreCorto -> {stock, ventasPorMes, diasVenta} — solo llega si el login es admin (gcia)
 let stockLimMap = {};
 // Modelos en reparto (sin stock libre actual). Map modelo -> { stock_actual }.
 // Si el modelo no figura en stockData con precio_lista, no podemos calcular analisis;
@@ -762,6 +763,7 @@ async function cargarStockOversoft() {
   if (!data || data.ok === false) throw new Error(data && data.error ? data.error : 'respuesta invalida');
 
   stockLimMap = {}; // sin uso en modo Oversoft (el precio especial ya viene resuelto en oferta_vigente)
+  rotacionData = data.rotacion || {}; // comparativos Baratito por modelo (solo admin)
   stockData = (data.unidades || []).map(u => {
     const fecha_factura = u.fecha_factura ? parseFechaAR(u.fecha_factura) : null;
     return {
@@ -2382,6 +2384,71 @@ function abrirDetalle(consultaId, editMode = false) {
           </div>`;
       }
     }
+    // Rotación del modelo (los comparativos del Baratito) — solo admin. Los datos
+    // vienen de la Edge (rotacionData, mismo snapshot del Motor que los precios):
+    // vendidos últimos 4 meses COMPLETOS, meses de stock (stock/(vend4/4)) y días
+    // en venderse (promedio real últimos 12 meses). Mismos criterios y colores que
+    // el panel Baratito de precios.
+    let rotacionHtml = '';
+    if (showGcia) {
+      const ncRot = (stockMismoModelo[0] && stockMismoModelo[0].nombreCorto)
+        || ((stockData.find(s => s.modelo === it.modelo) || {}).nombreCorto);
+      const rot = ncRot ? rotacionData[ncRot] : null;
+      if (rot) {
+        const MES_ABR = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+        const mesesKeys = [];
+        const _hoy = new Date();
+        for (let k = 4; k >= 1; k--) {
+          const x = new Date(_hoy.getFullYear(), _hoy.getMonth() - k, 1);
+          mesesKeys.push(x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0'));
+        }
+        const vpm = rot.ventasPorMes || {};
+        const vend4 = mesesKeys.reduce((a, mk) => a + (Number(vpm[mk]) || 0), 0);
+        const celdasMeses = mesesKeys.map(mk =>
+          `<div style="text-align:center"><div class="muted" style="font-size:10px">${MES_ABR[parseInt(mk.slice(5), 10) - 1]}</div><div style="font-weight:700">${Number(vpm[mk]) || 0}</div></div>`
+        ).join('');
+        // meses de stock: mismo criterio que Baratito (ritmo = vend4/4; ∞ si hay stock y 0 ventas)
+        const ritmo = vend4 / 4;
+        const stockM = Number(rot.stock) || 0;
+        let mesesTxt, mesesColor;
+        if (ritmo <= 0) { mesesTxt = stockM > 0 ? '∞' : '0 m'; mesesColor = stockM > 0 ? 'var(--red)' : 'var(--vw-grey-3)'; }
+        else {
+          const mm = stockM / ritmo;
+          mesesTxt = mm.toFixed(1).replace('.', ',') + ' m';
+          mesesColor = mm > 6 ? 'var(--red)' : (mm >= 3 ? '#d97706' : 'var(--green)');
+        }
+        // días en venderse (prom 12m + lentos), colores como Baratito: ≤30 verde / ≤60 ámbar / >60 rojo
+        const dv = rot.diasVenta || null;
+        let diasTxt = '—', diasColor = 'var(--vw-grey-3)', diasSub = 'sin ventas medidas';
+        if (dv && dv.diasProm != null) {
+          const dd = Math.round(dv.diasProm);
+          diasTxt = dd + ' d';
+          diasColor = dd > 60 ? 'var(--red)' : (dd > 30 ? '#d97706' : 'var(--green)');
+          diasSub = 'prom. sobre ' + (dv.n || 0) + ' venta' + ((dv.n || 0) === 1 ? '' : 's') + ' (12 m)'
+            + (dv.lentoN ? ` · ${dv.lentoN} lenta${dv.lentoN === 1 ? '' : 's'} (máx ${Math.round(dv.lentoMax || 0)} d)` : '');
+        }
+        const caja = (titulo, cuerpo) =>
+          `<div style="background:#fff; border:1px solid var(--vw-grey-2); border-radius:6px; padding:8px"><div class="muted" style="font-size:11px; margin-bottom:4px">${titulo}</div>${cuerpo}</div>`;
+        rotacionHtml = `
+          <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--vw-grey-2)">
+            <div style="font-size:13px; margin-bottom:6px">
+              <strong>🔄 Rotación del modelo</strong>
+              <span class="muted" style="font-size:11px">(mismos números que el Baratito)</span>
+            </div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px; font-size:12px">
+              ${caja('Vendidos · últ. 4 meses completos',
+                `<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:4px">${celdasMeses}</div>
+                 <div style="margin-top:4px; text-align:center"><strong>${vend4}</strong> <span class="muted">total</span></div>`)}
+              ${caja('Meses de stock',
+                `<div style="font-size:18px; font-weight:700; color:${mesesColor}">${mesesTxt}</div>
+                 <div class="muted" style="font-size:11px">${stockM} en stock · ritmo ${ritmo.toFixed(1).replace('.', ',')}/mes</div>`)}
+              ${caja('Días en venderse',
+                `<div style="font-size:18px; font-weight:700; color:${diasColor}">${diasTxt}</div>
+                 <div class="muted" style="font-size:11px">${diasSub}</div>`)}
+            </div>
+          </div>`;
+      }
+    }
     const repartoBadge = it.es_reparto
       ? ' <span style="background:#fbbf24; color:#78350f; padding:2px 7px; border-radius:8px; font-size:10px; font-weight:700; margin-left:6px">REPARTO</span>'
       : '';
@@ -2405,6 +2472,7 @@ function abrirDetalle(consultaId, editMode = false) {
         ${ventasMesHtml}
         ${analisisHtml}
         ${competenciaHtml}
+        ${rotacionHtml}
         ${stockHtml}
       </div>
     `;

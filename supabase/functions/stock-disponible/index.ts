@@ -190,6 +190,23 @@ Deno.serve(async (req: Request) => {
       return fa - fb;
     });
 
+    // Rotacion por modelo (los "comparativos" del Baratito: vendidos por mes,
+    // stock para meses-de-stock y dias en venderse). Sale del MISMO snapshot que
+    // los precios -> mismos numeros que el panel. Sensible: solo admin (gcia).
+    let rotacion: Record<string, any> | undefined;
+    if (includeGcia) {
+      rotacion = {};
+      for (const nc of new Set(out.map((r) => r.nombreCorto))) {
+        const p = priceByNc[nc as string];
+        if (!p) continue;
+        rotacion[nc as string] = {
+          stock: Number(p.stock) || 0,
+          ventasPorMes: p.ventasPorMes || {},
+          diasVenta: p.diasVenta || null,
+        };
+      }
+    }
+
     return json({
       ok: true,
       updatedAt: payload.updatedAt || null,
@@ -200,6 +217,7 @@ Deno.serve(async (req: Request) => {
       aRecibir: out.filter((r) => r.aRecibir).length,
       sinResolver: sinResolver.length,
       unidades: out,
+      ...(rotacion ? { rotacion } : {}),
     });
   } catch (e) {
     return json({ ok: false, error: String(e?.message || e) }, 500);
