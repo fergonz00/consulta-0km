@@ -2529,9 +2529,20 @@ function abrirDetalle(consultaId, editMode = false) {
             <div id="adminPrecioMaxHint" class="field-hint"></div>
           </div>
           <div style="flex:2; min-width:240px">
-            <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Comentario (opcional)</label>
-            <textarea id="adminObs" rows="3" placeholder="Ej: Acepto el precio pero con la unidad gris más vieja del stock"
-              style="width:100%; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:14px; font-family:inherit; resize:vertical">${escapeHtml(defaultObs)}</textarea>
+            <!-- Comentario COLAPSADO por defecto (pedido de Fer 3-jul: en el celu el
+                 textarea fijo achicaba el área scrolleable del detalle). Si se está
+                 editando una respuesta que YA tiene comentario, arranca abierto.
+                 El textarea queda siempre en el DOM (display:none) porque
+                 aceptar/rechazar/contraofertar leen #adminObs.value. -->
+            <button id="adminObsToggle" type="button" onclick="toggleAdminObs()"
+              style="display:${(defaultObs || '').trim() ? 'none' : 'inline-block'}; background:none; border:1px dashed var(--vw-grey-2); border-radius:8px; padding:8px 12px; font-size:13px; color:var(--vw-grey-4); cursor:pointer">💬 Comentario (opcional)</button>
+            <div id="adminObsWrap" style="display:${(defaultObs || '').trim() ? 'block' : 'none'}">
+              <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Comentario (opcional)
+                <a onclick="toggleAdminObs()" style="cursor:pointer; margin-left:6px; font-size:11px; color:var(--vw-blue)">ocultar</a>
+              </label>
+              <textarea id="adminObs" rows="3" placeholder="Ej: Acepto el precio pero con la unidad gris más vieja del stock"
+                style="width:100%; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:14px; font-family:inherit; resize:vertical">${escapeHtml(defaultObs)}</textarea>
+            </div>
           </div>
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:space-between; align-items:center">
@@ -2623,6 +2634,19 @@ function abrirDetalle(consultaId, editMode = false) {
   }
 }
 function closeModal() { document.getElementById('modalOverlay').classList.add('hidden'); }
+
+// Muestra/oculta el textarea de comentario del admin (colapsado por defecto para
+// ganar espacio vertical en el celular). El contenido nunca se pierde: solo se
+// togglea el display; #adminObs sigue en el DOM y las acciones leen su value.
+function toggleAdminObs() {
+  const wrap = document.getElementById('adminObsWrap');
+  const btn = document.getElementById('adminObsToggle');
+  if (!wrap || !btn) return;
+  const abrir = wrap.style.display === 'none';
+  wrap.style.display = abrir ? 'block' : 'none';
+  btn.style.display = abrir ? 'none' : 'inline-block';
+  if (abrir) { const ta = document.getElementById('adminObs'); if (ta) ta.focus(); }
+}
 
 function onAdminPrecioMaxInput(consultaId, el) {
   const raw = el.value.replace(/[^\d]/g, '');
