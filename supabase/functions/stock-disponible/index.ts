@@ -64,6 +64,15 @@ function ntrim(s: unknown): string {
   return t.replace(/[^a-z0-9]/g, "");
 }
 
+// Quita el token de model-year final (MY26 / MY27 / 2026) del codigodecompra.
+// Sirve para un fallback: cuando Oversoft tiene una unidad con un codigo de anio
+// NUEVO todavia no cargado en la tabla modelos (ej. "5URTT4 MY27" = Saveiro
+// Trendline), matcheamos contra su hermana de otro anio ("5URTT4 MY26"), que
+// resuelve al mismo modelo. Sin esto, la unidad se descartaba en silencio.
+function baseCode(code: string): string {
+  return String(code || "").replace(/\s+(my\d{2}|20\d{2}|\d{4})\s*$/i, "").trim();
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
 
@@ -118,13 +127,24 @@ Deno.serve(async (req: Request) => {
     const catP = rest(W, SUPA_KEY, "/catalogo_modelos?select=nombre_corto,nombre_bt&limit=2000");
     const snapP = rest(W, SUPA_KEY, "/baratito_snapshot?select=payload&id=eq.1&limit=1");
     const espP = rest(W, SUPA_KEY, "/portal_precios_unidad?select=serie,precio,dto,nota&activo=eq.true&limit=2000");
+    // Lista de precios VW: mapea codigo-base (sin anio) -> nombre de modelo. La terminal
+    // suele cargar aca los codigos nuevos ANTES que Oversoft actualice su catalogo, asi que
+    // es la red de seguridad para que ninguna unidad quede sin resolver. order desc => la
+    // lista mas nueva gana al deduplicar por codigo.
+    const listaP = rest(W, SUPA_KEY, "/precios_lista?select=codigo,modelo&order=lista_num.desc&limit=5000");
 
-    const [unidades, modelos, colores, cat, snapArr, especiales] =
-      await Promise.all([unidadesP, modelosP, coloresP, catP, snapP, espP]);
+    const [unidades, modelos, colores, cat, snapArr, especiales, listaPrecios] =
+      await Promise.all([unidadesP, modelosP, coloresP, catP, snapP, espP, listaP]);
 
     // 3) Mapas de resolucion.
     const descByCode: Record<string, string> = {};
-    for (const m of modelos) if (m.codigodecompra) descByCode[String(m.codigodecompra).trim()] = m.descripcionoperativa;
+    const descByBase: Record<string, string> = {}; // fallback por prefijo de codigo (sin anio)
+    for (const m of modelos) if (m.codigodecompra) {
+      const c = String(m.codigodecompra).trim();
+      descByCode[c] = m.descripcionoperativa;
+      const b = baseCode(c);
+      if (b) descByBase[b] = m.descripcionoperativa; // ultimo gana; hermanas ntrim al mismo modelo
+    }
     const colorById: Record<string, string> = {};
     for (const c of colores) colorById[String(c.colorid)] = String(c.descripcion || "").trim();
     const ncByNorm: Record<string, string> = {};
@@ -138,16 +158,41 @@ Deno.serve(async (req: Request) => {
     for (const s of modelosSnap) if (s.nombreCorto) priceByNc[s.nombreCorto] = s;
     const espBySerie: Record<string, any> = {};
     for (const e of especiales) if (e.serie) espBySerie[String(e.serie).trim()] = e;
+    // codigo-base -> nombre de modelo desde la lista de precios (primera aparicion = mas nueva).
+    const modelByListCode: Record<string, string> = {};
+    for (const p of listaPrecios) {
+      const b = baseCode(p.codigo);
+      if (b && p.modelo && !modelByListCode[b]) modelByListCode[b] = String(p.modelo).trim();
+    }
+
+    // Resuelve el codigo de una unidad al nombreCorto del snapshot recorriendo, en orden:
+    //   1) catalogo Oversoft por codigo exacto
+    //   2) catalogo Oversoft por codigo-base (hermana de otro anio)
+    //   3) lista de precios VW por codigo-base  <- cubre codigos nuevos que Oversoft no cargo
+    // Devuelve null solo si de verdad no hay forma de nombrar el modelo.
+    function resolveNc(code: string): string | null {
+      const desc = descByCode[code] || descByBase[baseCode(code)];
+      if (desc) {
+        const nc = ncByNorm[ntrim(desc)];
+        if (nc) return nc;
+      }
+      const lm = modelByListCode[baseCode(code)];
+      if (lm) {
+        if (priceByNc[lm]) return lm;        // el nombre de la lista ya es un nombreCorto del snapshot
+        const nc2 = ncByNorm[ntrim(lm)];     // o matchea via normalizacion
+        if (nc2) return nc2;
+      }
+      return null;
+    }
 
     // 4) Join por unidad.
     const out: any[] = [];
     const sinResolver: any[] = [];
     for (const u of unidades) {
       const code = String(u.modelo || "").trim();
-      const desc = descByCode[code];
-      const nc = desc ? ncByNorm[ntrim(desc)] : null;
+      const nc = resolveNc(code);
       const price = nc ? priceByNc[nc] : null;
-      if (!nc || !price) { sinResolver.push({ serie: u.serie, modelo: code, desc: desc || null }); continue; }
+      if (!nc || !price) { sinResolver.push({ serie: u.serie, modelo: code }); continue; }
 
       const oferta_baratito = Number(price.precioOferta) || 0;
       const gcia_actual = Number(price.gananciaPct) || 0;

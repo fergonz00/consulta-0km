@@ -465,6 +465,26 @@ const MODELOS_ORDEN = [
   'VW Amarok Black Style V6 AT 4X4 G2 PHG MY26',
 ];
 
+// Orden por gama/familia (Polo primero, Amarok ultimo) — IGUAL que la pagina de ofertas.
+// Robusto: matchea por substring del nombre, asi funciona aunque el nombre venga del
+// stock en vivo de Oversoft (nombres largos que NO coinciden exacto con MODELOS_ORDEN).
+const GAMA_ORDEN = ['polo','tera','virtus','nivus','t-cross','taos','vento','tiguan','saveiro','amarok'];
+function _gamaIdx(modelo) {
+  const s = (modelo || '').toLowerCase();
+  for (let i = 0; i < GAMA_ORDEN.length; i++) if (s.includes(GAMA_ORDEN[i])) return i;
+  return GAMA_ORDEN.length; // desconocidos al final
+}
+// Comparador canonico de modelos: 1ro por gama, 2do por posicion en MODELOS_ORDEN
+// (sub-orden por version dentro de la familia cuando el nombre matchea), 3ro alfabetico.
+function _cmpModelo(a, b) {
+  const ga = _gamaIdx(a), gb = _gamaIdx(b);
+  if (ga !== gb) return ga - gb;
+  const ia = MODELOS_ORDEN.indexOf(a), ib = MODELOS_ORDEN.indexOf(b);
+  const na = ia === -1 ? Infinity : ia, nb = ib === -1 ? Infinity : ib;
+  if (na !== nb) return na - nb;
+  return a.localeCompare(b);
+}
+
 // ============ STATE ============
 let currentUser = null;
 let realUser = null; // user real (admin) cuando se está impersonando otro
@@ -923,15 +943,7 @@ async function cargarVentasBt() {
 function getModelosLibres() {
   const set = new Set();
   stockData.forEach(r => { if (r.libre && r.modelo) set.add(r.modelo); });
-  const ordenIdx = (m) => {
-    const i = MODELOS_ORDEN.indexOf(m);
-    return i === -1 ? Infinity : i;
-  };
-  return Array.from(set).sort((a, b) => {
-    const ai = ordenIdx(a), bi = ordenIdx(b);
-    if (ai !== bi) return ai - bi;
-    return a.localeCompare(b);
-  });
+  return Array.from(set).sort(_cmpModelo);
 }
 // Normaliza el nombre del modelo para comparaciones: minusculas, sin "vw " prefix
 // ni sufijos de model year (" my26", " my25"), y colapsa espacios. Necesario porque
@@ -978,15 +990,7 @@ function getModelosDisponibles() {
     if (out.some(x => x.modelo === canon)) return;
     out.push({ modelo: canon, esReparto: true, cantLibres: 0 });
   });
-  const ordenIdx = (m) => {
-    const i = MODELOS_ORDEN.indexOf(m);
-    return i === -1 ? Infinity : i;
-  };
-  return out.sort((a, b) => {
-    const ai = ordenIdx(a.modelo), bi = ordenIdx(b.modelo);
-    if (ai !== bi) return ai - bi;
-    return a.modelo.localeCompare(b.modelo);
-  });
+  return out.sort((a, b) => _cmpModelo(a.modelo, b.modelo));
 }
 function getChasisLibresPorModelo(modelo) {
   // Ordenamos por fecha de factura ascendente (más vieja primero).
