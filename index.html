@@ -2467,6 +2467,52 @@ function abrirDetalle(consultaId, editMode = false) {
         <div><span class="muted">Dto extra pedido:</span> <strong>${fmtPct(it.dto_extra_pedido)}</strong></div>
         ${showGcia ? `<div><span class="muted">Gcia resultante:</span> <strong style="color:${(it.gcia_resultante||0) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPct(it.gcia_resultante)}</strong></div>` : ''}
       </div>`;
+    // Últimos precios autorizados de ESTE modelo (solo admin). Referencia para decidir:
+    // recorre todas las consultas ya resueltas del mismo modelo y toma el precio que se
+    // autorizó en cada una — aceptada → precio_pedido; rechazada/contraoferta → precio_max_admin.
+    // El margen se recalcula EN VIVO al precio autorizado con la ganancia real de hoy
+    // (analisisAdminVivo), porque la gcia guardada en el item la calculó el vendedor con la
+    // ganancia blindada (0) y no sirve. Ordenados por fecha de respuesta, los 3 más recientes.
+    let historialHtml = '';
+    if (showGcia) {
+      const canonCur = resolveModeloCanonico(it.modelo) || it.modelo;
+      const autorizados = [];
+      (adminConsultas || []).forEach(oc => {
+        if (oc.id === c.id) return; // no incluir la consulta abierta
+        if (!['aceptada', 'rechazada', 'contraoferta'].includes(oc.estado)) return;
+        (oc.items || []).forEach(oit => {
+          const canonH = resolveModeloCanonico(oit.modelo) || oit.modelo;
+          if (canonH !== canonCur) return;
+          const precioAut = oc.estado === 'aceptada' ? oit.precio_pedido : oc.precio_max_admin;
+          if (!precioAut) return;
+          autorizados.push({ precio: precioAut, fecha: oc.admin_respuesta_at || oc.created_at, estado: oc.estado });
+        });
+      });
+      autorizados.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+      const ultimos3 = autorizados.slice(0, 3);
+      if (ultimos3.length) {
+        const ESTADO_LBL = { aceptada: 'Aceptada', rechazada: 'Mejor precio', contraoferta: 'Contraoferta' };
+        const ESTADO_BG = { aceptada: '#dcfce7;color:#166534', rechazada: '#fee2e2;color:#991b1b', contraoferta: '#fef3c7;color:#92400e' };
+        const filas = ultimos3.map(h => {
+          const aut = analisisAdminVivo({ modelo: it.modelo, precio_pedido: h.precio, chasis: [] });
+          const margen = aut ? aut.gcia_resultante : null;
+          const mColor = margen == null ? 'var(--vw-grey-3)' : (margen >= 0 ? 'var(--green)' : 'var(--red)');
+          return `<div style="display:grid; grid-template-columns:auto 1fr auto; gap:10px; padding:6px 6px; border-bottom:1px dashed var(--vw-grey-2); font-size:12px; align-items:center">
+              <span class="muted" style="font-size:11px; white-space:nowrap">${fmtDate(h.fecha)}</span>
+              <span><strong>${fmtMoney(h.precio)}</strong> <span style="background:${ESTADO_BG[h.estado] || '#e5e7eb;color:#374151'}; padding:1px 6px; border-radius:6px; font-size:10px; font-weight:700">${ESTADO_LBL[h.estado] || h.estado}</span></span>
+              <span style="color:${mColor}; font-weight:700; text-align:right; white-space:nowrap">${margen == null ? '—' : fmtPct(margen)}</span>
+            </div>`;
+        }).join('');
+        historialHtml = `
+          <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--vw-grey-2)">
+            <div style="font-size:13px; margin-bottom:6px">
+              <strong>🧾 Últimos precios autorizados</strong>
+              <span class="muted" style="font-size:11px">(margen recalculado con la ganancia de hoy)</span>
+            </div>
+            ${filas}
+          </div>`;
+      }
+    }
     return `
       <div class="card" style="background:var(--vw-grey-1)">
         <h3 style="font-size:14px; margin-bottom:8px">Unidad ${i + 1}: ${escapeHtml(it.modelo)}${repartoBadge}</h3>
@@ -2474,6 +2520,7 @@ function abrirDetalle(consultaId, editMode = false) {
         ${noChasisMsg}
         ${ventasMesHtml}
         ${analisisHtml}
+        ${historialHtml}
         ${competenciaHtml}
         ${rotacionHtml}
         ${stockHtml}
