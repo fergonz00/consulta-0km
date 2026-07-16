@@ -492,6 +492,10 @@ let usuariosList = [];
 let currentMode = null;
 let stockData = [];
 let rotacionData = {}; // nombreCorto -> {stock, ventasPorMes, diasVenta} — solo llega si el login es admin (gcia)
+// modelo (nombre amigable) -> {total, disponibles:{total,colores}, pedidas:{total,colores}, nombreCorto}
+// Reparto VW (stock virtual): unidades ya asignadas por VW que todavia no entraron
+// a Oversoft. Para responder "¿puedo reponer este modelo?". Solo llega si es admin.
+let repartoStockData = {};
 let stockLimMap = {};
 // Modelos en reparto (sin stock libre actual). Map modelo -> { stock_actual }.
 // Si el modelo no figura en stockData con precio_lista, no podemos calcular analisis;
@@ -784,6 +788,7 @@ async function cargarStockOversoft() {
 
   stockLimMap = {}; // sin uso en modo Oversoft (el precio especial ya viene resuelto en oferta_vigente)
   rotacionData = data.rotacion || {}; // comparativos Baratito por modelo (solo admin)
+  repartoStockData = data.reparto || {}; // reparto VW por modelo/color (solo admin)
   stockData = (data.unidades || []).map(u => {
     const fecha_factura = u.fecha_factura ? parseFechaAR(u.fecha_factura) : null;
     return {
@@ -2342,6 +2347,36 @@ function abrirDetalle(consultaId, editMode = false) {
         </div>
       `;
     }
+    // Reparto VW (para reponer) — solo admin, abajo del stock. Muestra si VW ya
+    // asigno unidades de este modelo que todavia no entraron a Oversoft: cuantas
+    // y desglose por color, separando "disponibles para pedir" de "ya pedidas".
+    let repartoStockHtml = '';
+    if (showGcia) {
+      const ncCur = (((stockData || []).find(s => s.modelo === it.modelo)) || {}).nombreCorto || (resolveModeloCanonico(it.modelo) || null);
+      let rep = repartoStockData[it.modelo];
+      if (!rep) rep = Object.values(repartoStockData).find(x => (ncCur && x.nombreCorto === ncCur) || x.modelo === (resolveModeloCanonico(it.modelo) || it.modelo));
+      const chip = (obj) => Object.keys(obj.colores).sort().map(c =>
+        `<span style="display:inline-block; background:#fff; border:1px solid var(--vw-grey-2); border-radius:12px; padding:2px 8px; margin:2px 4px 2px 0; font-size:12px">${escapeHtml(c)}: <strong>${obj.colores[c]}</strong></span>`
+      ).join('');
+      if (rep && rep.total > 0) {
+        const disp = rep.disponibles || { total: 0, colores: {} };
+        const ped = rep.pedidas || { total: 0, colores: {} };
+        repartoStockHtml = `
+          <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--vw-grey-2)">
+            <div style="font-size:13px; margin-bottom:6px">
+              <strong>🚚 En reparto (para reponer):</strong> ${rep.total} ${rep.total === 1 ? 'unidad' : 'unidades'}
+              <span class="muted" style="font-size:11px">(asignadas por VW, todavía no en Oversoft)</span>
+            </div>
+            ${disp.total ? `<div style="font-size:12px; padding:3px 0"><strong style="color:var(--green)">Disponibles para pedir (${disp.total}):</strong><br>${chip(disp)}</div>` : ''}
+            ${ped.total ? `<div style="font-size:12px; padding:3px 0"><span class="muted">Ya pedidas / en camino (${ped.total}):</span><br>${chip(ped)}</div>` : ''}
+          </div>`;
+      } else {
+        repartoStockHtml = `
+          <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--vw-grey-2)">
+            <div style="font-size:13px"><strong>🚚 En reparto:</strong> <span class="muted">sin unidades de este modelo para reponer.</span></div>
+          </div>`;
+      }
+    }
     // Comparativa vs competencia (tu0km y espasaonline) — solo admin, solo si el modelo aparece en el sheet.
     let competenciaHtml = '';
     if (showGcia && competenciaMap[it.modelo]) {
@@ -2524,6 +2559,7 @@ function abrirDetalle(consultaId, editMode = false) {
         ${competenciaHtml}
         ${rotacionHtml}
         ${stockHtml}
+        ${repartoStockHtml}
       </div>
     `;
   }).join('');

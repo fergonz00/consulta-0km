@@ -73,6 +73,23 @@ function baseCode(code: string): string {
   return String(code || "").replace(/\s+(my\d{2}|20\d{2}|\d{4})\s*$/i, "").trim();
 }
 
+// Nombres de color VW (codigo -> nombre) como fallback cuando reparto_colores no
+// tiene el codigo. Portado de gestion-tga (REPARTO_COLORES_BASE). La DB pisa esto.
+const REPARTO_COLORES_BASE: Record<string, string> = {
+  "0Q0Q": "Blanco puro", "0Q2T": "Blanco Cristal / Negro Universal", "1B1B": "Beige Mojawe Metalizado",
+  "1B2T": "Beige Mojawe Metalizado / Negro Profundo efecto perla", "2R2R": "Gris Platino",
+  "2RA1": "Gris platino / negro", "2T2T": "Negro Profundo efecto perla", "3X3X": "Gris Salvia",
+  "3XA1": "Gris salvia techo negro", "5T5T": "Azul Egeo", "6K6K": "Rojo Sunset", "6U6U": "Blanco Marfil",
+  "6UA1": "Marfil / negro universal (bitono)", "7Z7Z": "Plata Sirius", "9711": "Gris Artico",
+  "9728": "Gris Artico", "A1A1": "Negro Universal", "B4A1": "Blanco Cristal / Negro Universal",
+  "B4B4": "Blanco Cristal", "C2A1": "Gris volcán / Negro Universal", "C2C2": "Gris Volcán", "D7": "Azul",
+  "D7A1": "Azul Turbo / Negro Universal", "D7D7": "Azul Turbo", "H7H7": "Azul Atlántico metalizado",
+  "I8A1": "Titanio techo negro", "I8I8": "Gris Titanio", "K22T": "Plata pirita techo negro",
+  "K2A1": "Plata Pirita / Negro", "K2K2": "Plata Pirita", "L0L0": "Rojo hypernova",
+  "L4A1": "Azul con techo negro", "L4L4": "Azul Malibu", "R4A1": "gris Alba", "R4R4": "gris alba",
+  "U1U1": "Azul Pacifico", "X3X3": "Gris Indy",
+};
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
 
@@ -185,6 +202,18 @@ Deno.serve(async (req: Request) => {
       return null;
     }
 
+    // Ajuste de gcia al pasar de la oferta del modelo a la de un chasis con precio
+    // especial. La gcia es LINEAL en la ventaNeta (costo/incentivos son fijos; IIBB,
+    // comisión y cheque son proporcionales a vn), así que partimos de la gcia que ya
+    // calculó el motor para el modelo (gcia_actual) y le sumamos solo el delta. Queda
+    // consistente con el modelo sin importar la tasa exacta de cheque del motor, y no
+    // depende de Apps Script. FYF se cancela en la resta de ofertas.
+    const _GCIA_TAXRATE = 0.0135 / 1.21 + 0.014 / 1.21 + 0.006; // porción lineal en vn (cheque 0,6%)
+    function gciaEnOferta(gciaModelo: number, lista: number, ofertaModelo: number, ofertaEsp: number): number {
+      if (!(lista > 0)) return gciaModelo;
+      return gciaModelo + ((ofertaEsp - ofertaModelo) * (1 - _GCIA_TAXRATE)) / lista;
+    }
+
     // 4) Join por unidad.
     const out: any[] = [];
     const sinResolver: any[] = [];
@@ -201,9 +230,14 @@ Deno.serve(async (req: Request) => {
 
       // precio especial por chasis (pisa la oferta del modelo)
       const esp = espBySerie[String(u.serie || "").trim()];
-      const oferta_vigente = esp && Number(esp.precio) > 0 ? Number(esp.precio) : oferta_baratito;
-      const fuente_oferta = esp && Number(esp.precio) > 0 ? "unidad" : "baratito";
-      const gcia_vigente = gcia_actual; // el motor no calcula gcia por chasis especial; usamos la del modelo
+      const tieneEsp = esp && Number(esp.precio) > 0;
+      const oferta_vigente = tieneEsp ? Number(esp.precio) : oferta_baratito;
+      const fuente_oferta = tieneEsp ? "unidad" : "baratito";
+      // Con precio especial ajustamos la gcia a esa oferta (delta lineal desde la del
+      // modelo). Antes se dejaba la del modelo tal cual y sobrestimaba el margen.
+      const gcia_vigente = tieneEsp
+        ? gciaEnOferta(gcia_actual, precio_lista, oferta_baratito, oferta_vigente)
+        : gcia_actual;
 
       const fecha = u.facturafecha || u.fechaderecepcion || u.fechadepedido || null;
 
@@ -252,6 +286,72 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // Reparto (stock virtual): unidades que VW ya nos asigno en el reparto del
+    // mes pero que TODAVIA no entraron a Oversoft (no son stock fisico ni "a
+    // recibir"). Sirve para responder "¿puedo reponer este modelo?" con cuantas
+    // y de que colores. Dato interno: SOLO admin (mismo blindaje que la gcia).
+    // Se agrupa por modelo -> {disponibles (sin comprar aun) / pedidas (comprado
+    // u ok)} -> color -> cantidad. Se excluyen las que ya figuran en Oversoft.
+    let reparto: Record<string, any> | undefined;
+    if (includeGcia) {
+      try {
+        const repRows = await rest(W, SUPA_KEY, "/reparto_vw?select=vin,descripcion,color_codigo,estado_compra,periodo&limit=8000");
+        if (repRows.length) {
+          // "Disponibles para pedir" = solo el reparto del periodo mas nuevo (la
+          // asignacion vigente de VW; la de meses pasados ya no se puede pedir).
+          // "Ya pedidas / en camino" (comprado u ok) = de cualquier periodo,
+          // mientras no hayan entrado a Oversoft todavia.
+          const perMax = repRows.reduce((m: string, r: any) => (String(r.periodo || "") > m ? String(r.periodo) : m), "");
+          const PEDIDA = new Set(["comprado", "ok"]);
+          const vigentes = repRows.filter((r: any) =>
+            String(r.periodo || "") === perMax || PEDIDA.has(String(r.estado_compra || "").toLowerCase()));
+
+          // Nombres de color (codigo VW -> nombre); DB pisa la base.
+          const coloresRep: Record<string, string> = {};
+          try {
+            for (const c of await rest(W, SUPA_KEY, "/reparto_colores?select=codigo,nombre&limit=2000")) {
+              if (c.codigo) coloresRep[String(c.codigo)] = String(c.nombre || "").trim();
+            }
+          } catch (_) { /* usamos solo la base */ }
+          const colorName = (cod: string) => coloresRep[cod] || REPARTO_COLORES_BASE[cod] || cod || "(sin color)";
+
+          // Excluir las que YA estan en Oversoft (por serie = ultimos 8 del VIN):
+          // esas ya las cuenta el stock fisico / a recibir.
+          const serieDe = (vin: string) => String(vin || "").toUpperCase().slice(-8);
+          const seriesRep = [...new Set(vigentes.map((r: any) => serieDe(r.vin)).filter(Boolean))];
+          const enOv = new Set<string>();
+          for (let i = 0; i < seriesRep.length; i += 60) {
+            const lote = seriesRep.slice(i, i + 60).map((s) => '"' + s + '"').join(",");
+            try {
+              for (const u of await rest(OV_URL!, OV_KEY!, `/unidades?select=serie&serie=in.(${encodeURIComponent(lote)})`)) {
+                enOv.add(String(u.serie || "").toUpperCase());
+              }
+            } catch (_) { /* si falla, no excluimos ese lote */ }
+          }
+
+          const rep: Record<string, any> = {};
+          for (const r of vigentes) {
+            const serie = serieDe(r.vin);
+            if (!serie || enOv.has(serie)) continue;          // ya entro a Oversoft -> stock real
+            const nc = ncByNorm[ntrim(r.descripcion)];
+            if (!nc) continue;                                // no matchea catalogo -> lo salteamos
+            const esPedida = PEDIDA.has(String(r.estado_compra || "").toLowerCase());
+            // pendiente/elegida solo cuenta como "disponible" si es del reparto vigente
+            if (!esPedida && String(r.periodo || "") !== perMax) continue;
+            const price = priceByNc[nc];
+            const friendly = price ? (price.modelo || nc) : nc;
+            if (!rep[friendly]) rep[friendly] = { modelo: friendly, nombreCorto: nc, total: 0, disponibles: { total: 0, colores: {} }, pedidas: { total: 0, colores: {} } };
+            const bucket = esPedida ? rep[friendly].pedidas : rep[friendly].disponibles;
+            const col = colorName(String(r.color_codigo || "").trim());
+            bucket.total++;
+            bucket.colores[col] = (bucket.colores[col] || 0) + 1;
+            rep[friendly].total++;
+          }
+          reparto = rep;
+        }
+      } catch (_) { /* reparto es opcional; nunca rompe el stock */ }
+    }
+
     return json({
       ok: true,
       updatedAt: payload.updatedAt || null,
@@ -263,6 +363,7 @@ Deno.serve(async (req: Request) => {
       sinResolver: sinResolver.length,
       unidades: out,
       ...(rotacion ? { rotacion } : {}),
+      ...(reparto ? { reparto } : {}),
     });
   } catch (e) {
     return json({ ok: false, error: String(e?.message || e) }, 500);
