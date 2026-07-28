@@ -116,6 +116,17 @@ Destinatarios:
 
 Configuración base en `consultas_0km_notif_config`. Reusa env vars del tasador (`WA_TASADOR_PHONE_ID`, `WA_TASADOR_TOKEN`, `SUPABASE_SERVICE_ROLE_KEY`).
 
+### Recordatorios de consultas SIN RESPONDER (28/07/2026)
+
+**`consulta_0km_sin_responder`** — si una consulta queda en `estado='pendiente'` más de **60 min**, se manda un recordatorio, y otro cada 60 min hasta un **tope de 5**. Corre 24/7. Aceptar / rechazar / contraofertar corta la cadena sola (la fila deja de matchear `estado='pendiente'`): **no hay que marcar nada**.
+
+- El motor es la Edge Function **`notify-sin-responder`**, que vive en el repo del **tasador** (`C:\proyectos\tasador-tga\supabase\functions\notify-sin-responder\`) porque barre las dos tablas (`tasaciones` + `consultas_0km`) del mismo proyecto Supabase. **pg_cron cada 10 min, jobid 5.** Doc completa en el `CLAUDE.md` del tasador, "Cambio 11".
+- **Destinatarios**: hereda la config de `consulta_0km_nueva` vía el map `CONFIG_EVENTO` de esta Edge Function. No hay fila propia en `consultas_0km_notif_config` — a propósito, para no mantener dos configs.
+- **Template**: todavía no tiene uno propio. `EVENT_TO_TEMPLATE` lo manda como `consulta_0km_nueva_v2` y el aviso va adentro de `{{1}}`: `⏰ SIN RESPONDER hace 2 h (aviso 3) — Juan Pérez`. Cuando se cree el template dedicado en la WABA `1183788370595856`, cambiar esa línea y redeployar.
+- **Agrupa por submit**: como cada unidad pedida es 1 consulta separada, el sweeper junta las del mismo vendedor creadas con <30 s de diferencia y manda **UN** recordatorio con todos los modelos (`Polo Track + Nivus Comfortline`), no N. Le pasa los `grupo_ids` en el body y esta función lee los items de todas para armar la variable de modelos.
+- **Ojo con el deploy**: esta función tiene **verify_jwt = ON**. Deployar **sin** `--no-verify-jwt` (al revés que las del tasador).
+- Columnas nuevas en `consultas_0km`: `recordatorios_enviados`, `ultimo_recordatorio_at`. Parámetros en la tabla `recordatorios_config` (fila `consulta_0km`): `activo`, `intervalo_min`, `max_recordatorios`, `desde`.
+
 ## Convenciones heredadas del tasador
 
 - Login NO hashea claves (deuda técnica conocida, NO arreglar acá sin avisar).

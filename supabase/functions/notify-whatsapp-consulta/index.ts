@@ -20,15 +20,27 @@ const CORS_HEADERS = {
 const EVENTOS_VALIDOS = new Set([
   "consulta_0km_nueva",
   "consulta_0km_respondida",
+  "consulta_0km_sin_responder",
 ]);
+
+// Eventos que heredan la config de destinatarios de OTRO evento. El recordatorio
+// de "sin responder" le llega a la misma gente que el aviso de consulta nueva,
+// sin mantener dos filas de config en paralelo.
+const CONFIG_EVENTO: Record<string, string> = {
+  "consulta_0km_sin_responder": "consulta_0km_nueva",
+};
 
 // Mapeo evento -> nombre del template en Meta. El evento es el identificador
 // interno (DB, frontend, notif_config), el template name es el que figura
 // aprobado en Meta. Util cuando hay que recrear un template con otro nombre
 // (ej: consulta_0km_nueva quedo bloqueada con cuerpo equivocado por 24hs).
+// `consulta_0km_sin_responder` todavia no tiene template propio: reusa el de la
+// consulta nueva y marca el recordatorio dentro de la variable {{1}}. Cuando
+// exista el template dedicado, cambiar esta linea y redeployar.
 const EVENT_TO_TEMPLATE: Record<string, string> = {
   "consulta_0km_nueva": "consulta_0km_nueva_v2",
   "consulta_0km_respondida": "consulta_0km_respondida",
+  "consulta_0km_sin_responder": "consulta_0km_nueva_v2",
 };
 
 Deno.serve(async (req: Request) => {
@@ -50,11 +62,18 @@ Deno.serve(async (req: Request) => {
   if (!consulta_id) return json({ error: "consulta_id requerido" }, 400);
   if (!evento || !EVENTOS_VALIDOS.has(evento)) return json({ error: "evento inválido" }, 400);
 
+  // Opcional: ids hermanas del mismo submit (el vendedor pidió N modelos y cada
+  // uno se guardó como consulta aparte). Sirve para que UN recordatorio nombre
+  // todos los modelos en vez de mandar N WhatsApps iguales. Lo arma el sweeper.
+  const grupoIds = Array.isArray(body?.grupo_ids)
+    ? body.grupo_ids.map((x: any) => Number(x)).filter((n: number) => Number.isSafeInteger(n))
+    : [];
+
   // 1) Traer config + consulta + items en paralelo
   let cfgArr: any[], conArr: any[], itemsArr: any[];
   try {
     [cfgArr, conArr, itemsArr] = await Promise.all([
-      sb(SUPABASE_URL, SERVICE_KEY, `consultas_0km_notif_config?evento=eq.${evento}&select=*`),
+      sb(SUPABASE_URL, SERVICE_KEY, `consultas_0km_notif_config?evento=eq.${CONFIG_EVENTO[evento] ?? evento}&select=*`),
       sb(SUPABASE_URL, SERVICE_KEY, `consultas_0km?id=eq.${consulta_id}&select=*`),
       sb(SUPABASE_URL, SERVICE_KEY, `consultas_0km_items?consulta_id=eq.${consulta_id}&order=orden.asc`),
     ]);
@@ -63,7 +82,7 @@ Deno.serve(async (req: Request) => {
   }
 
   if (!Array.isArray(cfgArr) || cfgArr.length === 0) {
-    return json({ error: `Sin config para evento ${evento}` }, 404);
+    return json({ error: `Sin config para evento ${CONFIG_EVENTO[evento] ?? evento}` }, 404);
   }
   if (!Array.isArray(conArr) || conArr.length === 0) {
     return json({ error: "Consulta no encontrada" }, 404);
@@ -116,8 +135,23 @@ Deno.serve(async (req: Request) => {
     return json({ enviados: 0, errores: [], info: "sin destinatarios válidos" });
   }
 
-  // 3) Variables del template según evento
-  const vars = buildVariables(evento, con, items);
+  // 3) Variables del template según evento.
+  // Si vino un grupo, los items del recordatorio salen de todas las consultas
+  // hermanas (así el mensaje dice "Polo + Nivus" y no sólo la primera).
+  let itemsParaVars = items;
+  if (evento === "consulta_0km_sin_responder" && grupoIds.length > 1) {
+    try {
+      const todos = await sb(
+        SUPABASE_URL,
+        SERVICE_KEY,
+        `consultas_0km_items?consulta_id=in.(${grupoIds.join(",")})&order=consulta_id.asc,orden.asc`,
+      );
+      if (Array.isArray(todos) && todos.length > 0) itemsParaVars = todos;
+    } catch (e) {
+      console.error("Error leyendo items del grupo:", e);
+    }
+  }
+  const vars = buildVariables(evento, con, itemsParaVars);
 
   // 4) Enviar a cada destinatario
   const enviados: any[] = [];
@@ -251,8 +285,38 @@ function fmtPct(n: any): string {
   return `${sign}${pct.toFixed(1)}%`;
 }
 
+// "1 h" / "3 h" / "1 d 2 h" — antiguedad legible desde un timestamp ISO.
+function antiguedad(iso?: string): string {
+  if (!iso) return "un rato";
+  const ms = Date.now() - Date.parse(iso);
+  if (!isFinite(ms) || ms < 0) return "un rato";
+  const horas = Math.floor(ms / 3600000);
+  if (horas < 1) return "menos de 1 h";
+  if (horas < 24) return `${horas} h`;
+  const dias = Math.floor(horas / 24);
+  const resto = horas % 24;
+  return resto ? `${dias} d ${resto} h` : `${dias} d`;
+}
+
 function buildVariables(evento: string, con: any, items: any[]): string[] {
   const id = String(con.id || "");
+  if (evento === "consulta_0km_sin_responder") {
+    // Recordatorio: reusa el template de consulta nueva (3 variables) y mete el
+    // aviso adelante del vendedor, que es como arranca el cuerpo del mensaje.
+    const vendedor = con.vendedor_nombre || con.vendedor_usuario || "—";
+    const modelosSet = new Set<string>();
+    for (const i of items) if (i.modelo) modelosSet.add(String(i.modelo));
+    const modelos = Array.from(modelosSet).join(" + ") || "—";
+    let dtoMax = -Infinity;
+    for (const it of items) {
+      const d = Number(it.dto_extra_pedido);
+      if (isFinite(d) && d > dtoMax) dtoMax = d;
+    }
+    const dtoStr = isFinite(dtoMax) ? fmtPct(dtoMax) : "—";
+    const marca = `⏰ SIN RESPONDER hace ${antiguedad(con.created_at)}` +
+      ` (aviso ${Number(con.recordatorios_enviados || 0) + 1})`;
+    return [`${marca} — ${vendedor}`, modelos, dtoStr];
+  }
   if (evento === "consulta_0km_nueva") {
     // Template: 3 variables = vendedor, modelo(s), dto extra pedido (peor caso)
     const vendedor = con.vendedor_nombre || con.vendedor_usuario || "—";
