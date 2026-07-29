@@ -33,8 +33,8 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
 };
 
-// Usuarios autorizados a ver la ganancia. Solo Fer; otros admin NO.
-const GCIA_USUARIOS = new Set(["fngonzalez"]);
+// Usuarios autorizados a ver la ganancia. Los demas admin (ej. mlubrano) NO.
+const GCIA_USUARIOS = new Set(["fngonzalez", "fgonzalez", "cgonzalez"]);
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
