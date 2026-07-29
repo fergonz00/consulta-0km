@@ -395,11 +395,11 @@ const COMPETENCIA_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSua
 const VENTAS_BT_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=332004614&single=true&output=csv';
 const FYF = 1110000;
 // Superadmin: god mode — alta/edicion/desactivar/entrar como otros + borrar consultas.
-// Solo fngonzalez.
-const SUPERADMINS_USUARIOS = ['fngonzalez'];
-// Reset de claves: superadmin + mlubrano. Permiso mas acotado, solo puede ver
+// Los tres duenios (Fer, el padre y Catalina).
+const SUPERADMINS_USUARIOS = ['fngonzalez', 'fgonzalez', 'cgonzalez'];
+// Reset de claves: superadmins + mlubrano. Permiso mas acotado, solo puede ver
 // la lista de usuarios y apretar "Reset clave".
-const RESET_CLAVES_USUARIOS = ['fngonzalez', 'mlubrano'];
+const RESET_CLAVES_USUARIOS = ['fngonzalez', 'fgonzalez', 'cgonzalez', 'mlubrano'];
 function _esSuperadmin() {
   const real = realUser || currentUser;
   return real && SUPERADMINS_USUARIOS.includes((real.usuario || '').toLowerCase());
