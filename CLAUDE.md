@@ -228,3 +228,20 @@ Solo en modo admin, abajo del análisis de cada unidad: bloque "📦 Stock actua
 ### ⏳ Pendiente / a futuro (sesión 2026-04-29)
 - **Probar end-to-end el reenvío del WA** al editar una respuesta desde Resueltas (no se verificó con un envío real al cierre de sesión).
 - **Modelos sin match exacto en competencia**: si el sheet maestro tiene variaciones de nombre (ej. "Polo Track" vs "VW Polo Track MSI MT G1 MY26"), no van a cruzar. Hoy hay match exacto. Si aparece el problema, implementar mapeo o normalización (toLowerCase + trim).
+
+## Sesión 2026-08-18 — Unidades EN REPARTO consultables por el vendedor
+
+**Problema**: los autos que VW ya nos asignó en el reparto pero que todavía no entraron a Oversoft no se podían consultar. El selector del wizard mostraba solo modelos con chasis libre en Oversoft + una lista de "modelos en reparto" sacada del CSV espejo (`REPARTO_CSV`, gid 978193397) filtrada a `stock_actual == 0`. Ese CSV ya no coincide con `reparto_vw`: ofrecía modelos que no están asignados (Amarok Comfortline TDI **MT** 4x2) y se comía los que sí (Vento GLI, porque el sheet le marcaba stock 2). El reparto en vivo ya existía en la Edge Function pero estaba dentro de `if (includeGcia)` → solo admin.
+
+**Solución**: `stock-disponible` ahora devuelve **`repartoUnidades`** a todos los roles — una fila por unidad con el mismo shape que `unidades` (serie = últimos 8 del VIN, color desde `reparto_colores`/`REPARTO_COLORES_BASE`, precio del snapshot del Motor Baratito), además del agregado `reparto` que ya usaba el bloque del admin. La **ganancia sigue blindada**: `gcia_actual`/`gcia_vigente` solo si `includeGcia`.
+
+En `index.html`, `cargarStockOversoft()` concatena esas filas a `stockData` con `enReparto: true` y `estadoReparto` (`a_pedir` | `pedida`). A partir de ahí **todo el resto funciona sin cambios**: el vendedor elige la unidad de reparto como si fuera un chasis de stock (color + serie), el análisis usa la oferta del Baratito y el `chasisSnapshot` guarda `enReparto`. Se distinguen con el badge **EN REPARTO** (violeta) vs **A RECIBIR** (ámbar, ya en Oversoft) — helpers `badgeChasis()` / `txtEstadoReparto()`.
+
+- El selector muestra el desglose: `Polo Track (8 + 7 en reparto)`, `Vento GLI (2 en reparto)`.
+- Los chasis de reparto no tienen fecha de factura → quedan al final del listado de colores (primero lo viejo del físico).
+- `es_reparto` del item ahora también se marca cuando todos los chasis elegidos son de reparto.
+- `u.esReparto` (unidad sin chasis) quedó como camino legacy: solo se activa en el **fallback CSV**, cuando la Edge está caída. Ahí también se corrigió el filtro: `stock > 0` en vez de `stock !== 0` (un stock negativo también es "sin stock").
+
+**Estado al cierre**: 68 unidades de Oversoft + 56 en reparto (21 modelos). Tres modelos sin ningún chasis físico pasaron a ser consultables: Vento GLI 350TSI DSG G2 (Gris Ártico, Gris Platino), Amarok Comfortline TDI AT 4x2 G2 (Blanco Puro, Plata Pirita) y Amarok Highline TDI AT 4x2 G2 (Plata Pirita).
+
+⏳ **Pendiente**: probar el circuito completo logueado como vendedor (se verificó la Edge en producción y las funciones del wizard contra los datos reales, pero no el submit end-to-end desde el navegador).
