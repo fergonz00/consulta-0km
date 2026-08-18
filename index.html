@@ -764,11 +764,12 @@ async function cargarStock() {
     showToast('Stock en vivo no disponible, usando respaldo');
     try { await cargarStockCSV(); }
     catch(e2) { console.error('Error cargando stock (fallback):', e2); showToast('Error al cargar stock'); }
+    // Solo en modo fallback: el reparto sale del CSV espejo (lista de modelos, sin
+    // colores ni chasis). Con la Edge viva el reparto viene en `repartoUnidades`.
+    cargarReparto();
   } finally {
     hideLoading();
   }
-  // Reparto se carga aparte, no bloquea ni rompe si falla.
-  cargarReparto();
 }
 
 // Stock EN VIVO desde Oversoft (Edge Function stock-disponible). Devuelve fisico libre + a recibir.
@@ -804,8 +805,29 @@ async function cargarStockOversoft() {
     };
   }).filter(r => r.serie && r.modelo);
 
+  // Unidades EN REPARTO (asignadas por VW, todavia no en Oversoft). Entran a stockData
+  // como un chasis mas para que el vendedor pueda elegirlas y pedir mejora de precio:
+  // tienen color asignado y precio del Baratito, igual que un auto en stock. Se
+  // distinguen con enReparto=true (badge en la UI) y no tienen fecha de factura.
+  repartoMap = {}; // el CSV espejo de reparto ya no manda cuando la Edge responde
+  const repUnidades = (data.repartoUnidades || []).map(u => ({
+    serie: u.serie, modelo: (u.modelo || '').trim(), nombreCorto: u.nombreCorto || null,
+    color: (u.color || '').trim(), libre: true, aRecibir: false,
+    enReparto: true, estadoReparto: u.estadoReparto || 'a_pedir',
+    oferta_baratito: Number(u.oferta_baratito) || 0,
+    gcia_actual: Number(u.gcia_actual) || 0,
+    precio_lista: Number(u.precio_lista) || 0,
+    oferta_vigente: Number(u.oferta_vigente) || 0,
+    gcia_vigente: Number(u.gcia_vigente) || 0,
+    fuente_oferta: u.fuente_oferta || 'baratito',
+    fecha_factura: null, fecha_factura_str: ''
+  })).filter(r => r.serie && r.modelo);
+  stockData = stockData.concat(repUnidades);
+
   const aRecibir = stockData.filter(r => r.aRecibir).length;
-  console.log(`[Stock] EN VIVO Oversoft: ${stockData.length} disponibles (${stockData.length - aRecibir} fisico, ${aRecibir} a recibir). Snapshot ${data.updatedAt || '?'}.`);
+  const enRep = repUnidades.length;
+  const fisico = stockData.length - aRecibir - enRep;
+  console.log(`[Stock] EN VIVO Oversoft: ${stockData.length} disponibles (${fisico} fisico, ${aRecibir} a recibir, ${enRep} en reparto). Snapshot ${data.updatedAt || '?'}.`);
   if (stockData.length === 0) showToast('Atención: no hay unidades disponibles en el stock.');
 }
 
@@ -871,7 +893,7 @@ async function cargarReparto() {
       const rawStock = (r.stock_actual || '').replace(/[^\d\-]/g, '');
       const stock = parseInt(rawStock || '0', 10);
       if (isNaN(stock)) return;
-      if (stock !== 0) return; // solo nos interesan los que tienen 0 unidades en stock
+      if (stock > 0) return; // solo los que no tienen stock libre (0 o negativo)
       map[modelo] = { stock_actual: stock };
     });
     repartoMap = map;
@@ -979,21 +1001,33 @@ function getModelosEnReparto() {
   Object.keys(repartoMap).forEach(m => set.add(resolveModeloCanonico(m) || m));
   return set;
 }
-// Modelos a mostrar en el selector del wizard: libres en stock + en reparto (stock 0).
-// Devuelve [{modelo, esReparto, cantLibres}] ordenado.
+// Modelos a mostrar en el selector del wizard: los que tienen algun chasis elegible,
+// sea fisico/a-recibir (Oversoft) o en reparto (asignado por VW, todavia no en Oversoft).
+// Devuelve [{modelo, cantLibres, cantReparto, soloReparto, esReparto}] ordenado.
+// `esReparto` = el modelo NO tiene ningun chasis concreto (solo pasa en el fallback CSV).
 function getModelosDisponibles() {
   const libres = new Set();
   stockData.forEach(r => { if (r.libre && r.modelo) libres.add(r.modelo); });
   const out = [];
-  // Modelos con stock libre (uno o mas chasis)
-  libres.forEach(m => out.push({ modelo: m, esReparto: false, cantLibres: getChasisLibresPorModelo(m).length }));
-  // Modelos en reparto (sin chasis libres). Resolvemos al nombre canonico para que
-  // todos los lookups (bt, competencia, stockData) matcheen.
+  // Modelos con chasis elegibles (stock fisico, a recibir o reparto)
+  libres.forEach(m => {
+    const chasis = getChasisLibresPorModelo(m);
+    const cantReparto = chasis.filter(c => c.enReparto).length;
+    out.push({
+      modelo: m, esReparto: false,
+      cantLibres: chasis.length - cantReparto,
+      cantReparto,
+      soloReparto: cantReparto > 0 && cantReparto === chasis.length
+    });
+  });
+  // Fallback CSV espejo: modelos en reparto de los que no conocemos los chasis.
+  // Resolvemos al nombre canonico para que todos los lookups (bt, competencia,
+  // stockData) matcheen.
   Object.keys(repartoMap).forEach(m => {
     const canon = resolveModeloCanonico(m) || m;
     if (libres.has(canon)) return;
     if (out.some(x => x.modelo === canon)) return;
-    out.push({ modelo: canon, esReparto: true, cantLibres: 0 });
+    out.push({ modelo: canon, esReparto: true, cantLibres: 0, cantReparto: 0, soloReparto: true });
   });
   return out.sort((a, b) => _cmpModelo(a.modelo, b.modelo));
 }
@@ -1008,6 +1042,18 @@ function getChasisLibresPorModelo(modelo) {
       if (b.fecha_factura) return 1;
       return 0;
     });
+}
+// Badge de estado de un chasis: A RECIBIR (pedido a VW, ya en Oversoft) o EN REPARTO
+// (asignado por VW, todavia no cargado en Oversoft). Devuelve '' para stock fisico.
+function badgeChasis(c) {
+  if (!c) return '';
+  if (c.enReparto) return ' <span class="badge" style="background:#c7d2fe; color:#312e81">EN REPARTO</span>';
+  if (c.aRecibir) return ' <span class="badge" style="background:#fbbf24; color:#78350f">A RECIBIR</span>';
+  return '';
+}
+// Texto corto del estado de una unidad de reparto.
+function txtEstadoReparto(c) {
+  return (c && c.estadoReparto === 'pedida') ? 'Pedida a VW' : 'Asignada por VW';
 }
 // Precio de lista por modelo, util para items en reparto que no tienen chasis seleccionado.
 // Prioriza stockData (cualquier registro, libre o no) y cae a preciosListaBtMap (tab "bt"
@@ -1242,9 +1288,9 @@ STEP_RENDERERS['cantidad-unidades'] = () => ({
 // ----- Modelos en paralelo (1 select por unidad) -----
 STEP_RENDERERS['modelos'] = () => {
   const modelos = getModelosDisponibles();
-  const cantReparto = modelos.filter(m => m.esReparto).length;
-  const hint = cantReparto > 0
-    ? `${modelos.length} modelos disponibles (cantidad libre entre paréntesis; "reparto" = sin stock libre pero próximo a llegar).`
+  const conReparto = modelos.filter(m => m.esReparto || m.cantReparto > 0).length;
+  const hint = conReparto > 0
+    ? `${modelos.length} modelos disponibles (entre paréntesis los chasis; "reparto" = asignados por VW, todavía no en el concesionario).`
     : `${modelos.length} modelos con stock disponible. (cantidad libre entre paréntesis)`;
   const allOk = formData.unidades.every(u => u.modelo);
   return {
@@ -1257,7 +1303,10 @@ STEP_RENDERERS['modelos'] = () => {
           <select onchange="setUnidadModelo(${idx}, this.value)">
             <option value="">— Elegir modelo —</option>
             ${modelos.map(m => {
-              const etq = m.esReparto ? 'reparto' : m.cantLibres;
+              const etq = m.esReparto ? 'reparto'
+                : (m.cantReparto > 0
+                    ? (m.cantLibres > 0 ? `${m.cantLibres} + ${m.cantReparto} en reparto` : `${m.cantReparto} en reparto`)
+                    : m.cantLibres);
               const selected = u.modelo === m.modelo ? 'selected' : '';
               return `<option value="${escapeHtml(m.modelo)}" ${selected}>${escapeHtml(m.modelo)} (${etq})</option>`;
             }).join('')}
@@ -1279,7 +1328,7 @@ STEP_RENDERERS['colores'] = () => {
   return {
     body: `
       <h2>Elegí los colores</h2>
-      <p class="step-hint">Hasta 3 chasis por unidad. Tocá para seleccionar.</p>
+      <p class="step-hint">Hasta 3 chasis por unidad. Tocá para seleccionar. Los marcados <strong>EN REPARTO</strong> no están todavía en el concesionario: VW ya nos los asignó con ese color y se pueden vender igual.</p>
       ${formData.unidades.map((u, idx) => {
         if (u.esReparto) {
           return `
@@ -1302,8 +1351,8 @@ STEP_RENDERERS['colores'] = () => {
                   <label class="item ${checked ? 'selected' : ''}" style="${disabled ? 'opacity:.4; cursor:not-allowed' : ''}">
                     <input type="checkbox" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="toggleChasisParalelo(${idx}, '${escapeHtml(c.serie)}')">
                     <div class="info">
-                      <div class="title">${escapeHtml(c.color || '—')}${c.aRecibir ? ' <span class="badge" style="background:#fbbf24; color:#78350f">A RECIBIR</span>' : ''}</div>
-                      <div class="sub">${escapeHtml(c.serie)}${fechaTxt ? (c.aRecibir ? ' · Pedido ' : ' · Fact ') + fechaTxt : ''}</div>
+                      <div class="title">${escapeHtml(c.color || '—')}${badgeChasis(c)}</div>
+                      <div class="sub">${escapeHtml(c.serie)}${c.enReparto ? ' · ' + txtEstadoReparto(c) : (fechaTxt ? (c.aRecibir ? ' · Pedido ' : ' · Fact ') + fechaTxt : '')}</div>
                     </div>
                     <div class="right">
                       ${fmtMoney(c.oferta_vigente)}
@@ -1623,12 +1672,16 @@ STEP_RENDERERS['resumen'] = () => {
   const cliente = f.tipoCliente === 'particular' ? `${f.cliNombre} ${f.cliApellido}` : f.reventaNombre;
   const unidadesHtml = f.unidades.map((u, idx) => {
     const a = calcularAnalisisUnidad(u);
+    const chasisSel = u.chasisSeleccionados.map(s => stockData.find(r => r.serie === s)).filter(Boolean);
     const colores = u.chasisSeleccionados.map(s => {
       const c = stockData.find(r => r.serie === s);
       return c ? c.color : s;
     }).join(' / ');
-    const repartoBadge = u.esReparto
-      ? ' <span class="badge" style="background:#fbbf24; color:#78350f; margin-left:6px">REPARTO</span>'
+    // "REPARTO" en el resumen = ningun chasis elegido esta fisicamente (o el modelo
+    // entero venia solo del fallback CSV, sin chasis).
+    const soloReparto = u.esReparto || (chasisSel.length > 0 && chasisSel.every(c => c.enReparto));
+    const repartoBadge = soloReparto
+      ? ' <span class="badge" style="background:#c7d2fe; color:#312e81; margin-left:6px">EN REPARTO</span>'
       : '';
     const coloresRow = u.esReparto
       ? `<p class="muted" style="margin:6px 0">Sin chasis — viene en reparto.</p>`
@@ -1845,7 +1898,9 @@ function calcularAnalisisUnidad(u) {
       serie: c.serie, color: c.color,
       oferta_vigente: c.oferta_vigente, gcia_vigente: c.gcia_vigente,
       fuente_oferta: c.fuente_oferta,
-      fecha_factura: c.fecha_factura_str || null
+      fecha_factura: c.fecha_factura_str || null,
+      enReparto: !!c.enReparto,
+      estadoReparto: c.estadoReparto || null
     }))
   };
 }
@@ -1953,7 +2008,10 @@ async function submitConsulta() {
         precio_pedido: u.precioPedido,
         dto_extra_pedido: a ? a.dto_extra_pedido : null,
         gcia_resultante: a ? a.gcia_resultante : null,
-        es_reparto: !!u.esReparto
+        // es_reparto = el auto pedido no esta fisicamente: o el modelo entero venia
+        // solo por reparto (fallback CSV), o todos los chasis elegidos son de reparto.
+        es_reparto: !!u.esReparto ||
+          !!(a && a.chasisSnapshot.length > 0 && a.chasisSnapshot.every(ch => ch.enReparto))
       };
       await sbFetch('consultas_0km_items', { method: 'POST', body: JSON.stringify([item]) });
     }
@@ -2309,6 +2367,7 @@ function abrirDetalle(consultaId, editMode = false) {
     const chasis = (it.chasis || []).map(ch =>
       `<div style="font-size:12px; padding:4px 0; border-bottom:1px dashed var(--vw-grey-2)">
         <strong>${escapeHtml(ch.color || '—')}</strong> · <span class="muted">${escapeHtml(ch.serie || '')}</span>
+        ${ch.enReparto ? ' <span class="tag-badge" style="background:#c7d2fe; color:#312e81">EN REPARTO</span>' : ''}
         ${ch.fecha_factura ? `· <span class="muted">Fact ${escapeHtml(ch.fecha_factura)}</span>` : ''}
         · ${fmtMoney(ch.oferta_vigente)}${ch.fuente_oferta === 'stock_limitado' ? ' <span class="tag-badge lim">LIM</span>' : ''}
       </div>`
@@ -2333,6 +2392,7 @@ function abrirDetalle(consultaId, editMode = false) {
           ${pedido ? '<strong>► </strong>' : ''}<strong>${escapeHtml(r.color || '—')}</strong>
           · <span class="muted">${escapeHtml(r.serie)}</span>
           ${r.fecha_factura_str ? `· <span class="muted">${escapeHtml(r.fecha_factura_str)}</span>` : ''}
+          ${r.enReparto ? ' <span class="tag-badge" style="background:#c7d2fe; color:#312e81">EN REPARTO</span>' : ''}
           ${r.aRecibir ? ' <span class="tag-badge" style="background:#fbbf24; color:#78350f">A RECIBIR</span>' : ''}
           ${pedido ? ' <span style="color:var(--orange); font-weight:700; font-size:11px">PEDIDO</span>' : ''}
         </div>`;
@@ -2340,7 +2400,7 @@ function abrirDetalle(consultaId, editMode = false) {
       stockHtml = `
         <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--vw-grey-2)">
           <div style="font-size:13px; margin-bottom:6px">
-            <strong>📦 Stock actual del modelo:</strong> ${stockMismoModelo.length} chasis libre${stockMismoModelo.length === 1 ? '' : 's'}
+            <strong>📦 Stock actual del modelo:</strong> ${stockMismoModelo.filter(r => !r.enReparto).length} chasis libre${stockMismoModelo.filter(r => !r.enReparto).length === 1 ? '' : 's'}${stockMismoModelo.some(r => r.enReparto) ? ` + ${stockMismoModelo.filter(r => r.enReparto).length} en reparto` : ''}
             <span class="muted" style="font-size:11px">(de más viejo a más nuevo)</span>
           </div>
           ${filas}
@@ -2490,7 +2550,9 @@ function abrirDetalle(consultaId, editMode = false) {
     const repartoBadge = it.es_reparto
       ? ' <span style="background:#fbbf24; color:#78350f; padding:2px 7px; border-radius:8px; font-size:10px; font-weight:700; margin-left:6px">REPARTO</span>'
       : '';
-    const noChasisMsg = it.es_reparto
+    // Solo para items viejos de reparto (sin chasis). Los nuevos si traen chasis:
+    // la unidad de reparto se elige con serie y color, igual que una de stock.
+    const noChasisMsg = (it.es_reparto && !(it.chasis || []).length)
       ? `<div class="muted" style="font-size:12px; padding:6px 0">Sin chasis en stock libre — la unidad viene en reparto.</div>`
       : '';
     // El analisis se calcula igual para reparto y stock (oferta_vigente y gcia salen de cualquier

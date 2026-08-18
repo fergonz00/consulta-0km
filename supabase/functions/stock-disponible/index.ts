@@ -19,6 +19,11 @@
 // El precio y la ganancia salen del snapshot del Motor Baratito (lo calcula gestion-tga,
 // fuente unica de verdad) -> aca NO se reimplementa ninguna formula.
 //
+// Ademas del stock de Oversoft devuelve `repartoUnidades`: las unidades que VW ya nos
+// asigno en el reparto (reparto_vw) y todavia NO entraron a Oversoft. El vendedor las
+// elige como si fueran chasis, para poder pedir mejora de precio sobre un auto que no
+// esta fisicamente pero que ya tiene color asignado y precio puesto en el Baratito.
+//
 // GANANCIA BLINDADA: la gcia (gcia_actual/gcia_vigente) es dato sensible y SOLO se
 // devuelve a los usuarios de GCIA_USUARIOS (hoy: solo fngonzalez), validados
 // server-side con {usuario, clave} (POST) contra tasador_usuarios. El resto
@@ -71,6 +76,13 @@ function ntrim(s: unknown): string {
 // resuelve al mismo modelo. Sin esto, la unidad se descartaba en silencio.
 function baseCode(code: string): string {
   return String(code || "").replace(/\s+(my\d{2}|20\d{2}|\d{4})\s*$/i, "").trim();
+}
+
+// ntrim para descripciones que NO vienen de Oversoft (compras/reparto): pueden
+// traer el model-year con 4 digitos pegado al final ("... V6 AT 4x4 G2 MY2026"),
+// que ntrim no saca porque no hay borde de palabra entre "my" y "2026".
+function ntrimDesc(d: unknown): string {
+  return ntrim(String(d || "").replace(/\s+MY\s*\d{2,4}\s*$/i, ""));
 }
 
 // Nombres de color VW (codigo -> nombre) como fallback cuando reparto_colores no
@@ -149,18 +161,40 @@ Deno.serve(async (req: Request) => {
     // es la red de seguridad para que ninguna unidad quede sin resolver. order desc => la
     // lista mas nueva gana al deduplicar por codigo.
     const listaP = rest(W, SUPA_KEY, "/precios_lista?select=codigo,modelo&order=lista_num.desc&limit=5000");
+    // Descripcion REAL por chasis: unica forma de nombrar una unidad cuyo codigo
+    // MY es nuevo Y cuyo codigo base es ambiguo (CH24K3 = Nivus Highline/Outfit,
+    // AGDD8A = Amarok Extreme/Hero/Black Style, DF14D3 = Tera High/Outfit...).
+    // compras_vw = lo facturado por VW (carga de Valeria); reparto_vw = lo asignado.
+    const repDescP = rest(W, SUPA_KEY, "/reparto_vw?select=vin,descripcion&limit=5000").catch(() => []);
+    const comprasP = rest(W, SUPA_KEY, "/compras_vw?select=serie,modelo_valeria&limit=5000").catch(() => []);
 
-    const [unidades, modelos, colores, cat, snapArr, especiales, listaPrecios] =
-      await Promise.all([unidadesP, modelosP, coloresP, catP, snapP, espP, listaP]);
+    const [unidades, modelos, colores, cat, snapArr, especiales, listaPrecios, repDesc, compras] =
+      await Promise.all([unidadesP, modelosP, coloresP, catP, snapP, espP, listaP, repDescP, comprasP]);
 
     // 3) Mapas de resolucion.
     const descByCode: Record<string, string> = {};
-    const descByBase: Record<string, string> = {}; // fallback por prefijo de codigo (sin anio)
+    // Fallback por prefijo de codigo (sin anio). SOLO si todas las hermanas de ese
+    // base son el mismo producto: hay bases compartidos por trims distintos
+    // ("CH24K3 MY26" = Nivus Highline y "CH24K3 PAR MY26" = Nivus Outfit). Ahi
+    // "ultimo gana" colgaba la unidad del trim equivocado -> null = ambiguo.
+    const descByBase: Record<string, string | null> = {};
     for (const m of modelos) if (m.codigodecompra) {
       const c = String(m.codigodecompra).trim();
       descByCode[c] = m.descripcionoperativa;
       const b = baseCode(c);
-      if (b) descByBase[b] = m.descripcionoperativa; // ultimo gana; hermanas ntrim al mismo modelo
+      if (!b) continue;
+      if (!(b in descByBase)) descByBase[b] = m.descripcionoperativa;
+      else if (ntrim(descByBase[b]) !== ntrim(m.descripcionoperativa)) descByBase[b] = null;
+    }
+    // serie (8) -> descripcion real de esa unidad.
+    const descByChasis: Record<string, string> = {};
+    for (const r of repDesc) {
+      const s = String(r.vin || "").trim().toUpperCase().slice(-8);
+      if (s && r.descripcion) descByChasis[s] = String(r.descripcion);
+    }
+    for (const r of compras) { // compras pisa a reparto: es lo facturado
+      const s = String(r.serie || "").trim().toUpperCase();
+      if (s && r.modelo_valeria) descByChasis[s] = String(r.modelo_valeria);
     }
     const colorById: Record<string, string> = {};
     for (const c of colores) colorById[String(c.colorid)] = String(c.descripcion || "").trim();
@@ -176,21 +210,36 @@ Deno.serve(async (req: Request) => {
     const espBySerie: Record<string, any> = {};
     for (const e of especiales) if (e.serie) espBySerie[String(e.serie).trim()] = e;
     // codigo-base -> nombre de modelo desde la lista de precios (primera aparicion = mas nueva).
-    const modelByListCode: Record<string, string> = {};
+    // Igual que descByBase: si la lista tiene el mismo codigo para dos trims
+    // (Highline y Outfit comparten CH24K3), el base no alcanza -> ambiguo.
+    const modelByListCode: Record<string, string | null> = {};
     for (const p of listaPrecios) {
       const b = baseCode(p.codigo);
-      if (b && p.modelo && !modelByListCode[b]) modelByListCode[b] = String(p.modelo).trim();
+      if (!b || !p.modelo) continue;
+      const nombre = String(p.modelo).trim();
+      if (!(b in modelByListCode)) modelByListCode[b] = nombre;
+      else if (modelByListCode[b] && ntrim(modelByListCode[b]) !== ntrim(nombre)) modelByListCode[b] = null;
     }
 
     // Resuelve el codigo de una unidad al nombreCorto del snapshot recorriendo, en orden:
     //   1) catalogo Oversoft por codigo exacto
-    //   2) catalogo Oversoft por codigo-base (hermana de otro anio)
-    //   3) lista de precios VW por codigo-base  <- cubre codigos nuevos que Oversoft no cargo
-    // Devuelve null solo si de verdad no hay forma de nombrar el modelo.
-    function resolveNc(code: string): string | null {
-      const desc = descByCode[code] || descByBase[baseCode(code)];
-      if (desc) {
-        const nc = ncByNorm[ntrim(desc)];
+    //   2) descripcion real de ESE chasis (factura VW / reparto)  <- desambigua los
+    //      bases compartidos, que son justo los que el codigo no puede resolver
+    //   3) catalogo Oversoft por codigo-base (hermana de otro anio), si es unico
+    //   4) lista de precios VW por codigo-base, si es unico  <- codigos que Oversoft no cargo
+    // Devuelve null solo si de verdad no hay forma de nombrar el modelo (y nunca
+    // adivina entre dos trims: colgarla del equivocado le cambia el precio al vendedor).
+    function resolveNc(code: string, serie?: string): string | null {
+      const nc0 = descByCode[code] ? ncByNorm[ntrim(descByCode[code])] : null;
+      if (nc0) return nc0;
+      const dch = serie ? descByChasis[String(serie).trim().toUpperCase()] : null;
+      if (dch) {
+        const nc = ncByNorm[ntrimDesc(dch)];
+        if (nc) return nc;
+      }
+      const dBase = descByBase[baseCode(code)];
+      if (dBase) {
+        const nc = ncByNorm[ntrim(dBase)];
         if (nc) return nc;
       }
       const lm = modelByListCode[baseCode(code)];
@@ -219,7 +268,7 @@ Deno.serve(async (req: Request) => {
     const sinResolver: any[] = [];
     for (const u of unidades) {
       const code = String(u.modelo || "").trim();
-      const nc = resolveNc(code);
+      const nc = resolveNc(code, String(u.serie || "").trim());
       const price = nc ? priceByNc[nc] : null;
       if (!nc || !price) { sinResolver.push({ serie: u.serie, modelo: code }); continue; }
 
@@ -288,12 +337,23 @@ Deno.serve(async (req: Request) => {
 
     // Reparto (stock virtual): unidades que VW ya nos asigno en el reparto del
     // mes pero que TODAVIA no entraron a Oversoft (no son stock fisico ni "a
-    // recibir"). Sirve para responder "¿puedo reponer este modelo?" con cuantas
-    // y de que colores. Dato interno: SOLO admin (mismo blindaje que la gcia).
-    // Se agrupa por modelo -> {disponibles (sin comprar aun) / pedidas (comprado
-    // u ok)} -> color -> cantidad. Se excluyen las que ya figuran en Oversoft.
+    // recibir"). Se excluyen las que ya figuran en Oversoft.
+    //
+    // Se devuelve en DOS formas:
+    //   - `reparto`      : agregado modelo -> {disponibles / pedidas} -> color -> cantidad.
+    //                      Responde "¿puedo reponer este modelo?" (bloque del admin).
+    //   - `repartoUnidades`: una fila POR UNIDAD, con el mismo shape que `unidades`.
+    //                      El vendedor las elige como si fueran chasis de stock para
+    //                      pedir mejora de precio (mismo criterio que Baratito, que
+    //                      publica precio de modelos con stock fisico 0).
+    //
+    // Desde 2026-08 va para TODOS los roles (antes era solo admin): sin esto el
+    // vendedor no podia consultar un auto que no esta fisicamente pero que si esta
+    // asignado y con precio puesto (ej. Vento GLI, Amarok TDI AT 4x2). La ganancia
+    // sigue blindada: solo se adjunta si includeGcia.
     let reparto: Record<string, any> | undefined;
-    if (includeGcia) {
+    const repartoUnidades: any[] = [];
+    {
       try {
         const repRows = await rest(W, SUPA_KEY, "/reparto_vw?select=vin,descripcion,color_codigo,estado_compra,periodo&limit=8000");
         if (repRows.length) {
@@ -330,9 +390,12 @@ Deno.serve(async (req: Request) => {
           }
 
           const rep: Record<string, any> = {};
+          const vistas = new Set<string>();                   // una fila por serie (un VIN puede repetirse entre periodos)
           for (const r of vigentes) {
             const serie = serieDe(r.vin);
             if (!serie || enOv.has(serie)) continue;          // ya entro a Oversoft -> stock real
+            if (vistas.has(serie)) continue;
+            vistas.add(serie);
             const nc = ncByNorm[ntrim(r.descripcion)];
             if (!nc) continue;                                // no matchea catalogo -> lo salteamos
             const esPedida = PEDIDA.has(String(r.estado_compra || "").toLowerCase());
@@ -346,7 +409,48 @@ Deno.serve(async (req: Request) => {
             bucket.total++;
             bucket.colores[col] = (bucket.colores[col] || 0) + 1;
             rep[friendly].total++;
+
+            // Fila por unidad para el selector del vendedor. Sin precio del motor no
+            // se puede analizar la consulta -> la dejamos solo en el agregado.
+            if (!price) continue;
+            const oferta_baratito = Number(price.precioOferta) || 0;
+            const gcia_actual = Number(price.gananciaPct) || 0;
+            const precio_lista = Number(price.lista) || 0;
+            const dto_baratito = Number(price.dtoTG) || 0;
+            // Precio especial por chasis: raro en reparto (la unidad todavia no existe
+            // en el panel), pero si esta cargado tiene que ganar igual que en stock.
+            const espR = espBySerie[serie];
+            const tieneEspR = espR && Number(espR.precio) > 0;
+            const oferta_vigenteR = tieneEspR ? Number(espR.precio) : oferta_baratito;
+            const rowR: any = {
+              serie,
+              modelo: friendly,
+              nombreCorto: nc,
+              familia: price.familia || null,
+              color: col,
+              libre: true,
+              aRecibir: false,
+              enReparto: true,
+              // "pedida" = ya comprada a VW / en camino; "a_pedir" = asignada y todavia
+              // se puede pedir. Las dos son vendibles, cambia solo el cartel.
+              estadoReparto: esPedida ? "pedida" : "a_pedir",
+              fecha_factura: null,
+              precio_lista,
+              oferta_baratito,
+              dto_baratito,
+              oferta_vigente: oferta_vigenteR,
+              fuente_oferta: tieneEspR ? "unidad" : "baratito",
+            };
+            if (includeGcia) {
+              rowR.gcia_actual = gcia_actual;
+              rowR.gcia_vigente = tieneEspR
+                ? gciaEnOferta(gcia_actual, precio_lista, oferta_baratito, oferta_vigenteR)
+                : gcia_actual;
+            }
+            repartoUnidades.push(rowR);
           }
+          repartoUnidades.sort((a, b) =>
+            a.modelo !== b.modelo ? a.modelo.localeCompare(b.modelo) : a.color.localeCompare(b.color));
           reparto = rep;
         }
       } catch (_) { /* reparto es opcional; nunca rompe el stock */ }
@@ -361,7 +465,9 @@ Deno.serve(async (req: Request) => {
       fisico: out.filter((r) => !r.aRecibir).length,
       aRecibir: out.filter((r) => r.aRecibir).length,
       sinResolver: sinResolver.length,
+      enReparto: repartoUnidades.length,
       unidades: out,
+      repartoUnidades,
       ...(rotacion ? { rotacion } : {}),
       ...(reparto ? { reparto } : {}),
     });
