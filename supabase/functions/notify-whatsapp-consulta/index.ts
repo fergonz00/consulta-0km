@@ -17,6 +17,9 @@
 
 const META_API_URL = "https://graph.facebook.com/v25.0";
 const META_LANGUAGE = "es_AR";
+// WABA "Tito Gonzalez | Tasador" — la unica donde vive el numero real. Un
+// template creado en otra WABA NO se puede usar (error 132001). Ver CLAUDE.md.
+const WABA_ID_DEFAULT = "1183788370595856";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -56,18 +59,41 @@ const CONFIG_EVENTO: Record<string, string> = {
 // `consulta_0km_sin_responder` todavia no tiene template propio: reusa el de la
 // consulta nueva y marca el recordatorio dentro de la variable {{1}}. Cuando
 // exista el template dedicado, cambiar esta linea y redeployar.
-// Los eventos de USADOS todavia no tienen template propio en Meta: reusan los
-// del 0km (misma cantidad de variables) y se distinguen con el marcador
-// "USADO" al principio de {{1}}, igual que hace el recordatorio de sin
-// responder. Cuando existan `consulta_usado_nueva` / `consulta_usado_respondida`
-// aprobados en la WABA 1183788370595856, cambiar estas dos lineas y redeployar.
+// Los usados YA tienen sus propios templates (creados el 19/08/2026 con
+// {"accion":"crear_templates_usado"}). Un evento que apunta a un template con
+// su MISMO nombre esta usando el propio; si apunta a uno del 0km, es un
+// fallback provisorio mientras Meta lo aprueba. `usaTemplatePropio()` lee eso y
+// decide si hace falta meter el marcador "USADO" adentro de {{1}} — asi, el dia
+// que se cambia una linea de este map, el texto se acomoda solo.
 const EVENT_TO_TEMPLATE: Record<string, string> = {
   "consulta_0km_nueva": "consulta_0km_nueva_v2",
   "consulta_0km_respondida": "consulta_0km_respondida",
   "consulta_0km_sin_responder": "consulta_0km_nueva_v2",
+  "consulta_usado_nueva": "consulta_usado_nueva",
+  "consulta_usado_respondida": "consulta_usado_respondida",
+  "consulta_usado_sin_responder": "consulta_usado_sin_responder",
+};
+
+const usaTemplatePropio = (evento: string) => (EVENT_TO_TEMPLATE[evento] ?? evento) === evento;
+
+// Respaldo por evento: si Meta rechaza el template propio porque todavia no lo
+// aprobo (o lo pausa mas adelante), se reintenta UNA vez con este, que es el
+// del 0km y esta aprobado hace meses. Sin esto, un template en PENDING = aviso
+// perdido en silencio. Los del 0km no tienen respaldo: son el respaldo.
+const TEMPLATE_FALLBACK: Record<string, string> = {
   "consulta_usado_nueva": "consulta_0km_nueva_v2",
   "consulta_usado_respondida": "consulta_0km_respondida",
   "consulta_usado_sin_responder": "consulta_0km_nueva_v2",
+};
+
+// Codigos de Meta que significan "el problema es el template, no el numero".
+// 132000 = cantidad de parametros no coincide · 132001 = no existe en ese
+// idioma/WABA · 132005 = texto traducido no coincide · 132007 = formato.
+const ERRORES_TEMPLATE = new Set([132000, 132001, 132005, 132007]);
+const esErrorDeTemplate = (err: any) => {
+  const code = Number(err?.code);
+  const sub = Number(err?.error_subcode);
+  return ERRORES_TEMPLATE.has(code) || ERRORES_TEMPLATE.has(sub);
 };
 
 Deno.serve(async (req: Request) => {
@@ -84,6 +110,19 @@ Deno.serve(async (req: Request) => {
 
   let body: any;
   try { body = await req.json(); } catch { return json({ error: "JSON inválido" }, 400); }
+
+  // Acciones de mantenimiento de templates. Viven aca porque el token de Meta
+  // solo existe como secret de Supabase: no se puede crear un template desde
+  // afuera sin exponerlo.
+  //   {"accion":"listar_templates"}        -> que hay en la WABA y en que estado
+  //   {"accion":"crear_templates_usado"}   -> da de alta los 3 de usados (saltea
+  //                                           los que ya existen)
+  if (body?.accion === "listar_templates") {
+    return json(await listarTemplates(WA_TOKEN));
+  }
+  if (body?.accion === "crear_templates_usado") {
+    return json(await crearTemplatesUsado(WA_TOKEN));
+  }
 
   const { consulta_id, evento } = body || {};
   if (!consulta_id) return json({ error: "consulta_id requerido" }, 400);
@@ -183,38 +222,60 @@ Deno.serve(async (req: Request) => {
       console.error("Error leyendo items del grupo:", e);
     }
   }
-  const vars = buildVariables(evento, con, itemsParaVars);
+  // Dos juegos de variables: el del template propio y el del respaldo (que
+  // necesita el marcador "USADO" adentro del texto, porque el cuerpo del
+  // template del 0km no lo dice).
+  const vars = buildVariables(evento, con, itemsParaVars, usaTemplatePropio(evento));
+  const varsFallback = TEMPLATE_FALLBACK[evento]
+    ? buildVariables(evento, con, itemsParaVars, false)
+    : vars;
 
   // 4) Enviar a cada destinatario
   const enviados: any[] = [];
   const errores: any[] = [];
 
+  const armarPayload = (to: string, template: string, v: string[]) => ({
+    messaging_product: "whatsapp",
+    to,
+    type: "template",
+    template: {
+      name: template,
+      language: { code: META_LANGUAGE },
+      components: v.length > 0
+        ? [{ type: "body", parameters: v.map((x: string) => ({ type: "text", text: String(x || "") })) }]
+        : [],
+    },
+  });
+
+  const postMeta = async (payload: any) => {
+    const res = await fetch(`${META_API_URL}/${WA_PHONE_ID}/messages`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return { ok: res.ok, json: await res.json() };
+  };
+
   for (const u of destinatarios) {
     const telE164 = String(u.telefono_wa).replace(/^\+/, "").replace(/\s|-/g, "");
-    const components = vars.length > 0
-      ? [{ type: "body", parameters: vars.map((v: string) => ({ type: "text", text: String(v || "") })) }]
-      : [];
-    const payload = {
-      messaging_product: "whatsapp",
-      to: telE164,
-      type: "template",
-      template: {
-        name: EVENT_TO_TEMPLATE[evento] ?? evento,
-        language: { code: META_LANGUAGE },
-        components,
-      },
-    };
+    let payload = armarPayload(telE164, EVENT_TO_TEMPLATE[evento] ?? evento, vars);
 
     try {
-      const metaRes = await fetch(`${META_API_URL}/${WA_PHONE_ID}/messages`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${WA_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-      const metaJson = await metaRes.json();
+      let r = await postMeta(payload);
+      let metaOk = r.ok;
+      let metaJson = r.json;
+
+      // Respaldo: el template propio todavia no esta aprobado (o Meta lo pauso)
+      // => se reintenta con el del 0km para que el aviso no se pierda.
+      const fallback = TEMPLATE_FALLBACK[evento];
+      if (!metaOk && fallback && esErrorDeTemplate(metaJson?.error)) {
+        console.warn(`[${evento}] template propio rechazado, uso respaldo ${fallback}:`, metaJson?.error?.message);
+        payload = armarPayload(telE164, fallback, varsFallback);
+        r = await postMeta(payload);
+        metaOk = r.ok;
+        metaJson = r.json;
+      }
+      const metaRes = { ok: metaOk };
 
       if (metaRes.ok && metaJson.messages && metaJson.messages[0]) {
         await log(SUPABASE_URL, SERVICE_KEY, {
@@ -258,6 +319,80 @@ Deno.serve(async (req: Request) => {
 
   return json({ enviados: enviados.length, errores });
 });
+
+// ---------- Templates de Meta ----------
+
+const WABA_ID = () => Deno.env.get("WA_TASADOR_WABA_ID") ?? WABA_ID_DEFAULT;
+
+async function listarTemplates(token: string) {
+  const res = await fetch(
+    `${META_API_URL}/${WABA_ID()}/message_templates?fields=name,language,status,category&limit=200`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  const j = await res.json();
+  return {
+    templates: (j?.data ?? []).map((t: any) => ({
+      name: t.name, language: t.language, status: t.status, category: t.category,
+    })),
+    error: j?.error,
+  };
+}
+
+// Los 3 templates propios de las consultas de usados. Mismas cantidades de
+// variables que los del 0km que venian reusandose, asi el switch es solo
+// cambiar EVENT_TO_TEMPLATE (no hay que tocar buildVariables).
+const TEMPLATES_USADO = [
+  {
+    name: "consulta_usado_nueva",
+    header: "Consulta de precio de un usado",
+    // OJO: Meta rechaza cuerpos que empiezan o terminan con una variable
+    // (error_subcode 2388299). Siempre texto en los dos extremos.
+    body: "Entró una consulta de precio de un usado. La pide {{1}} por {{2}}, con una rebaja del {{3}} sobre el precio publicado. Entrá al portal para aceptar, rechazar o contraofertar.",
+    example: ["José Castro", "VOLKSWAGEN GOL TREND 1.6 2015 (OMG291) · pide $12.500.000", "-7.4%"],
+  },
+  {
+    name: "consulta_usado_respondida",
+    header: "Respuesta a la consulta del usado",
+    body: "Se respondió la consulta del usado {{1}} de {{2}}. Estado: {{3}}. Precio autorizado: {{4}}. Está en el portal con el detalle.",
+    example: ["VOLKSWAGEN GOL TREND 1.6 2015 (OMG291)", "José Castro", "Contraoferta (revisá el comentario en el portal)", "$12.800.000"],
+  },
+  {
+    name: "consulta_usado_sin_responder",
+    header: "Consulta de usado sin responder",
+    body: "Sigue sin responderse la consulta de {{1}}: {{2}} (rebaja del {{3}}). Entrá al portal para cerrarla.",
+    example: ["SIN RESPONDER hace 2 h (aviso 3) — José Castro", "VOLKSWAGEN GOL TREND 1.6 2015 (OMG291) · pide $12.500.000", "-7.4%"],
+  },
+];
+
+async function crearTemplatesUsado(token: string) {
+  const existentes = new Set(
+    ((await listarTemplates(token)).templates || []).map((t: any) => t.name),
+  );
+  const resultados: any[] = [];
+  for (const t of TEMPLATES_USADO) {
+    if (existentes.has(t.name)) {
+      resultados.push({ name: t.name, status: "ya existía" });
+      continue;
+    }
+    const res = await fetch(`${META_API_URL}/${WABA_ID()}/message_templates`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: t.name,
+        language: META_LANGUAGE,
+        category: "UTILITY",
+        components: [
+          { type: "HEADER", format: "TEXT", text: t.header },
+          { type: "BODY", text: t.body, example: { body_text: [t.example] } },
+          { type: "FOOTER", text: "Aviso automático · Tito Gonzalez" },
+        ],
+      }),
+    });
+    const j = await res.json();
+    resultados.push({ name: t.name, http: res.status, respuesta: j });
+  }
+  return { resultados };
+}
 
 // ---------- Helpers ----------
 
@@ -337,23 +472,32 @@ function unidadUsado(con: any): string {
   return pat ? `${base} (${pat})` : base;
 }
 
-function buildVariables(evento: string, con: any, items: any[]): string[] {
+// `propio` = true si el mensaje va con el template propio del evento (cuyo
+// encabezado ya aclara que es un usado); false si va con el del 0km como
+// respaldo, y ahi hay que meter el marcador "USADO" dentro del texto.
+function buildVariables(evento: string, con: any, items: any[], propio = true): string[] {
   const id = String(con.id || "");
 
   // ---- USADOS ----
-  // Reusan los templates del 0km, con el marcador "USADO" al principio de la
-  // primera variable para que se distinga de un vistazo en el celular.
+  // Con el template propio, el encabezado ya dice que es un usado. Si todavia
+  // estamos cayendo al template del 0km (fallback mientras Meta aprueba), se
+  // antepone "USADO" adentro de {{1}} para que no se lea como una consulta de
+  // 0km. Ver `usaTemplatePropio`.
   if (evento === "consulta_usado_nueva" || evento === "consulta_usado_sin_responder") {
     const vendedor = con.vendedor_nombre || con.vendedor_usuario || "—";
-    const marca = evento === "consulta_usado_sin_responder"
-      ? `USADO SIN RESPONDER hace ${antiguedad(con.created_at)} (aviso ${Number(con.recordatorios_enviados || 0) + 1})`
-      : "USADO";
+    let quien = propio ? vendedor : `USADO — ${vendedor}`;
+    if (evento === "consulta_usado_sin_responder") {
+      // El recordatorio SIEMPRE lleva la marca de cuanto hace y que numero de
+      // aviso es: es lo que hace que escale solo sin contar nada a mano.
+      const marca = `SIN RESPONDER hace ${antiguedad(con.created_at)} (aviso ${Number(con.recordatorios_enviados || 0) + 1})`;
+      quien = `${propio ? "" : "USADO "}${marca} — ${vendedor}`;
+    }
     // El "descuento" de un usado es sobre el precio publicado, no sobre una
     // lista: (publicado - pedido) / publicado.
     const pub = Number(con.precio_publicado) || 0;
     const ped = Number(con.precio_pedido) || 0;
     const rebaja = pub > 0 && ped > 0 ? fmtPct((pub - ped) / pub) : "—";
-    return [`${marca} — ${vendedor}`, `${unidadUsado(con)} · pide ${fmtMoney(ped)}`, rebaja];
+    return [quien, `${unidadUsado(con)} · pide ${fmtMoney(ped)}`, rebaja];
   }
   if (evento === "consulta_usado_respondida") {
     const vendedor = con.vendedor_nombre || con.vendedor_usuario || "—";
@@ -367,7 +511,8 @@ function buildVariables(evento: string, con: any, items: any[]): string[] {
     } else if (con.precio_max_admin) {
       monto = fmtMoney(con.precio_max_admin);
     }
-    return [`USADO — ${unidadUsado(con)}`, vendedor, estado, monto];
+    const unidad = propio ? unidadUsado(con) : `USADO — ${unidadUsado(con)}`;
+    return [unidad, vendedor, estado, monto];
   }
 
   // ---- 0KM ----

@@ -153,9 +153,31 @@ El costo y el margen **nunca** se guardan en `consultas_usados` ni viajan al bro
 - **`notify-whatsapp-consulta`**: eventos `consulta_usado_nueva` / `consulta_usado_respondida` leyendo la tabla nueva (sin items: un usado es una unidad). Config propia en `consultas_0km_notif_config`, clonada de la del 0km → **hereda los mismos destinatarios** (Fer + gerentes).
 - **`index.html`**: wizard de 5 pasos (unidad → precio → cliente → observaciones → resumen; +1 si es gerente), lista propia, y detalle del admin con ganancia + historial.
 
-**⚠️ Templates de Meta: falta crear los propios.** Hoy los eventos de usados **reusan los templates del 0km** (`consulta_0km_nueva_v2` y `consulta_0km_respondida`, misma cantidad de variables) y se distinguen con el marcador **`USADO`** al principio de `{{1}}` — mismo truco que ya usa el recordatorio de "sin responder". Funciona y se entiende, pero el resto del cuerpo habla de 0km. Cuando existan `consulta_usado_nueva` / `consulta_usado_respondida` aprobados en la WABA `1183788370595856`, cambiar las dos líneas de `EVENT_TO_TEMPLATE` y redeployar.
+### Templates de Meta propios (✅ 19/08/2026)
 
-**⏳ Pendiente**: los recordatorios de "sin responder" **todavía no barren `consultas_usados`**. El evento `consulta_usado_sin_responder` ya existe en la Edge Function y las columnas `recordatorios_enviados` / `ultimo_recordatorio_at` ya están en la tabla, pero falta agregar la fuente en `notify-sin-responder` (repo del tasador) y su fila en `recordatorios_config`.
+Los tres están creados y **APPROVED** en la WABA `1183788370595856`: `consulta_usado_nueva` (3 vars), `consulta_usado_respondida` (4 vars) y `consulta_usado_sin_responder` (3 vars).
+
+Se crean/listan **desde la propia Edge Function**, porque el token de Meta solo existe como secret de Supabase:
+```
+POST /functions/v1/notify-whatsapp-consulta  {"accion":"crear_templates_usado"}   # saltea los que ya existen
+POST /functions/v1/notify-whatsapp-consulta  {"accion":"listar_templates"}        # nombre + estado de todos
+```
+
+**Gotcha de Meta**: rechaza cuerpos que **empiezan o terminan con una variable** (`error_subcode 2388299`, "las variables no pueden estar al principio ni al final"). El primer intento de `consulta_usado_nueva` falló por arrancar con `{{1}}`. Siempre texto en los dos extremos.
+
+**Respaldo automático de template.** Si Meta rechaza el template propio (todavía en PENDING, o pausado más adelante), el envío **se reintenta una vez** con el del 0km (`TEMPLATE_FALLBACK`), que está aprobado hace meses. Sin esto, un template en PENDING = aviso perdido en silencio. Los códigos que disparan el reintento son los de template (132000/132001/132005/132007), no los de número inválido.
+
+El texto se acomoda solo: `usaTemplatePropio()` mira si el evento apunta a un template con su mismo nombre. Con el propio, el encabezado ya dice "usado" y `{{1}}` va limpio; con el respaldo se antepone `USADO —` adentro de la variable. **Probado de verdad el 19/08/2026** apuntando a propósito a un template inexistente: cayó al del 0km y el texto salió con el marcador.
+
+### Recordatorios de "sin responder" (✅ 19/08/2026)
+
+`notify-sin-responder` (repo del **tasador**, pg_cron jobid 5, cada 10 min) ahora barre **tres** fuentes: `tasador`, `consulta_0km` y **`consulta_usado`**. Fila propia en `recordatorios_config` (intervalo 60 min, tope 5 avisos, `desde` = 19/08/2026).
+
+**No agrupa, a diferencia del 0km.** El wizard de usados guarda **una fila por consulta** (un usado es una unidad única, no se piden varios de una), así que cada una insiste por su cuenta. Si se agruparan, dos pedidos por dos autos distintos se sellarían con un solo aviso que nombra uno solo.
+
+Corta solo: en cuanto la consulta deja de estar `pendiente` (aceptada / rechazada / contraoferta) sale del barrido. Verificado end-to-end el 19/08/2026 con `intervalo_min=0` y una fila aislada.
+
+**⚠️ Ojo al deployar `notify-sin-responder`**: va **con `--no-verify-jwt`**. El pg_cron la llama sin header de auth; si se deploya sin el flag, el cron empieza a devolver `UNAUTHORIZED_NO_AUTH_HEADER` y los recordatorios mueren en silencio. (Pasó el 19/08/2026 y se corrigió en el momento.) Es al revés que `notify-whatsapp-consulta`, que sí lleva verify_jwt ON.
 
 **Verificado el 19/08/2026**: alta/PATCH/constraint por REST; los dos WhatsApps end-to-end (limitados temporalmente a Fer para no molestar a Daniel, config restaurada después); el cálculo de margen, el historial por unidad y los tres pasos del wizard corridos en el navegador contra producción, sin errores de consola. Filas de prueba borradas y la secuencia reiniciada en 1.
 
