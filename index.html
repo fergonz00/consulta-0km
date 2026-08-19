@@ -287,6 +287,16 @@ input, select, textarea { font-family: var(--font); }
     </div>
   </header>
 
+  <!-- ============ SECCION: 0km vs Usados ============
+       Las consultas de usados son el mismo circuito (pedir mejor precio →
+       aceptar / rechazar / contraofertar) pero sobre una unidad usada concreta.
+       Viven en su propia tabla `consultas_usados`, por eso se cambia de lista
+       entera en vez de mezclarlas: los ids de las dos tablas se pisan. -->
+  <div id="seccionTabs" class="tabs">
+    <button id="tabSec0km" class="active" onclick="setSeccion('0km')">🚗 0km</button>
+    <button id="tabSecUsados" onclick="setSeccion('usados')">🔑 Usados</button>
+  </div>
+
   <!-- ============ VENDEDOR ============ -->
   <div id="vendedorView" class="hidden">
     <!-- Lista mis consultas -->
@@ -302,7 +312,7 @@ input, select, textarea { font-family: var(--font); }
           <select id="gerenteVendedorFiltro" class="hidden" onchange="renderVendedorList()" style="padding:10px 14px; border:1px solid var(--vw-grey-2); border-radius:8px; font-size:14px; min-width:180px">
             <option value="">Todos los vendedores</option>
           </select>
-          <button id="btnNuevaConsulta" class="btn-primary" onclick="showNuevaConsulta()">+ Nueva consulta</button>
+          <button id="btnNuevaConsulta" class="btn-primary" onclick="nuevaConsultaDispatch()">+ Nueva consulta</button>
         </div>
         <div id="misConsultasList"></div>
       </div>
@@ -532,6 +542,26 @@ let _selMultipleIds = new Set();
 // 'respondidas' (todas las consultas respondidas, con filtro x vendedor)
 let gerenteTab = 'misCargas';
 
+// ---------- USADOS ----------
+// Seccion activa de la app: '0km' o 'usados'. Cambia que lista se muestra y que
+// wizard abre el boton "+ Nueva consulta". Son dos tablas distintas
+// (`consultas_0km` / `consultas_usados`), no se mezclan.
+let seccion = '0km';
+// Tipo del wizard en curso, para que getNextStep()/totalSteps() sepan que flujo
+// estan recorriendo (los dos comparten el mismo motor de pasos).
+let wizardTipo = '0km';
+// Stock de usados en venta (Edge Function usados-disponibles).
+let usadosStock = [];
+// true solo si la Edge devolvio el costo de toma (usuario autorizado). El
+// vendedor recibe la lista SIN costo y con esto en false: sin esto no se puede
+// calcular ningun margen del lado del cliente, que es justamente la idea.
+let usadosCostoOk = false;
+let usadosStockCargado = false;
+let misConsultasUsados = [];
+let adminConsultasUsados = [];
+// Form del wizard de usados (state global, equivalente a formData del 0km)
+let formUsado = null;
+
 // ============ HELPERS ============
 async function sbFetch(path, options = {}) {
   const url = SUPABASE_URL + '/rest/v1/' + path;
@@ -735,6 +765,14 @@ function entrarComo(modo) {
   if (gtabs) gtabs.classList.toggle('hidden', modo !== 'gerente');
   // Reset de tab a "Mis cargas" al entrar a gerente
   if (modo === 'gerente') gerenteTab = 'misCargas';
+  // Al entrar a un modo se arranca siempre en 0km (seccion por defecto).
+  seccion = '0km';
+  const secTabs = document.getElementById('seccionTabs');
+  if (secTabs) {
+    secTabs.classList.remove('hidden');
+    document.getElementById('tabSec0km').classList.add('active');
+    document.getElementById('tabSecUsados').classList.remove('active');
+  }
   if (modo === 'admin') {
     document.getElementById('vendedorView').classList.add('hidden');
     document.getElementById('adminView').classList.remove('hidden');
@@ -1087,6 +1125,7 @@ async function showNuevaConsulta() {
   };
   wizardStack = [];
   currentStep = null;
+  wizardTipo = '0km';
   gerenteVendedorActivo = null;
   document.getElementById('vendedorList').classList.add('hidden');
   document.getElementById('vendedorWizard').classList.remove('hidden');
@@ -1136,6 +1175,14 @@ function wizardBack() {
 }
 
 function getNextStep(step) {
+  // Wizard de USADOS (una unidad, sin analisis de atras). Ver bloque "CONSULTAS
+  // DE USADOS" mas abajo.
+  if (step === 'u-gerente-vendedor') return 'u-unidad';
+  if (step === 'u-unidad') return 'u-precio';
+  if (step === 'u-precio') return 'u-cliente';
+  if (step === 'u-cliente') return 'u-observaciones';
+  if (step === 'u-observaciones') return 'u-resumen';
+
   if (step === 'gerente-vendedor') return 'cantidad-unidades';
   if (step === 'cantidad-unidades') return 'modelos';
   if (step === 'modelos') {
@@ -1177,6 +1224,8 @@ function getNextStep(step) {
 }
 
 function totalSteps() {
+  // Usados: unidad, precio, cliente, observaciones, resumen (+ vendedor si gerente)
+  if (wizardTipo === 'usado') return currentMode === 'gerente' ? 6 : 5;
   // Pasos fijos: cantidad, modelos, colores, precios, tipo-cliente, nombre, ubicación, financia, vs-otro, observaciones, resumen
   let n = 11;
   if (currentMode === 'gerente') n += 1; // elegir vendedor
@@ -2113,9 +2162,12 @@ function setGerenteTab(tab) {
   const btnNueva = document.getElementById('btnNuevaConsulta');
   if (dropdown) dropdown.classList.toggle('hidden', tab !== 'respondidas');
   if (btnNueva) btnNueva.classList.toggle('hidden', tab === 'respondidas');
-  cargarMisConsultas();
+  if (seccion === 'usados') cargarMisConsultasUsados(); else cargarMisConsultas();
 }
 function renderVendedorList() {
+  // La misma caja de busqueda sirve a las dos secciones (el oninput del HTML
+  // llama siempre a esta): si estamos en usados, delega.
+  if (seccion === 'usados') return renderVendedorListUsados();
   const cont = document.getElementById('misConsultasList');
   const q = (document.getElementById('vSearch').value || '').toLowerCase().trim();
   let list = myConsultas;
@@ -2177,10 +2229,13 @@ function abrirUsuarios() {
   document.getElementById('adminView').classList.add('hidden');
   document.getElementById('vendedorView').classList.add('hidden');
   document.getElementById('usuariosView').classList.remove('hidden');
+  // El switch 0km/Usados no aplica en la vista de usuarios
+  document.getElementById('seccionTabs').classList.add('hidden');
   cargarUsuarios();
 }
 function cerrarUsuarios() {
   document.getElementById('usuariosView').classList.add('hidden');
+  document.getElementById('seccionTabs').classList.remove('hidden');
   if (currentMode === 'admin') {
     document.getElementById('adminView').classList.remove('hidden');
   } else {
@@ -2203,6 +2258,7 @@ async function cargarConsultasAdmin() {
   }
 }
 function renderAdminList() {
+  if (seccion === 'usados') return renderAdminListUsados();
   const cont = document.getElementById('adminConsultasList');
   const q = (document.getElementById('aSearch').value || '').toLowerCase().trim();
   let list = adminConsultas;
@@ -3009,6 +3065,918 @@ async function contraofertarMejora(consultaId) {
 }
 async function notifyVendedorRespuesta(consultaId) {
   return notifyEvent('consulta_0km_respondida', consultaId);
+}
+
+// ============================================================================
+// ============ CONSULTAS DE USADOS ===========================================
+// ============================================================================
+// Mismo circuito que las de 0km (el vendedor pide mejor precio, el admin acepta
+// / rechaza / contraoferta) pero sobre una unidad usada concreta del stock.
+//
+// Diferencias de fondo con el 0km, todas pedidas por Fer (19/08/2026):
+//  - SIN el analisis de atras (competencia, rotacion, stock del modelo, reparto,
+//    ventas del mes). Un usado es una unidad unica: no hay "otros chasis" ni
+//    ritmo de venta del modelo. Lo unico que se analiza es LA GANANCIA NUEVA.
+//  - El costo es el de OVERSOFT (`usados.preciodetoma`), lo que se tomo real.
+//    No se cae al precio del tasador. Si Oversoft no lo tiene, se dice.
+//  - Historial POR UNIDAD (usadoid), no por modelo: "si antes pase contraofertas
+//    por ese usado, que me figuren".
+//
+// COSTO BLINDADO: el costo y el margen NUNCA se guardan en `consultas_usados`
+// ni viajan al browser del vendedor. La tabla no tiene columna de costo a
+// proposito (RLS esta deshabilitado y el vendedor lee la tabla con la anon key:
+// cualquier columna que guardemos ahi la puede ver). El margen se calcula en
+// vivo, en la pantalla del admin, contra el costo que devuelve la Edge Function
+// `usados-disponibles` solo a los usuarios autorizados.
+
+const USADOS_EDGE_URL = SUPABASE_URL + '/functions/v1/usados-disponibles';
+
+// ---------- Seccion activa (0km / usados) ----------
+function setSeccion(s) {
+  seccion = s;
+  document.getElementById('tabSec0km').classList.toggle('active', s === '0km');
+  document.getElementById('tabSecUsados').classList.toggle('active', s === 'usados');
+  // Salir del wizard si estaba abierto (el flujo del otro tipo no aplica)
+  const wiz = document.getElementById('vendedorWizard');
+  const lst = document.getElementById('vendedorList');
+  if (wiz && !wiz.classList.contains('hidden')) {
+    wiz.classList.add('hidden');
+    if (lst) lst.classList.remove('hidden');
+  }
+  const search0 = document.getElementById('vSearch');
+  if (search0) search0.value = '';
+  const searchA = document.getElementById('aSearch');
+  if (searchA) searchA.value = '';
+  if (currentMode === 'admin') {
+    // La seleccion multiple (borrado masivo) es solo del 0km: si estaba activa,
+    // apagarla al cambiar de seccion para no dejar la barra roja colgada.
+    if (_selMultipleActivo) toggleSelMultiple();
+    else _selMultipleIds.clear();
+    // El boton de seleccion multiple no aplica en usados
+    const btnSel = document.getElementById('btnSelMultiple');
+    if (btnSel) btnSel.classList.toggle('hidden', s === 'usados' || !_esSuperadmin());
+    if (s === 'usados') cargarConsultasAdminUsados(); else cargarConsultasAdmin();
+  } else {
+    if (s === 'usados') cargarMisConsultasUsados(); else cargarMisConsultas();
+  }
+}
+
+// El boton "+ Nueva consulta" abre el wizard que corresponda a la seccion.
+function nuevaConsultaDispatch() {
+  return seccion === 'usados' ? showNuevaConsultaUsado() : showNuevaConsulta();
+}
+
+// ---------- Stock de usados ----------
+// Manda las credenciales del logueado: la Edge devuelve el costo de toma SOLO
+// si es uno de los usuarios autorizados (mismo patron que stock-disponible).
+async function cargarUsadosStock(forzar = false) {
+  if (usadosStockCargado && !forzar) return;
+  const creds = (currentUser && currentUser.usuario && currentUser.clave)
+    ? { usuario: currentUser.usuario, clave: currentUser.clave } : {};
+  const res = await fetch(USADOS_EDGE_URL, {
+    method: 'POST',
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify(creds)
+  });
+  if (!res.ok) throw new Error('usados-disponibles ' + res.status);
+  const data = await res.json();
+  if (!data || data.ok === false) throw new Error(data && data.error ? data.error : 'respuesta inválida');
+  usadosStock = data.usados || [];
+  usadosCostoOk = !!data.costoIncluido;
+  usadosStockCargado = true;
+}
+
+function getUsadoStock(usadoid) {
+  return usadosStock.find(u => Number(u.usadoid) === Number(usadoid)) || null;
+}
+
+// Texto corto de la unidad para titulos y listas.
+function tituloUsadoStock(u) {
+  if (!u) return '—';
+  return u.patente ? `${u.unidad} (${u.patente})` : u.unidad;
+}
+
+function badgeEstadoUsado(estado) {
+  return estado === 'a_recibir'
+    ? '<span style="background:#fef3c7; color:#92400e; padding:2px 7px; border-radius:8px; font-size:10px; font-weight:700">A RECIBIR</span>'
+    : '<span style="background:#dbeafe; color:#1e40af; padding:2px 7px; border-radius:8px; font-size:10px; font-weight:700">FÍSICO</span>';
+}
+
+// ---------- Analisis de margen (SOLO admin) ----------
+// Definicion de margen de Fer: (venta - costo) / costo. Ej: costo 10M, venta 15M
+// = 50%. Al lado se muestra el margen sobre la venta (33,3%), que es el contable.
+// `arreglos` viene del analisis fisico del tasador y es informativo: se muestra
+// como segunda linea, nunca pisa el numero principal (el costo de Oversoft).
+function margenUsado(precio, costo) {
+  if (!costo || costo <= 0 || !precio || precio <= 0) return null;
+  return {
+    pesos: precio - costo,
+    sobreCosto: (precio - costo) / costo,
+    sobreVenta: (precio - costo) / precio
+  };
+}
+
+function colorMargen(m) {
+  if (!m) return 'var(--vw-grey-4)';
+  if (m.sobreCosto < 0) return 'var(--red)';
+  if (m.sobreCosto < 0.10) return '#b45309';
+  return 'var(--green)';
+}
+
+// Bloque de analisis del admin: la ganancia de hoy vs la ganancia con el precio
+// pedido. Es LO UNICO que se analiza (pedido explicito de Fer: sin el resto).
+function analisisUsadoHtml(c, precioPedido) {
+  const u = getUsadoStock(c.usadoid);
+  if (!usadosCostoOk) return '';
+  if (!u) {
+    return `<div style="background:#fee2e2; border-radius:8px; padding:10px 12px; font-size:13px; color:#991b1b; margin-top:10px">
+      ⚠ La unidad ya no figura en el stock de usados (se vendió, se ocultó o quedó fuera de la ventana). No se puede calcular el margen actual.
+    </div>`;
+  }
+  const costo = Number(u.costo_toma) || 0;
+  const arreglos = Number(u.arreglos) || 0;
+  const publicado = Number(u.precio_venta) || Number(c.precio_publicado) || 0;
+  const pedido = Number(precioPedido) || Number(c.precio_pedido) || 0;
+
+  if (!costo) {
+    return `<div style="background:#fef3c7; border-radius:8px; padding:10px 12px; font-size:13px; color:#92400e; margin-top:10px">
+      ⚠ Esta unidad <strong>no tiene costo de toma cargado en Oversoft</strong>, así que no se puede calcular la ganancia. Cargalo en el sistema y volvé a abrir.
+    </div>`;
+  }
+
+  const mAct = margenUsado(publicado, costo);
+  const mPed = margenUsado(pedido, costo);
+  const fila = (lbl, precio, m) => `
+    <div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px; padding:6px 0">
+      <span style="font-size:13px; color:var(--vw-grey-4)">${lbl}</span>
+      <span style="font-size:13px; text-align:right">
+        <strong>${fmtMoney(precio)}</strong>
+        ${m ? ` · <strong style="color:${colorMargen(m)}">${(m.sobreCosto*100).toFixed(1)}%</strong>
+          <span style="color:var(--vw-grey-3); font-size:11px">(${fmtMoney(m.pesos)} · ${(m.sobreVenta*100).toFixed(1)}% s/venta)</span>` : ''}
+      </span>
+    </div>`;
+
+  // Segunda lectura, solo si el tasador cargo arreglos: mismo margen pero
+  // sumando el costo de los arreglos al costo de toma.
+  let conArreglosHtml = '';
+  if (arreglos > 0) {
+    const costoTotal = costo + arreglos;
+    const mPedArr = margenUsado(pedido, costoTotal);
+    conArreglosHtml = `
+      <div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--vw-grey-2)">
+        <div style="font-size:11px; color:var(--vw-grey-3); margin-bottom:2px">
+          Con arreglos del análisis físico (${fmtMoney(arreglos)}, dato del tasador) → costo ${fmtMoney(costoTotal)}
+        </div>
+        ${mPedArr ? `<div style="font-size:13px">Con el precio pedido quedaría en
+          <strong style="color:${colorMargen(mPedArr)}">${(mPedArr.sobreCosto*100).toFixed(1)}%</strong>
+          (${fmtMoney(mPedArr.pesos)})</div>` : ''}
+      </div>`;
+  }
+
+  const caida = (mAct && mPed) ? (mAct.pesos - mPed.pesos) : null;
+
+  return `
+    <div style="background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; padding:12px; margin-top:10px">
+      <div style="font-size:12px; font-weight:700; color:#0369a1; margin-bottom:6px">💰 GANANCIA</div>
+      <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--vw-grey-4); padding-bottom:6px; border-bottom:1px solid #bae6fd">
+        <span>Costo de toma (Oversoft)</span><strong>${fmtMoney(costo)}</strong>
+      </div>
+      ${fila('Precio publicado hoy', publicado, mAct)}
+      ${fila('Con el precio pedido', pedido, mPed)}
+      ${caida !== null ? `<div style="font-size:12px; color:var(--vw-grey-4); padding-top:6px; border-top:1px solid #bae6fd">
+        Resigna <strong style="color:var(--red)">${fmtMoney(caida)}</strong> de ganancia</div>` : ''}
+      ${conArreglosHtml}
+    </div>`;
+}
+
+// ---------- Historial de la MISMA unidad ----------
+// Pedido de Fer: "si antes pasé contraofertas por ese usado, que me figuren".
+// A diferencia del 0km (que cruza por modelo), acá el cruce es por usadoid: es
+// la misma unidad fisica, asi que lo que se autorizo antes es directamente
+// comparable. Se listan todas las consultas ya respondidas de ese usado.
+function historialUsadoHtml(c) {
+  const previas = adminConsultasUsados
+    .filter(x => Number(x.usadoid) === Number(c.usadoid) && x.id !== c.id)
+    .filter(x => ['aceptada','rechazada','contraoferta'].includes(x.estado))
+    .sort((a,b) => new Date(b.admin_respuesta_at || b.created_at) - new Date(a.admin_respuesta_at || a.created_at));
+  if (previas.length === 0) return '';
+
+  const ESTADO_LBL = { aceptada: 'Aceptada', rechazada: 'Mejor precio', contraoferta: 'Contraoferta' };
+  const ESTADO_BG = { aceptada: '#dcfce7;color:#166534', rechazada: '#fee2e2;color:#991b1b', contraoferta: '#fef3c7;color:#92400e' };
+  const u = getUsadoStock(c.usadoid);
+  const costo = usadosCostoOk && u ? (Number(u.costo_toma) || 0) : 0;
+
+  const filas = previas.map(p => {
+    // El precio "autorizado": si la acepto, lo que pidio el vendedor; si no, el
+    // precio que puso el admin (mejor precio o contraoferta).
+    const precio = p.estado === 'aceptada' ? Number(p.precio_pedido) : Number(p.precio_max_admin);
+    const m = costo && precio ? margenUsado(precio, costo) : null;
+    return `
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--vw-grey-1); flex-wrap:wrap">
+        <div style="font-size:12px; color:var(--vw-grey-4); min-width:120px">
+          ${fmtFechaCorta(new Date(p.admin_respuesta_at || p.created_at))} ·
+          ${escapeHtml(p.vendedor_nombre || p.vendedor_usuario || '—')}
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
+          <span style="background:${ESTADO_BG[p.estado]}; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700">${ESTADO_LBL[p.estado]}</span>
+          <strong style="font-size:13px">${precio ? fmtMoney(precio) : '—'}</strong>
+          ${m ? `<span style="font-size:11px; color:${colorMargen(m)}">${(m.sobreCosto*100).toFixed(1)}%</span>` : ''}
+          ${p.resultado_venta === 'vendida' ? '<span style="font-size:10px; color:#065f46">✓ vendida</span>' : ''}
+          ${p.resultado_venta === 'no_vendida' ? '<span style="font-size:10px; color:#991b1b">✗ no vendida</span>' : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div style="background:var(--vw-grey-1); border-radius:8px; padding:12px; margin-top:10px">
+      <div style="font-size:12px; font-weight:700; color:var(--vw-blue); margin-bottom:4px">
+        🧾 YA PASARON POR ESTA UNIDAD (${previas.length})
+      </div>
+      <div style="font-size:11px; color:var(--vw-grey-3); margin-bottom:6px">
+        Consultas anteriores del <strong>mismo usado</strong>${costo ? '. El % es el margen recalculado con el costo de hoy.' : '.'}
+      </div>
+      ${filas}
+    </div>`;
+}
+
+// ---------- Wizard del vendedor ----------
+async function showNuevaConsultaUsado() {
+  formUsado = {
+    usadoid: null,
+    precioPedido: null,
+    cliNombre: '', cliApellido: '',
+    observaciones: ''
+  };
+  wizardStack = [];
+  currentStep = null;
+  wizardTipo = 'usado';
+  gerenteVendedorActivo = null;
+
+  showLoading('Cargando usados...');
+  try {
+    await cargarUsadosStock(true);
+  } catch (e) {
+    hideLoading();
+    console.error('[usados] error cargando stock:', e);
+    alert('No se pudo cargar el stock de usados. Probá de nuevo en un minuto.');
+    return;
+  }
+  hideLoading();
+
+  if (usadosStock.length === 0) {
+    alert('No hay usados en venta para consultar en este momento.');
+    return;
+  }
+
+  document.getElementById('vendedorList').classList.add('hidden');
+  document.getElementById('vendedorWizard').classList.remove('hidden');
+  if (currentMode === 'gerente') {
+    if (vendedoresCache.length === 0) await cargarVendedores();
+    goToStep('u-gerente-vendedor');
+  } else {
+    goToStep('u-unidad');
+  }
+}
+
+// ----- Paso: elegir vendedor (solo gerente) -----
+STEP_RENDERERS['u-gerente-vendedor'] = () => {
+  const selVal = gerenteVendedorActivo ? gerenteVendedorActivo.id : '';
+  return {
+    body: `
+      <h2>¿Por qué vendedor cargás esta consulta?</h2>
+      <p class="step-hint">La consulta queda asignada al vendedor elegido. Vos figurás como quien la cargó.</p>
+      <div class="field">
+        <label class="field-label">Vendedor</label>
+        <select id="gerenteVendedorSelect" onchange="onSelectGerenteVendedor(this.value)">
+          <option value="">— Elegir vendedor —</option>
+          ${vendedoresCache.map(v => `<option value="${v.id}" ${selVal === v.id ? 'selected' : ''}>${escapeHtml(v.nombre || v.usuario)}</option>`).join('')}
+        </select>
+      </div>
+    `,
+    footer: `
+      <button class="btn-back" onclick="wizardBack()">Atrás</button>
+      <button class="btn-next" id="btnNext" ${selVal ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+    `
+  };
+};
+
+// ----- Paso: elegir la unidad -----
+STEP_RENDERERS['u-unidad'] = () => {
+  // Fisicos primero (son los que se pueden mostrar y entregar ya).
+  const orden = [...usadosStock].sort((a, b) => {
+    if (a.estado !== b.estado) return a.estado === 'fisico' ? -1 : 1;
+    return (b.precio_venta || 0) - (a.precio_venta || 0);
+  });
+  const cards = orden.map(u => {
+    const sel = Number(formUsado.usadoid) === Number(u.usadoid);
+    const sinPrecio = !u.precio_venta;
+    const detalle = [
+      u.km ? `${u.km.toLocaleString('es-AR')} km` : 'km sin cargar',
+      u.color || 'color sin cargar'
+    ].join(' · ');
+    return `
+      <div onclick="${sinPrecio ? '' : `selectUsadoUnidad(${u.usadoid})`}"
+        style="border:2px solid ${sel ? 'var(--vw-blue)' : 'var(--vw-grey-2)'}; background:${sel ? '#eff6ff' : '#fff'};
+               border-radius:10px; padding:12px; margin-bottom:8px; cursor:${sinPrecio ? 'not-allowed' : 'pointer'}; opacity:${sinPrecio ? 0.55 : 1}">
+        <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap">
+          <div style="flex:1; min-width:180px">
+            <div style="font-weight:600; font-size:14px; color:var(--vw-blue)">${escapeHtml(u.unidad)}</div>
+            <div style="font-size:12px; color:var(--vw-grey-4); margin-top:2px">
+              ${escapeHtml(u.patente || 'sin patente')} · ${escapeHtml(detalle)}
+            </div>
+          </div>
+          <div style="text-align:right">
+            ${badgeEstadoUsado(u.estado)}
+            <div style="font-weight:700; font-size:15px; margin-top:4px">
+              ${sinPrecio ? '<span style="font-size:12px; color:#b45309">precio a definir</span>' : fmtMoney(u.precio_venta)}
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+  const haySinPrecio = orden.some(u => !u.precio_venta);
+  return {
+    body: `
+      <h2>¿Sobre qué usado querés pedir precio?</h2>
+      <p class="step-hint">Son los usados en venta hoy. Tocá la unidad.</p>
+      ${cards}
+      ${haySinPrecio ? '<p class="step-hint" style="margin-top:10px">Las unidades en gris todavía no tienen precio de venta cargado: no se puede pedir rebaja sobre un precio que no existe.</p>' : ''}
+    `,
+    footer: `
+      <button class="btn-back" onclick="wizardBack()">Atrás</button>
+      <button class="btn-next" id="btnNext" ${formUsado.usadoid ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+    `
+  };
+};
+
+function selectUsadoUnidad(usadoid) {
+  formUsado.usadoid = usadoid;
+  renderStep();
+}
+
+// ----- Paso: precio pedido -----
+STEP_RENDERERS['u-precio'] = () => {
+  const u = getUsadoStock(formUsado.usadoid);
+  const val = formUsado.precioPedido ? '$' + Number(formUsado.precioPedido).toLocaleString('es-AR') : '';
+  return {
+    body: `
+      <h2>¿Qué precio necesitás?</h2>
+      <p class="step-hint">${escapeHtml(tituloUsadoStock(u))} — publicado hoy en <strong>${fmtMoney(u ? u.precio_venta : 0)}</strong></p>
+      <div class="field">
+        <label class="field-label">Precio pedido</label>
+        <input id="usadoPrecioInput" type="text" inputmode="numeric" placeholder="$0" value="${val}"
+          oninput="onUsadoPrecioInput(this)"
+          style="width:100%; padding:14px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:20px; font-weight:600; letter-spacing:0.5px">
+        <div id="usadoPrecioWords" style="font-size:13px; color:var(--vw-grey-4); margin-top:6px; min-height:18px; font-style:italic"></div>
+        <div id="usadoPrecioHint" class="field-hint"></div>
+      </div>
+    `,
+    footer: `
+      <button class="btn-back" onclick="wizardBack()">Atrás</button>
+      <button class="btn-next" id="btnNext" ${formUsado.precioPedido ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+    `,
+    onMount: () => {
+      const el = document.getElementById('usadoPrecioInput');
+      if (el && el.value) onUsadoPrecioInput(el);
+    }
+  };
+};
+
+// El vendedor ve la rebaja que esta pidiendo, NUNCA la ganancia (no tiene el
+// costo: la Edge no se lo manda).
+function onUsadoPrecioInput(el) {
+  const raw = el.value.replace(/[^\d]/g, '');
+  el.value = raw ? '$' + parseInt(raw, 10).toLocaleString('es-AR') : '';
+  formUsado.precioPedido = raw ? parseInt(raw, 10) : null;
+
+  const words = document.getElementById('usadoPrecioWords');
+  if (words) {
+    const t = numToTextES(formUsado.precioPedido || 0);
+    words.textContent = t ? `≈ ${t}` : '';
+  }
+  const hint = document.getElementById('usadoPrecioHint');
+  const u = getUsadoStock(formUsado.usadoid);
+  if (hint) {
+    const pub = u ? Number(u.precio_venta) || 0 : 0;
+    const ped = formUsado.precioPedido || 0;
+    if (pub > 0 && ped > 0) {
+      const dif = pub - ped;
+      if (dif > 0) hint.innerHTML = `Pedís <strong>${fmtMoney(dif)}</strong> menos (${((dif/pub)*100).toFixed(1)}% de rebaja)`;
+      else if (dif === 0) hint.textContent = 'Es el mismo precio publicado.';
+      else hint.innerHTML = `<span style="color:var(--red)">Ese precio es ${fmtMoney(-dif)} MÁS caro que el publicado. ¿Está bien?</span>`;
+    } else hint.textContent = '';
+  }
+  const btn = document.getElementById('btnNext');
+  if (btn) btn.disabled = !formUsado.precioPedido;
+}
+
+// ----- Paso: cliente -----
+STEP_RENDERERS['u-cliente'] = () => ({
+  body: `
+    <h2>¿Para qué cliente es?</h2>
+    <p class="step-hint">Sirve para no mezclar dos pedidos por la misma unidad. Si todavía no tenés el nombre, dejalo vacío.</p>
+    <div class="field">
+      <label class="field-label">Nombre</label>
+      <input id="uCliNombre" type="text" value="${escapeHtml(formUsado.cliNombre)}" oninput="formUsado.cliNombre = this.value">
+    </div>
+    <div class="field">
+      <label class="field-label">Apellido</label>
+      <input id="uCliApellido" type="text" value="${escapeHtml(formUsado.cliApellido)}" oninput="formUsado.cliApellido = this.value">
+    </div>
+  `,
+  footer: `
+    <button class="btn-back" onclick="wizardBack()">Atrás</button>
+    <button class="btn-next" onclick="nextStep()">Siguiente</button>
+  `
+});
+
+// ----- Paso: observaciones -----
+STEP_RENDERERS['u-observaciones'] = () => ({
+  body: `
+    <h2>¿Querés agregar algo?</h2>
+    <p class="step-hint">Opcional. Es lo que le va a ayudar a decidir: contra qué está comparando el cliente, si paga contado, si hay apuro, etc.</p>
+    <div class="field">
+      <textarea id="uObs" rows="4" placeholder="Ej: lo está comparando con uno igual en $X, paga todo contado esta semana"
+        oninput="formUsado.observaciones = this.value"
+        style="width:100%; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:14px; font-family:inherit; resize:vertical">${escapeHtml(formUsado.observaciones)}</textarea>
+    </div>
+  `,
+  footer: `
+    <button class="btn-back" onclick="wizardBack()">Atrás</button>
+    <button class="btn-next" onclick="nextStep()">Siguiente</button>
+  `
+});
+
+// ----- Paso: resumen -----
+STEP_RENDERERS['u-resumen'] = () => {
+  const u = getUsadoStock(formUsado.usadoid);
+  const pub = u ? Number(u.precio_venta) || 0 : 0;
+  const ped = formUsado.precioPedido || 0;
+  const dif = pub - ped;
+  const cliente = `${formUsado.cliNombre} ${formUsado.cliApellido}`.trim();
+  const vendedorLine = (currentMode === 'gerente' && gerenteVendedorActivo)
+    ? `<div class="kv"><span class="k">Vendedor</span><span class="v">${escapeHtml(gerenteVendedorActivo.nombre)}</span></div>` : '';
+  return {
+    body: `
+      <h2>Revisá antes de enviar</h2>
+      <div class="detalle-section">
+        <div class="kv">
+          ${vendedorLine}
+          <span class="k">Unidad</span><span class="v">${escapeHtml(tituloUsadoStock(u))}</span>
+          <span class="k">Estado</span><span class="v">${u && u.estado === 'a_recibir' ? 'A recibir' : 'Físico'}</span>
+          <span class="k">Publicado</span><span class="v">${fmtMoney(pub)}</span>
+          <span class="k">Pedís</span><span class="v"><strong>${fmtMoney(ped)}</strong></span>
+          ${dif > 0 ? `<span class="k">Rebaja</span><span class="v">${fmtMoney(dif)} (${pub ? ((dif/pub)*100).toFixed(1) : '0'}%)</span>` : ''}
+          <span class="k">Cliente</span><span class="v">${escapeHtml(cliente || '—')}</span>
+        </div>
+        ${(formUsado.observaciones || '').trim() ? `
+          <div style="margin-top:10px">
+            <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Observaciones</div>
+            <div style="white-space:pre-wrap; padding:8px; background:var(--vw-grey-1); border-radius:6px">${escapeHtml(formUsado.observaciones)}</div>
+          </div>` : ''}
+      </div>
+    `,
+    footer: `
+      <button class="btn-back" onclick="wizardBack()">Atrás</button>
+      <button class="btn-next" onclick="submitConsultaUsado()">Enviar consulta</button>
+    `
+  };
+};
+
+async function submitConsultaUsado() {
+  const u = getUsadoStock(formUsado.usadoid);
+  if (!u) { alert('Se perdió la unidad elegida. Volvé atrás y elegila de nuevo.'); return; }
+  if (!formUsado.precioPedido) { alert('Falta el precio pedido'); return; }
+  if (currentMode === 'gerente' && !gerenteVendedorActivo) { alert('Elegí el vendedor'); return; }
+
+  const esGerente = currentMode === 'gerente' && gerenteVendedorActivo;
+  const vendedor = esGerente ? gerenteVendedorActivo : currentUser;
+
+  showLoading('Enviando consulta...');
+  try {
+    const fila = {
+      vendedor_id: vendedor.id,
+      vendedor_usuario: vendedor.usuario,
+      vendedor_nombre: vendedor.nombre || vendedor.usuario,
+      cargada_por_id: esGerente ? currentUser.id : null,
+      cargada_por_nombre: esGerente ? (currentUser.nombre || currentUser.usuario) : null,
+      usadoid: u.usadoid,
+      patente: u.patente,
+      unidad: u.unidad,
+      modelo: u.modelo,
+      anio: u.anio,
+      km: u.km || null,
+      color: u.color,
+      estado_unidad: u.estado,
+      // Snapshot del precio publicado al momento de pedir: si despues se cambia
+      // el precio, el pedido sigue siendo legible ("pidio X sobre Y").
+      precio_publicado: u.precio_venta || null,
+      precio_pedido: formUsado.precioPedido,
+      cliente_nombre: (formUsado.cliNombre || '').trim() || null,
+      cliente_apellido: (formUsado.cliApellido || '').trim() || null,
+      observaciones_vendedor: (formUsado.observaciones || '').trim() || null,
+      estado: 'pendiente'
+      // OJO: no se guarda costo ni margen. Ver comentario al inicio del bloque.
+    };
+    const res = await sbFetch('consultas_usados', {
+      method: 'POST',
+      headers: { 'Prefer': 'return=representation' },
+      body: JSON.stringify(fila)
+    });
+    const nueva = Array.isArray(res) ? res[0] : res;
+    if (nueva && nueva.id) notifyEvent('consulta_usado_nueva', nueva.id).catch(e => console.error(e));
+
+    document.getElementById('vendedorWizard').classList.add('hidden');
+    document.getElementById('vendedorList').classList.remove('hidden');
+    await cargarMisConsultasUsados();
+    hideLoading();
+    showToast('Consulta enviada');
+  } catch (e) {
+    hideLoading();
+    console.error(e);
+    alert('Error al enviar: ' + (e.message || e));
+  }
+}
+
+// ---------- Listas ----------
+async function cargarMisConsultasUsados() {
+  const cont = document.getElementById('misConsultasList');
+  cont.innerHTML = '<div class="empty">Cargando...</div>';
+  try {
+    let filtro;
+    if (currentMode === 'gerente' && gerenteTab === 'respondidas') filtro = 'estado=neq.pendiente&';
+    else if (currentMode === 'gerente') filtro = `cargada_por_id=eq.${currentUser.id}&`;
+    else filtro = `vendedor_id=eq.${currentUser.id}&`;
+    misConsultasUsados = await sbFetch(`consultas_usados?${filtro}order=created_at.desc`) || [];
+    if (currentMode === 'gerente' && gerenteTab === 'respondidas') poblarFiltroVendedoresUsados();
+    renderVendedorListUsados();
+  } catch (e) {
+    console.error(e);
+    cont.innerHTML = '<div class="empty"><p>Error al cargar</p></div>';
+  }
+}
+
+function poblarFiltroVendedoresUsados() {
+  const sel = document.getElementById('gerenteVendedorFiltro');
+  if (!sel) return;
+  const map = new Map();
+  for (const c of misConsultasUsados) {
+    if (c.vendedor_id && !map.has(c.vendedor_id)) map.set(c.vendedor_id, c.vendedor_nombre || c.vendedor_usuario || '—');
+  }
+  const vendedores = Array.from(map.entries()).sort((a,b) => a[1].localeCompare(b[1]));
+  const previo = sel.value;
+  sel.innerHTML = '<option value="">Todos los vendedores</option>' +
+    vendedores.map(([id, nombre]) => `<option value="${id}">${escapeHtml(nombre)}</option>`).join('');
+  if (previo && vendedores.some(([id]) => id === previo)) sel.value = previo;
+}
+
+function renderVendedorListUsados() {
+  const cont = document.getElementById('misConsultasList');
+  const q = (document.getElementById('vSearch').value || '').toLowerCase().trim();
+  let list = misConsultasUsados;
+  if (currentMode === 'gerente' && gerenteTab === 'respondidas') {
+    const f = (document.getElementById('gerenteVendedorFiltro').value || '').trim();
+    if (f) list = list.filter(c => c.vendedor_id === f);
+  }
+  if (q) list = list.filter(c => JSON.stringify(c).toLowerCase().includes(q));
+  if (list.length === 0) {
+    cont.innerHTML = '<div class="empty"><div class="icon">🔑</div><p>Sin consultas de usados todavía. Tocá <strong>+ Nueva consulta</strong> arriba.</p></div>';
+    return;
+  }
+  cont.innerHTML = list.map(c => renderConsultaUsadoCard(c, false)).join('');
+}
+
+function renderConsultaUsadoCard(c, esAdmin) {
+  const cliente = `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}`.trim() || 'sin cliente';
+  const ventaBadge = c.resultado_venta === 'vendida'
+    ? '<span style="background:#d1fae5; color:#065f46; padding:3px 8px; border-radius:12px; font-size:10px; font-weight:700; margin-left:6px">✓ VENDIDA</span>'
+    : (c.resultado_venta === 'no_vendida'
+      ? '<span style="background:#fee2e2; color:#991b1b; padding:3px 8px; border-radius:12px; font-size:10px; font-weight:700; margin-left:6px">✗ NO VENDIDA</span>'
+      : '');
+  const titulo = esAdmin
+    ? escapeHtml(c.vendedor_nombre || c.vendedor_usuario || '')
+    : escapeHtml(cliente);
+  const vendedorLine = (!esAdmin && currentMode === 'gerente')
+    ? `<div style="font-size:12px; color:var(--vw-blue); font-weight:600">Vendedor: ${escapeHtml(c.vendedor_nombre || c.vendedor_usuario || '—')}${c.cargada_por_nombre ? ` · cargada por ${escapeHtml(c.cargada_por_nombre)}` : ''}</div>`
+    : '';
+  const pub = Number(c.precio_publicado) || 0;
+  const ped = Number(c.precio_pedido) || 0;
+  const rebaja = pub > 0 && ped > 0 && pub > ped ? ` · −${(((pub-ped)/pub)*100).toFixed(1)}%` : '';
+  return `
+    <div class="card consulta-card" onclick="abrirDetalleUsado(${c.id})">
+      <div class="top">
+        <h3>#${c.id} — ${titulo}</h3>
+        <div><span class="estado ${c.estado}">${c.estado}</span>${ventaBadge}</div>
+      </div>
+      <div class="body">
+        ${vendedorLine}
+        ${esAdmin ? `<div>${escapeHtml(cliente)}</div>` : ''}
+        <div class="resumen-units"><span>${escapeHtml(c.unidad || c.modelo || '—')}${c.patente ? ' · ' + escapeHtml(c.patente) : ''} → ${fmtMoney(ped)}${rebaja}</span></div>
+        <div class="meta" style="margin-top:6px">${fmtDate(c.created_at)}${c.estado !== 'pendiente' && c.precio_max_admin ? ' · Mejor precio: ' + fmtMoney(c.precio_max_admin) : ''}</div>
+      </div>
+    </div>`;
+}
+
+async function cargarConsultasAdminUsados() {
+  const cont = document.getElementById('adminConsultasList');
+  cont.innerHTML = '<div class="empty">Cargando...</div>';
+  try {
+    // El stock hace falta para el margen; si falla, la lista igual se muestra
+    // (el detalle avisa que no puede calcular).
+    await Promise.all([
+      sbFetch('consultas_usados?order=created_at.desc').then(d => { adminConsultasUsados = d || []; }),
+      cargarUsadosStock(true).catch(e => console.error('[usados] stock:', e))
+    ]);
+    renderAdminListUsados();
+  } catch (e) {
+    console.error(e);
+    cont.innerHTML = '<div class="empty"><p>Error al cargar</p></div>';
+  }
+}
+
+function renderAdminListUsados() {
+  const cont = document.getElementById('adminConsultasList');
+  const q = (document.getElementById('aSearch').value || '').toLowerCase().trim();
+  let list = adminConsultasUsados;
+  if (adminTab === 'pendiente') list = list.filter(c => c.estado === 'pendiente');
+  else list = list.filter(c => c.estado !== 'pendiente');
+  if (q) list = list.filter(c => JSON.stringify(c).toLowerCase().includes(q));
+  if (list.length === 0) {
+    cont.innerHTML = '<div class="empty"><div class="icon">📭</div><p>No hay consultas de usados en esta vista.</p></div>';
+    return;
+  }
+  cont.innerHTML = list.map(c => renderConsultaUsadoCard(c, true)).join('');
+}
+
+// ---------- Detalle ----------
+function abrirDetalleUsado(consultaId) {
+  const pool = currentMode === 'admin' ? adminConsultasUsados : misConsultasUsados;
+  const c = pool.find(x => x.id === consultaId);
+  if (!c) return;
+  const overlay = document.getElementById('modalOverlay');
+  const cont = document.getElementById('modalContent');
+
+  const isAdmin = currentMode === 'admin';
+  const isPending = c.estado === 'pendiente';
+  const cliente = `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}`.trim() || 'sin cliente';
+  const u = getUsadoStock(c.usadoid);
+  const pub = Number(c.precio_publicado) || 0;
+  const ped = Number(c.precio_pedido) || 0;
+  const pubHoy = u ? Number(u.precio_venta) || 0 : 0;
+
+  // Si el precio publicado cambio desde que el vendedor pidio, hay que decirlo:
+  // si no, el admin compara contra un numero que ya no existe.
+  const avisoPrecioCambio = (pub && pubHoy && pub !== pubHoy)
+    ? `<div style="background:#fef3c7; border-radius:6px; padding:8px 10px; font-size:12px; color:#92400e; margin-top:8px">
+        ⚠ El precio publicado cambió desde que se pidió: era ${fmtMoney(pub)}, hoy está ${fmtMoney(pubHoy)}.
+      </div>` : '';
+
+  const unidadHtml = `
+    <div class="kv">
+      <span class="k">Unidad</span><span class="v">${escapeHtml(c.unidad || c.modelo || '—')}</span>
+      <span class="k">Patente</span><span class="v">${escapeHtml(c.patente || '—')}</span>
+      <span class="k">Km / color</span><span class="v">${c.km ? c.km.toLocaleString('es-AR') + ' km' : 'sin km'} · ${escapeHtml(c.color || 'sin color')}</span>
+      <span class="k">Estado</span><span class="v">${c.estado_unidad === 'a_recibir' ? 'A recibir' : 'Físico'}${u && u.enreparacion ? ' · 🔧 en preparación' : ''}</span>
+      <span class="k">Publicado</span><span class="v">${fmtMoney(pub)}</span>
+      <span class="k">Precio pedido</span><span class="v"><strong>${fmtMoney(ped)}</strong>${pub > ped && pub ? ` · −${fmtMoney(pub-ped)} (${(((pub-ped)/pub)*100).toFixed(1)}%)` : ''}</span>
+    </div>
+    ${avisoPrecioCambio}
+    ${isAdmin ? analisisUsadoHtml(c, ped) : ''}
+    ${isAdmin ? historialUsadoHtml(c) : ''}
+  `;
+
+  let footerHtml = `<button class="btn-secondary" onclick="closeModal()">Cerrar</button>`;
+  if (isAdmin && isPending) {
+    const defaultVal = pubHoy ? '$' + Math.round(pubHoy).toLocaleString('es-AR') : (pub ? '$' + Math.round(pub).toLocaleString('es-AR') : '');
+    footerHtml = `
+      <div style="display:flex; flex-direction:column; gap:10px; width:100%">
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-start">
+          <div style="flex:1; min-width:240px">
+            <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Mejor precio máximo</label>
+            <input id="adminPrecioMax" type="text" inputmode="numeric" placeholder="$0" value="${defaultVal}"
+              oninput="onUsadoAdminPrecioInput(${c.id}, this)"
+              style="width:100%; padding:14px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:20px; font-weight:600; letter-spacing:0.5px">
+            <div id="adminPrecioMaxWords" style="font-size:13px; color:var(--vw-grey-4); margin-top:6px; min-height:18px; font-style:italic"></div>
+            <div id="adminPrecioMaxHint" class="field-hint"></div>
+          </div>
+          <div style="flex:2; min-width:240px">
+            <button id="adminObsToggle" type="button" onclick="toggleAdminObs()"
+              style="background:none; border:1px dashed var(--vw-grey-2); border-radius:8px; padding:8px 12px; font-size:13px; color:var(--vw-grey-4); cursor:pointer">💬 Comentario (opcional)</button>
+            <div id="adminObsWrap" style="display:none">
+              <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Comentario (opcional)
+                <a onclick="toggleAdminObs()" style="cursor:pointer; margin-left:6px; font-size:11px; color:var(--vw-blue)">ocultar</a>
+              </label>
+              <textarea id="adminObs" rows="3" placeholder="Ej: se lo dejo a ese precio si se lo lleva esta semana"
+                style="width:100%; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:14px; font-family:inherit; resize:vertical"></textarea>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end">
+          <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
+          <button class="btn-danger" onclick="rechazarUsado(${c.id})">No acepto</button>
+          <button onclick="contraofertarUsado(${c.id})" style="background:#3730a3; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">Contraofertar</button>
+          <button class="btn-success" onclick="aceptarUsado(${c.id})">Aceptar</button>
+        </div>
+      </div>`;
+  }
+
+  cont.innerHTML = `
+    <div class="modal-header">
+      <h2>#${c.id} — ${escapeHtml(cliente)}</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="detalle-section">
+        <h4>Vendedor</h4>
+        <div class="kv">
+          <span class="k">Nombre</span><span class="v">${escapeHtml(c.vendedor_nombre || c.vendedor_usuario || '')}</span>
+          ${c.cargada_por_nombre ? `<span class="k">Cargada por</span><span class="v">${escapeHtml(c.cargada_por_nombre)}</span>` : ''}
+          <span class="k">Fecha</span><span class="v">${fmtDate(c.created_at)}</span>
+          <span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${c.estado}</span></span>
+        </div>
+      </div>
+      <div class="detalle-section">
+        <h4>Usado</h4>
+        ${unidadHtml}
+      </div>
+      ${(c.observaciones_vendedor || '').trim() ? `
+        <div class="detalle-section">
+          <h4>Observaciones del vendedor</h4>
+          <div style="white-space:pre-wrap; padding:4px 0">${escapeHtml(c.observaciones_vendedor)}</div>
+        </div>` : ''}
+      ${(!isPending && (isAdmin || c.precio_max_admin || c.observaciones_admin)) ? `
+        <div class="detalle-section">
+          <h4>Respuesta</h4>
+          <div class="kv">
+            <span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${c.estado}</span></span>
+            ${c.precio_max_admin ? `<span class="k">Mejor precio máx</span><span class="v">${fmtMoney(c.precio_max_admin)}</span>` : ''}
+            ${c.admin_respuesta_at ? `<span class="k">Respondido</span><span class="v">${fmtDate(c.admin_respuesta_at)}</span>` : ''}
+          </div>
+          ${(c.observaciones_admin || '').trim() ? `
+            <div style="margin-top:10px">
+              <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Comentario del administrador</div>
+              <div style="white-space:pre-wrap; padding:8px; background:var(--vw-grey-1); border-radius:6px">${escapeHtml(c.observaciones_admin)}</div>
+            </div>` : ''}
+        </div>` : ''}
+      ${renderResultadoVentaUsadoSection(c)}
+    </div>
+    <div class="modal-footer">${footerHtml}</div>
+  `;
+  overlay.classList.remove('hidden');
+  if (isAdmin && isPending) {
+    setTimeout(() => {
+      const el = document.getElementById('adminPrecioMax');
+      if (el && el.value) onUsadoAdminPrecioInput(c.id, el);
+    }, 0);
+  }
+}
+
+// Hint en vivo del admin mientras tipea el precio: que margen le queda.
+function onUsadoAdminPrecioInput(consultaId, el) {
+  const raw = el.value.replace(/[^\d]/g, '');
+  el.value = raw ? '$' + parseInt(raw, 10).toLocaleString('es-AR') : '';
+  const words = document.getElementById('adminPrecioMaxWords');
+  if (words) {
+    const t = numToTextES(raw ? parseInt(raw, 10) : 0);
+    words.textContent = t ? `≈ ${t}` : '';
+  }
+  const hint = document.getElementById('adminPrecioMaxHint');
+  if (!hint) return;
+  const c = adminConsultasUsados.find(x => x.id === consultaId);
+  const u = c ? getUsadoStock(c.usadoid) : null;
+  if (!raw || !u || !usadosCostoOk) { hint.textContent = ''; return; }
+  const costo = Number(u.costo_toma) || 0;
+  if (!costo) { hint.textContent = 'Sin costo de toma en Oversoft: no se puede calcular el margen.'; return; }
+  const m = margenUsado(parseInt(raw, 10), costo);
+  if (!m) { hint.textContent = ''; return; }
+  hint.innerHTML = `Con ese precio: <strong style="color:${colorMargen(m)}">${(m.sobreCosto*100).toFixed(1)}%</strong> de margen (${fmtMoney(m.pesos)})`;
+}
+
+// ---------- Acciones del admin ----------
+async function responderUsado(consultaId, estado, extra) {
+  showLoading('Guardando...');
+  try {
+    await sbFetch(`consultas_usados?id=eq.${consultaId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(Object.assign({
+        estado,
+        admin_user_id: currentUser.id,
+        admin_respuesta_at: new Date().toISOString()
+      }, extra))
+    });
+    notifyEvent('consulta_usado_respondida', consultaId).catch(e => console.error(e));
+    closeModal();
+    await cargarConsultasAdminUsados();
+    hideLoading();
+    return true;
+  } catch (e) {
+    hideLoading();
+    console.error(e);
+    alert('Error: ' + (e.message || e));
+    return false;
+  }
+}
+
+async function aceptarUsado(consultaId) {
+  if (!confirm('¿Aceptar el precio pedido?')) return;
+  const obs = getAdminObs();
+  if (await responderUsado(consultaId, 'aceptada', { precio_max_admin: null, observaciones_admin: obs || null })) {
+    showToast('Precio aceptado');
+  }
+}
+
+async function rechazarUsado(consultaId) {
+  const precio = getAdminPrecioMax();
+  if (!precio) { alert('Cargá el mejor precio máximo'); return; }
+  if (!confirm(`¿Rechazar y ofrecer ${fmtMoney(precio)} como mejor precio?`)) return;
+  const obs = getAdminObs();
+  if (await responderUsado(consultaId, 'rechazada', { precio_max_admin: precio, observaciones_admin: obs || null })) {
+    showToast('Respuesta enviada');
+  }
+}
+
+async function contraofertarUsado(consultaId) {
+  const obs = getAdminObs();
+  const precio = getAdminPrecioMax();
+  if (!obs && !precio) { alert('Cargá un precio intermedio o un comentario explicando la condición.'); return; }
+  if (!confirm(`¿Enviar contraoferta${precio ? ' con precio ' + fmtMoney(precio) : ''}?`)) return;
+  if (await responderUsado(consultaId, 'contraoferta', { precio_max_admin: precio || null, observaciones_admin: obs })) {
+    showToast('Contraoferta enviada');
+  }
+}
+
+// ---------- Resultado de venta (lo marca el vendedor) ----------
+function renderResultadoVentaUsadoSection(c) {
+  const esVendedor = currentMode === 'vendedor' || currentMode === 'gerente';
+  const yaCargado = !!c.resultado_venta;
+  if (!yaCargado && !esVendedor) return '';
+  if (!yaCargado && c.estado === 'pendiente') return '';
+
+  if (yaCargado) {
+    const badge = c.resultado_venta === 'vendida'
+      ? '<span style="background:#d1fae5; color:#065f46; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:600">✓ VENDIDA</span>'
+      : '<span style="background:#fee2e2; color:#991b1b; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:600">✗ NO VENDIDA</span>';
+    return `
+      <div class="detalle-section">
+        <h4>Resultado de venta</h4>
+        <div class="kv">
+          <span class="k">Resultado</span><span class="v">${badge}</span>
+          ${c.resultado_venta_at ? `<span class="k">Cargado</span><span class="v">${fmtDate(c.resultado_venta_at)}</span>` : ''}
+        </div>
+        ${(c.motivo_no_venta || '').trim() ? `
+          <div style="margin-top:10px">
+            <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Motivo</div>
+            <div style="white-space:pre-wrap; padding:8px; background:var(--vw-grey-1); border-radius:6px">${escapeHtml(c.motivo_no_venta)}</div>
+          </div>` : ''}
+      </div>`;
+  }
+  return `
+    <div class="detalle-section">
+      <h4>Resultado de venta</h4>
+      <p style="font-size:13px; color:var(--vw-grey-4); margin-bottom:10px">¿Cómo terminó esta consulta con el cliente?</p>
+      <div id="resultadoVentaActions" style="display:flex; gap:8px; flex-wrap:wrap">
+        <button onclick="marcarVendidaUsado(${c.id})" style="background:#16a34a; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">✓ Sí, se vendió</button>
+        <button onclick="mostrarMotivoNoVenta()" style="background:#dc2626; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">✗ No se vendió</button>
+      </div>
+      <div id="resultadoVentaMotivo" class="hidden" style="margin-top:12px">
+        <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Motivo (obligatorio)</label>
+        <textarea id="motivoNoVentaTxt" rows="3" placeholder="Ej: se lo llevó otro, no le cerró el precio, apareció uno más barato..."
+          style="width:100%; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:14px; font-family:inherit; resize:vertical"></textarea>
+        <div style="display:flex; gap:8px; margin-top:8px; justify-content:flex-end">
+          <button onclick="ocultarMotivoNoVenta()" class="btn-secondary">Cancelar</button>
+          <button onclick="marcarNoVendidaUsado(${c.id})" style="background:#dc2626; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">Guardar motivo</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function marcarResultadoUsado(consultaId, resultado, motivo) {
+  showLoading('Guardando...');
+  try {
+    await sbFetch(`consultas_usados?id=eq.${consultaId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        resultado_venta: resultado,
+        motivo_no_venta: motivo || null,
+        resultado_venta_at: new Date().toISOString()
+      })
+    });
+    closeModal();
+    await cargarMisConsultasUsados();
+    hideLoading();
+    showToast(resultado === 'vendida' ? 'Marcada como vendida' : 'Marcada como no vendida');
+  } catch (e) { hideLoading(); console.error(e); alert('Error: ' + (e.message || e)); }
+}
+
+async function marcarVendidaUsado(consultaId) {
+  if (!confirm('¿Confirmar que este usado se vendió?')) return;
+  return marcarResultadoUsado(consultaId, 'vendida', null);
+}
+
+async function marcarNoVendidaUsado(consultaId) {
+  const motivo = (document.getElementById('motivoNoVentaTxt').value || '').trim();
+  if (!motivo) { alert('Cargá el motivo por el que no se vendió'); return; }
+  return marcarResultadoUsado(consultaId, 'no_vendida', motivo);
 }
 
 // ============ ADMIN USUARIOS ============
