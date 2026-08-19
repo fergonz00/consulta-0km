@@ -127,6 +127,40 @@ Configuración base en `consultas_0km_notif_config`. Reusa env vars del tasador 
 - **Ojo con el deploy**: esta función tiene **verify_jwt = ON**. Deployar **sin** `--no-verify-jwt` (al revés que las del tasador).
 - Columnas nuevas en `consultas_0km`: `recordatorios_enviados`, `ultimo_recordatorio_at`. Parámetros en la tabla `recordatorios_config` (fila `consulta_0km`): `activo`, `intervalo_min`, `max_recordatorios`, `desde`.
 
+## Consultas de USADOS (2026-08-19)
+
+El mismo circuito que las de 0km — el vendedor pide mejor precio, Fer acepta / rechaza / contraoferta, el vendedor marca después si se vendió — pero sobre **una unidad usada concreta del stock**. Pedido de Fer el 19/08/2026.
+
+Se entra por el **switch `🚗 0km` / `🔑 Usados`** arriba de todo (`#seccionTabs`). Son **dos tablas distintas** (`consultas_0km` y `consultas_usados`), por eso se cambia de lista entera en vez de mezclarlas: los `id` de las dos se pisan y un borrado o un PATCH podría ir a la fila equivocada.
+
+**Lo que NO tiene, a propósito** (pedido textual de Fer: *"sin el análisis que hay atrás de lo del 0km"*): competencia, rotación, stock del modelo, reparto y vendidos del mes. Un usado es una unidad única — no hay "otros chasis" ni ritmo de venta del modelo. **Lo único que se analiza es la ganancia nueva** contra el precio pedido.
+
+**El costo sale de OVERSOFT** (`usados.preciodetoma` = lo que se tomó real). Aclaración explícita de Fer: **no** se cae al `precio_toma_final` del tasador si Oversoft viene en 0 — ahí la pantalla dice "no tiene costo de toma cargado en Oversoft" y no calcula nada. Del tasador se usan solo km real, color y el `total_arreglos` del análisis físico, que va como **segunda lectura etiquetada** ("con arreglos del análisis físico, dato del tasador"), nunca pisando el número principal.
+
+**Margen**, con la definición de Fer: `(venta − costo) / costo` (costo 10M, venta 15M = 50%). Al lado, en chico, el margen sobre la venta (33,3%), que es el contable. Verde ≥10%, ámbar <10%, rojo negativo. El bloque muestra: costo de toma · precio publicado hoy con su margen · precio pedido con su margen · **cuánta ganancia resigna**.
+
+**Historial POR UNIDAD** (pedido: *"si antes pasé contraofertas por ese usado me figuren"*). A diferencia del 0km (que cruza por **modelo**), acá el cruce es por **`usadoid`**: es la misma unidad física, así que lo autorizado antes es directamente comparable. Lista todas las consultas ya respondidas de ese usado con fecha, vendedor, estado, precio autorizado, el **margen recalculado con el costo de hoy** y si terminó vendida.
+
+### COSTO BLINDADO — la regla que no hay que romper
+El costo y el margen **nunca** se guardan en `consultas_usados` ni viajan al browser del vendedor:
+- La tabla **no tiene columna de costo a propósito**. RLS está deshabilitado (patrón heredado) y el vendedor lee la tabla con la anon key: cualquier columna que guardemos ahí la puede leer.
+- El costo lo sirve la Edge Function **`usados-disponibles`**, que lo adjunta **solo** si las credenciales `{usuario, clave}` del POST son de `COSTO_USUARIOS` (`fngonzalez`, `fgonzalez`, `cgonzalez`) — mismo patrón que la gcia en `stock-disponible`. Vendedor, gerente, cualquier otro admin y cualquier GET reciben la lista sin costo, y con `usadosCostoOk = false` el front no puede calcular ningún margen.
+- Verificado el 19/08/2026 en producción: sin credenciales la respuesta no trae `costo_toma`; con las de Fer sí.
+
+### Piezas
+- **Tabla `consultas_usados`** (wjfgl). Snapshot de la unidad (usadoid, patente, unidad, modelo, año, km, color, estado_unidad) + `precio_publicado` (el precio al momento de pedir) + `precio_pedido` + cliente + observaciones + el bloque de respuesta/resultado igual que el 0km. Constraint de `estado` en (pendiente, aceptada, rechazada, contraoferta).
+- **Edge Function `usados-disponibles`**: mismo universo que la solapa `/usados` de portal-precios (estado=Activado, fechadeventa null, alta ≤18 meses, sin ocultas ni vendidas de `portal_usados`), físicas **y** a recibir. Precio publicado = override de `portal_usados.precio_venta` si existe, sino `preciodeventa` de Oversoft.
+- **`notify-whatsapp-consulta`**: eventos `consulta_usado_nueva` / `consulta_usado_respondida` leyendo la tabla nueva (sin items: un usado es una unidad). Config propia en `consultas_0km_notif_config`, clonada de la del 0km → **hereda los mismos destinatarios** (Fer + gerentes).
+- **`index.html`**: wizard de 5 pasos (unidad → precio → cliente → observaciones → resumen; +1 si es gerente), lista propia, y detalle del admin con ganancia + historial.
+
+**⚠️ Templates de Meta: falta crear los propios.** Hoy los eventos de usados **reusan los templates del 0km** (`consulta_0km_nueva_v2` y `consulta_0km_respondida`, misma cantidad de variables) y se distinguen con el marcador **`USADO`** al principio de `{{1}}` — mismo truco que ya usa el recordatorio de "sin responder". Funciona y se entiende, pero el resto del cuerpo habla de 0km. Cuando existan `consulta_usado_nueva` / `consulta_usado_respondida` aprobados en la WABA `1183788370595856`, cambiar las dos líneas de `EVENT_TO_TEMPLATE` y redeployar.
+
+**⏳ Pendiente**: los recordatorios de "sin responder" **todavía no barren `consultas_usados`**. El evento `consulta_usado_sin_responder` ya existe en la Edge Function y las columnas `recordatorios_enviados` / `ultimo_recordatorio_at` ya están en la tabla, pero falta agregar la fuente en `notify-sin-responder` (repo del tasador) y su fila en `recordatorios_config`.
+
+**Verificado el 19/08/2026**: alta/PATCH/constraint por REST; los dos WhatsApps end-to-end (limitados temporalmente a Fer para no molestar a Daniel, config restaurada después); el cálculo de margen, el historial por unidad y los tres pasos del wizard corridos en el navegador contra producción, sin errores de consola. Filas de prueba borradas y la secuencia reiniciada en 1.
+
+**Ojo con el stock real**: al 19/08/2026 hay **una sola** unidad consultable (Chevrolet Cruze AF935MN, a recibir, $25.900.000). El resto del stock reciente ya está vendido y la chatarra vieja cae por la ventana de 18 meses. Que la lista salga casi vacía no es un bug.
+
 ## Convenciones heredadas del tasador
 
 - Login NO hashea claves (deuda técnica conocida, NO arreglar acá sin avisar).
