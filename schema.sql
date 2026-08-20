@@ -178,3 +178,38 @@ WHERE evento = 'consulta_0km_nueva';
 -- queda como '[]' y oferta_vigente_min / gcia_vigente_min / dto_extra_pedido /
 -- gcia_resultante quedan en NULL.
 ALTER TABLE consultas_0km_items ADD COLUMN IF NOT EXISTS es_reparto BOOLEAN DEFAULT FALSE;
+
+-- 2026-08-20: ORIGEN de la unidad consultada. El vendedor elige primero de qué bolsa
+-- sale el auto y el wizard le muestra solo eso:
+--   stock              -> lo que ya le compramos a VW (físico libre + a recibir).
+--   reparto            -> lo que VW nos ofrece y todavía no tenemos. Solo las
+--                         combinaciones modelo+color que NO están en stock.
+--   sin_disponibilidad -> lo que no está ni en stock ni en el reparto. El vendedor
+--                         elige modelo y color a mano; el admin consulta al zonal.
+ALTER TABLE consultas_0km ADD COLUMN IF NOT EXISTS origen TEXT NOT NULL DEFAULT 'stock';
+ALTER TABLE consultas_0km DROP CONSTRAINT IF EXISTS consultas_0km_origen_check;
+ALTER TABLE consultas_0km ADD CONSTRAINT consultas_0km_origen_check
+  CHECK (origen IN ('stock','reparto','sin_disponibilidad'));
+CREATE INDEX IF NOT EXISTS idx_consultas_0km_origen ON consultas_0km(origen);
+
+-- 2026-08-20: estado "en_gestion" — el admin ya vio la consulta pero está esperando
+-- respuesta del gerente zonal. Sigue abierta (aparece en Pendientes) pero SALE del
+-- barrido de recordatorios de notify-sin-responder, que filtra estado='pendiente'.
+ALTER TABLE consultas_0km DROP CONSTRAINT IF EXISTS consultas_0km_estado_check;
+ALTER TABLE consultas_0km ADD CONSTRAINT consultas_0km_estado_check
+  CHECK (estado IN ('pendiente','en_gestion','aceptada','rechazada','contraoferta'));
+
+-- 2026-08-20: respuesta de disponibilidad. En las consultas sin_disponibilidad lo
+-- primero que se responde no es un precio sino si el auto se consigue. El estado
+-- sigue siendo aceptada/rechazada (para que tabs, recordatorios, resultado de venta
+-- y WhatsApp funcionen sin cambios); el matiz vive acá.
+ALTER TABLE consultas_0km ADD COLUMN IF NOT EXISTS disponibilidad TEXT;
+ALTER TABLE consultas_0km DROP CONSTRAINT IF EXISTS consultas_0km_disponibilidad_check;
+ALTER TABLE consultas_0km ADD CONSTRAINT consultas_0km_disponibilidad_check
+  CHECK (disponibilidad IS NULL OR disponibilidad IN ('se_consigue','no_se_consigue'));
+
+-- 2026-08-20: color pedido a mano (solo sin_disponibilidad; en los otros orígenes el
+-- color va dentro del snapshot JSONB `chasis`), y precio_pedido pasa a ser opcional
+-- porque una consulta puede ser solo "¿se consigue este auto?" sin pedir un número.
+ALTER TABLE consultas_0km_items ADD COLUMN IF NOT EXISTS color_pedido TEXT;
+ALTER TABLE consultas_0km_items ALTER COLUMN precio_pedido DROP NOT NULL;

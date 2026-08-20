@@ -113,6 +113,7 @@ input, select, textarea { font-family: var(--font); }
 .estado.aceptada { background:var(--green-light); color:var(--green); }
 .estado.rechazada { background:var(--red-light); color:var(--red); }
 .estado.contraoferta { background:#e0e7ff; color:#3730a3; }
+.estado.en_gestion { background:#ede9fe; color:#5b21b6; }
 .consulta-card .body { margin-top:10px; font-size:13px; color:var(--vw-grey-4); }
 .consulta-card .body strong { color:var(--vw-black); }
 .consulta-card .resumen-units { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
@@ -507,6 +508,14 @@ let rotacionData = {}; // nombreCorto -> {stock, ventasPorMes, diasVenta} — so
 // Reparto VW (stock virtual): unidades ya asignadas por VW que todavia no entraron
 // a Oversoft. Para responder "¿puedo reponer este modelo?". Solo llega si es admin.
 let repartoStockData = {};
+// Catalogo COMPLETO de modelos con precio publicado (48 hoy), tengan o no unidades.
+// Es lo unico que permite consultar un modelo del que no tenemos ni stock ni reparto.
+// [{modelo, nombreCorto, familia, precio_lista, oferta_baratito, dto_baratito, gcia_actual?}]
+let catalogoModelos = [];
+// nombreCorto -> [{color, n, ultima}] : que colores existen DE VERDAD para ese modelo
+// (18 meses de Oversoft + todo reparto_vw), ordenados por cantidad. Alimenta el
+// selector de color de las consultas "sin disponibilidad" y el bloque del admin.
+let paletaColores = {};
 let stockLimMap = {};
 // Modelos en reparto (sin stock libre actual). Map modelo -> { stock_actual }.
 // Si el modelo no figura en stockData con precio_lista, no podemos calcular analisis;
@@ -827,6 +836,8 @@ async function cargarStockOversoft() {
   if (!data || data.ok === false) throw new Error(data && data.error ? data.error : 'respuesta invalida');
 
   stockLimMap = {}; // sin uso en modo Oversoft (el precio especial ya viene resuelto en oferta_vigente)
+  catalogoModelos = data.catalogoModelos || []; // todos los modelos con precio, haya o no unidades
+  paletaColores = data.paleta || {};            // nombreCorto -> colores reales del modelo
   rotacionData = data.rotacion || {}; // comparativos Baratito por modelo (solo admin)
   repartoStockData = data.reparto || {}; // reparto VW por modelo/color (solo admin)
   stockData = (data.unidades || []).map(u => {
@@ -1040,36 +1051,69 @@ function getModelosEnReparto() {
   Object.keys(repartoMap).forEach(m => set.add(resolveModeloCanonico(m) || m));
   return set;
 }
-// Modelos a mostrar en el selector del wizard: los que tienen algun chasis elegible,
-// sea fisico/a-recibir (Oversoft) o en reparto (asignado por VW, todavia no en Oversoft).
-// Devuelve [{modelo, cantLibres, cantReparto, soloReparto, esReparto}] ordenado.
-// `esReparto` = el modelo NO tiene ningun chasis concreto (solo pasa en el fallback CSV).
-function getModelosDisponibles() {
+// Modelos a mostrar en el selector del wizard, SEGÚN EL ORIGEN elegido:
+//   stock              -> modelos con algún chasis físico libre o a recibir.
+//   reparto            -> modelos con alguna unidad de reparto en un color que NO está
+//                         en stock (si el color ya está, esa unidad no aporta nada).
+//   sin_disponibilidad -> el catálogo ENTERO (48 modelos con precio publicado), tengan
+//                         o no unidades: el punto es justamente pedir lo que no hay.
+// Devuelve [{modelo, cantLibres, cantReparto, cantRepartoNuevo, soloReparto, esReparto}].
+// `esReparto` = el modelo no tiene ningún chasis concreto (solo pasa en el fallback CSV).
+function getModelosDisponibles(origen) {
+  origen = origen || 'stock';
+  const out = [];
+  if (origen === 'sin_disponibilidad') {
+    (catalogoModelos || []).forEach(c => {
+      const chasis = getChasisLibresPorModelo(c.modelo);
+      const cantReparto = chasis.filter(x => x.enReparto).length;
+      out.push({
+        modelo: c.modelo, esReparto: false,
+        cantLibres: chasis.length - cantReparto,
+        cantReparto,
+        cantRepartoNuevo: chasisRepartoNuevoPorModelo(c.modelo).length,
+        soloReparto: false
+      });
+    });
+    // Modelos que están en stock pero que el catálogo no trae (raro: precio sin publicar).
+    new Set(stockData.filter(r => r.libre).map(r => r.modelo)).forEach(m => {
+      if (!out.some(x => x.modelo === m)) {
+        const chasis = getChasisLibresPorModelo(m);
+        const cantReparto = chasis.filter(x => x.enReparto).length;
+        out.push({ modelo: m, esReparto: false, cantLibres: chasis.length - cantReparto,
+          cantReparto, cantRepartoNuevo: chasisRepartoNuevoPorModelo(m).length, soloReparto: false });
+      }
+    });
+    return out.sort((a, b) => _cmpModelo(a.modelo, b.modelo));
+  }
+
   const libres = new Set();
   stockData.forEach(r => { if (r.libre && r.modelo) libres.add(r.modelo); });
-  const out = [];
-  // Modelos con chasis elegibles (stock fisico, a recibir o reparto)
   libres.forEach(m => {
     const chasis = getChasisLibresPorModelo(m);
     const cantReparto = chasis.filter(c => c.enReparto).length;
+    const cantLibres = chasis.length - cantReparto;
+    const cantRepartoNuevo = chasisRepartoNuevoPorModelo(m).length;
+    if (origen === 'stock' && cantLibres === 0) return;
+    if (origen === 'reparto' && cantRepartoNuevo === 0) return;
     out.push({
-      modelo: m, esReparto: false,
-      cantLibres: chasis.length - cantReparto,
-      cantReparto,
+      modelo: m, esReparto: false, cantLibres, cantReparto, cantRepartoNuevo,
       soloReparto: cantReparto > 0 && cantReparto === chasis.length
     });
   });
   // Fallback CSV espejo: modelos en reparto de los que no conocemos los chasis.
   // Resolvemos al nombre canonico para que todos los lookups (bt, competencia,
-  // stockData) matcheen.
-  Object.keys(repartoMap).forEach(m => {
-    const canon = resolveModeloCanonico(m) || m;
-    if (libres.has(canon)) return;
-    if (out.some(x => x.modelo === canon)) return;
-    out.push({ modelo: canon, esReparto: true, cantLibres: 0, cantReparto: 0, soloReparto: true });
-  });
+  // stockData) matcheen. Solo aplica al origen "reparto".
+  if (origen === 'reparto') {
+    Object.keys(repartoMap).forEach(m => {
+      const canon = resolveModeloCanonico(m) || m;
+      if (libres.has(canon)) return;
+      if (out.some(x => x.modelo === canon)) return;
+      out.push({ modelo: canon, esReparto: true, cantLibres: 0, cantReparto: 0, cantRepartoNuevo: 0, soloReparto: true });
+    });
+  }
   return out.sort((a, b) => _cmpModelo(a.modelo, b.modelo));
 }
+
 function getChasisLibresPorModelo(modelo) {
   // Ordenamos por fecha de factura ascendente (más vieja primero).
   // Las que no tienen fecha quedan al final.
@@ -1094,6 +1138,127 @@ function badgeChasis(c) {
 function txtEstadoReparto(c) {
   return (c && c.estadoReparto === 'pedida') ? 'Pedida a VW' : 'Asignada por VW';
 }
+// ============ ORIGEN DE LA UNIDAD (stock / reparto / sin disponibilidad) ============
+// El vendedor elige primero de qué bolsa quiere sacar el auto y a partir de ahí el
+// wizard le muestra solo eso:
+//   stock              -> lo que ya compramos a VW: físico libre + a recibir.
+//   reparto            -> lo que VW nos ofrece y TODAVÍA no tenemos. Solo las
+//                         combinaciones modelo+color que NO están en stock (si el
+//                         color ya está en el salón, pedirlo por reparto no aporta).
+//   sin_disponibilidad -> lo que no está ni en stock ni en reparto. El vendedor elige
+//                         modelo y color a mano; Fer consulta al zonal si se consigue.
+const ORIGENES = ['stock', 'reparto', 'sin_disponibilidad'];
+const ORIGEN_LABEL = {
+  stock: '🏬 Auto de stock',
+  reparto: '🚚 Auto en el reparto',
+  sin_disponibilidad: '🔎 Auto sin disponibilidad'
+};
+
+// Normaliza un nombre de color para comparar entre fuentes. Oversoft y reparto_vw
+// escriben distinto el mismo color: "Gris Volcan"/"Gris Volcán", "Blanco Puro"/"Blanco
+// puro", "Gris Indy metalizado"/"Gris Indy". Sin esto, una Amarok que SÍ está en el
+// salón aparece como "color que no tenemos". Gemelo de normColor() en la Edge
+// stock-disponible — si se cambia uno hay que cambiar el otro.
+function _normColor(s) {
+  let t = String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  t = t.replace(/\b(metalizado|metalico|met|efecto perla|perlado|perla|premium)\b/g, '');
+  return t.replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+// nombreCorto del modelo (la clave de paletaColores). Busca en stockData y cae al catálogo.
+function ncDeModelo(modelo) {
+  if (!modelo) return null;
+  const r = stockData.find(x => x.modelo === modelo && x.nombreCorto);
+  if (r) return r.nombreCorto;
+  const c = catalogoModelos.find(x => x.modelo === modelo || x.nombreCorto === modelo);
+  return c ? c.nombreCorto : null;
+}
+
+// Colores reales del modelo: [{color, n, ultima}] de más frecuente a menos.
+// Fallback por prefijo: las variantes "+ Pack Safe" son el mismo auto que la versión
+// base (Oversoft las carga con la descripción base), así que heredan su paleta. Sin
+// esto el vendedor no ve ningún color para "Tera Trend MSI MT + Pack Safe I".
+function paletaDeModelo(modelo) {
+  const nc = ncDeModelo(modelo);
+  if (!nc) return [];
+  if (paletaColores[nc]) return paletaColores[nc];
+  const base = nc.split('+')[0].trim();
+  if (base && base !== nc && paletaColores[base]) return paletaColores[base];
+  return [];
+}
+
+// Chasis del modelo que están EN STOCK (físico libre + a recibir; NO reparto).
+function chasisStockPorModelo(modelo) {
+  return getChasisLibresPorModelo(modelo).filter(c => !c.enReparto);
+}
+
+// Set de colores normalizados que tenemos en stock / en reparto para ese modelo.
+function coloresStockSet(modelo) {
+  return new Set(chasisStockPorModelo(modelo).map(c => _normColor(c.color)));
+}
+function coloresRepartoSet(modelo) {
+  return new Set(stockData.filter(r => r.libre && r.enReparto && r.modelo === modelo).map(c => _normColor(c.color)));
+}
+
+// Unidades EN REPARTO que aportan algo que no tenemos: su color no está en stock.
+// Es la regla de la opción (b): si VW nos ofrece un Polo Track blanco y ya tenemos
+// uno blanco en el salón, esa unidad de reparto no le sirve al vendedor.
+function chasisRepartoNuevoPorModelo(modelo) {
+  const enStock = coloresStockSet(modelo);
+  return stockData
+    .filter(r => r.libre && r.enReparto && r.modelo === modelo && !enStock.has(_normColor(r.color)))
+    .sort((a, b) => (a.color || '').localeCompare(b.color || ''));
+}
+
+// Precio de referencia del modelo. Para "sin disponibilidad" el modelo puede no tener
+// NINGUNA unidad en stockData, así que cae al catálogo (snapshot del Motor Baratito).
+// Devuelve null si el modelo no tiene precio publicado.
+function refPrecioModelo(modelo) {
+  const conStock = stockData.filter(r => r.modelo === modelo && r.oferta_vigente > 0);
+  if (conStock.length) {
+    let best = conStock[0];
+    conStock.forEach(c => { if (c.oferta_vigente < best.oferta_vigente) best = c; });
+    return { precio_lista: best.precio_lista, oferta: best.oferta_vigente, gcia: best.gcia_vigente || 0, fuente: 'stock' };
+  }
+  const c = catalogoModelos.find(x => x.modelo === modelo || x.nombreCorto === modelo);
+  if (c && c.oferta_baratito > 0) {
+    return { precio_lista: c.precio_lista, oferta: c.oferta_baratito, gcia: c.gcia_actual || 0, fuente: 'catalogo' };
+  }
+  const pl = getPrecioListaModelo(modelo);
+  return (!isNaN(pl) && pl > 0) ? { precio_lista: pl, oferta: null, gcia: 0, fuente: 'lista' } : null;
+}
+
+// Qué tenemos HOY de un modelo+color pedido. Es la respuesta a "me piden un auto que no
+// está: ¿qué hay de eso?" — la usa el bloque del admin y también el vendedor para no
+// pedir por "sin disponibilidad" algo que en realidad está.
+// Devuelve {colorExacto:{stock:[],reparto:[]}, otrosColoresStock:[], otrosColoresReparto:[], historico:{n,ultima}|null}
+function queHayDe(modelo, color) {
+  const k = _normColor(color);
+  const stock = chasisStockPorModelo(modelo);
+  const rep = stockData.filter(r => r.libre && r.enReparto && r.modelo === modelo);
+  const agrupar = (arr) => {
+    const m = new Map();
+    arr.forEach(c => {
+      const kk = _normColor(c.color);
+      if (!m.has(kk)) m.set(kk, { color: c.color, n: 0, unidades: [] });
+      const e = m.get(kk); e.n++; e.unidades.push(c);
+    });
+    return Array.from(m.values()).sort((a, b) => b.n - a.n);
+  };
+  const hist = k ? (paletaDeModelo(modelo).find(x => _normColor(x.color) === k) || null) : null;
+  return {
+    colorExacto: {
+      stock: k ? stock.filter(c => _normColor(c.color) === k) : [],
+      reparto: k ? rep.filter(c => _normColor(c.color) === k) : []
+    },
+    otrosColoresStock: agrupar(k ? stock.filter(c => _normColor(c.color) !== k) : stock),
+    otrosColoresReparto: agrupar(k ? rep.filter(c => _normColor(c.color) !== k) : rep),
+    totalStock: stock.length,
+    totalReparto: rep.length,
+    historico: hist
+  };
+}
+
 // Precio de lista por modelo, util para items en reparto que no tienen chasis seleccionado.
 // Prioriza stockData (cualquier registro, libre o no) y cae a preciosListaBtMap (tab "bt"
 // del espejo, que incluye TODOS los modelos del catalogo aunque no figuren en stock).
@@ -1111,6 +1276,7 @@ function getPrecioListaModelo(modelo) {
 async function showNuevaConsulta() {
   // Reset state
   formData = {
+    origen: null, // 'stock' | 'reparto' | 'sin_disponibilidad' — primera pregunta del wizard
     unidades: [], // se setea según cantidad elegida en el primer paso
     tipoCliente: null,
     cliNombre: '', cliApellido: '',
@@ -1134,7 +1300,7 @@ async function showNuevaConsulta() {
     if (vendedoresCache.length === 0) await cargarVendedores();
     goToStep('gerente-vendedor');
   } else {
-    goToStep('cantidad-unidades');
+    goToStep('origen');
   }
 }
 
@@ -1184,13 +1350,17 @@ function getNextStep(step) {
   if (step === 'u-cliente') return 'u-observaciones';
   if (step === 'u-observaciones') return 'u-resumen';
 
-  if (step === 'gerente-vendedor') return 'cantidad-unidades';
+  if (step === 'gerente-vendedor') return 'origen';
+  if (step === 'origen') return 'cantidad-unidades';
   if (step === 'cantidad-unidades') return 'modelos';
   if (step === 'modelos') {
+    // Sin disponibilidad: no hay chasis que elegir, el vendedor tipea el color que quiere.
+    if (formData.origen === 'sin_disponibilidad') return 'color-sd';
     // Si TODAS las unidades son de reparto, no hay chasis para elegir → saltar a precios.
     const todasReparto = formData.unidades.every(u => u.esReparto);
     return todasReparto ? 'precios' : 'colores';
   }
+  if (step === 'color-sd') return 'precios';
   if (step === 'colores') return 'precios';
   if (step === 'precios') return 'tipo-cliente';
   if (step === 'tipo-cliente') {
@@ -1227,8 +1397,9 @@ function getNextStep(step) {
 function totalSteps() {
   // Usados: unidad, precio, cliente, observaciones, resumen (+ vendedor si gerente)
   if (wizardTipo === 'usado') return currentMode === 'gerente' ? 6 : 5;
-  // Pasos fijos: cantidad, modelos, colores, precios, tipo-cliente, nombre, ubicación, financia, vs-otro, observaciones, resumen
-  let n = 11;
+  // Pasos fijos: origen, cantidad, modelos, color(es), precios, tipo-cliente, nombre,
+  // ubicación, financia, vs-otro, observaciones, resumen
+  let n = 12;
   if (currentMode === 'gerente') n += 1; // elegir vendedor
   if (formData.tipoCliente === 'particular') n += 2; // fuente, usado
   if (formData.fuenteDato === 'otro') n += 1;
@@ -1320,6 +1491,136 @@ function onSelectGerenteVendedor(id) {
   if (btn) btn.disabled = !gerenteVendedorActivo;
 }
 
+// ----- Origen: de dónde sale el auto (primera pregunta del wizard 0km) -----
+STEP_RENDERERS['origen'] = () => {
+  const nStock = getModelosDisponibles('stock').reduce((a, m) => a + m.cantLibres, 0);
+  const mStock = getModelosDisponibles('stock').length;
+  const rep = getModelosDisponibles('reparto');
+  const nRep = rep.reduce((a, m) => a + m.cantRepartoNuevo, 0);
+  const mCat = getModelosDisponibles('sin_disponibilidad').length;
+  const sel = (o) => formData.origen === o ? 'selected' : '';
+  return {
+    body: `
+      <h2>¿Qué auto vas a consultar?</h2>
+      <p class="step-hint">Elegí de dónde sale la unidad. Según lo que marques te muestro un listado distinto.</p>
+      <div class="opt-list">
+        <div class="opt ${sel('stock')}" onclick="selectOrigen('stock')">
+          <span class="opt-icon">🏬</span>
+          <div>
+            <div><strong>Auto de stock</strong></div>
+            <div class="muted" style="font-size:12px; margin-top:2px">Los que ya le compramos a VW: en el salón y a recibir. ${nStock} unidad${nStock === 1 ? '' : 'es'} en ${mStock} modelo${mStock === 1 ? '' : 's'}.</div>
+          </div>
+        </div>
+        <div class="opt ${sel('reparto')}" onclick="selectOrigen('reparto')">
+          <span class="opt-icon">🚚</span>
+          <div>
+            <div><strong>Auto en el reparto</strong></div>
+            <div class="muted" style="font-size:12px; margin-top:2px">Lo que VW nos ofrece comprar y todavía no tenemos. ${nRep} unidad${nRep === 1 ? '' : 'es'} en ${rep.length} modelo${rep.length === 1 ? '' : 's'}.</div>
+          </div>
+        </div>
+        <div class="opt ${sel('sin_disponibilidad')}" onclick="selectOrigen('sin_disponibilidad')">
+          <span class="opt-icon">🔎</span>
+          <div>
+            <div><strong>Auto sin disponibilidad</strong></div>
+            <div class="muted" style="font-size:12px; margin-top:2px">No lo tenemos ni en stock ni en el reparto. Elegís modelo y color, y Fer consulta al zonal si se consigue. Los ${mCat} modelos del catálogo.</div>
+          </div>
+        </div>
+      </div>
+    `,
+    footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
+  };
+};
+
+function selectOrigen(o) {
+  if (!ORIGENES.includes(o)) return;
+  // Cambiar de origen invalida los modelos/colores ya elegidos: el listado es otro.
+  if (formData.origen && formData.origen !== o) {
+    formData.unidades.forEach(u => { u.modelo = null; u.chasisSeleccionados = []; u.colorPedido = null; u.esReparto = false; u.precioPedido = null; });
+  }
+  formData.origen = o;
+  renderStep();
+  setTimeout(() => nextStep(), 150);
+}
+
+// ----- Color pedido (solo origen "sin disponibilidad") -----
+// El vendedor elige un color que NO tenemos ni en stock ni en el reparto. La lista sale
+// de la paleta real del modelo (lo que VW nos mandó de verdad en los últimos 18 meses +
+// todo el reparto histórico); los colores que SÍ están disponibles se muestran bloqueados
+// con el cartel de dónde están, para que no cargue por acá algo que puede vender ya.
+STEP_RENDERERS['color-sd'] = () => {
+  const allOk = formData.unidades.every(u => (u.colorPedido || '').trim());
+  return {
+    body: `
+      <h2>¿Qué color querés consultar?</h2>
+      <p class="step-hint">Estos son los colores que VW nos mandó de verdad para cada modelo. Los que aparecen en gris ya están disponibles — esos conviene pedirlos por <strong>stock</strong> o <strong>reparto</strong>.</p>
+      ${formData.unidades.map((u, idx) => {
+        const enStock = coloresStockSet(u.modelo);
+        const enRep = coloresRepartoSet(u.modelo);
+        // Primero los que SÍ se pueden pedir (es lo que vino a hacer el vendedor) y
+        // abajo los que ya están disponibles, bloqueados. Dentro de cada grupo, los
+        // colores que VW nos manda más seguido arriba.
+        const disponible = (c) => enStock.has(_normColor(c.color)) || enRep.has(_normColor(c.color));
+        const paleta = paletaDeModelo(u.modelo).slice()
+          .sort((a, b) => (disponible(a) ? 1 : 0) - (disponible(b) ? 1 : 0) || b.n - a.n);
+        const filas = paleta.map(c => {
+          const k = _normColor(c.color);
+          const hayStock = enStock.has(k), hayRep = enRep.has(k);
+          const bloqueado = hayStock || hayRep;
+          const checked = _normColor(u.colorPedido || '') === k;
+          const donde = hayStock ? 'ya hay en stock' : (hayRep ? 'ya hay en reparto' : '');
+          const ultima = c.ultima ? new Date(c.ultima + 'T00:00:00').toLocaleDateString('es-AR', { month: 'short', year: 'numeric' }) : null;
+          return `
+            <label class="item ${checked ? 'selected' : ''}" style="${bloqueado ? 'opacity:.45; cursor:not-allowed' : ''}">
+              <input type="radio" name="colorSd${idx}" ${checked ? 'checked' : ''} ${bloqueado ? 'disabled' : ''}
+                onchange="setColorPedido(${idx}, ${JSON.stringify(c.color).replace(/"/g, '&quot;')})">
+              <div class="info">
+                <div class="title">${escapeHtml(c.color)}</div>
+                <div class="sub">${bloqueado ? donde : `tuvimos ${c.n}${ultima ? ' · última ' + ultima : ''}`}</div>
+              </div>
+            </label>`;
+        }).join('');
+        const otroSel = (u.colorPedido || '').trim() && !paleta.some(c => _normColor(c.color) === _normColor(u.colorPedido));
+        return `
+          <div class="resumen-card" style="margin-bottom:14px">
+            <h5>Unidad ${idx + 1}: ${escapeHtml(u.modelo || '—')}</h5>
+            <div class="scroll-list" style="max-height:360px; margin-top:10px">
+              ${filas || '<div class="empty" style="padding:10px"><p>De este modelo no tenemos histórico de colores. Escribilo abajo.</p></div>'}
+            </div>
+            <div class="field" style="margin-top:10px">
+              <label class="field-label">Otro color (escribilo)</label>
+              <input id="colorOtro${idx}" type="text" placeholder="Ej: Azul Egeo"
+                value="${otroSel ? escapeHtml(u.colorPedido) : ''}"
+                oninput="setColorPedidoLibre(${idx}, this.value)">
+            </div>
+          </div>`;
+      }).join('')}
+    `,
+    footer: `
+      <button class="btn-back" onclick="wizardBack()">Atrás</button>
+      <button class="btn-next" id="btnNext" ${allOk ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+    `
+  };
+};
+
+function setColorPedido(idx, color) {
+  formData.unidades[idx].colorPedido = color;
+  const inp = document.getElementById('colorOtro' + idx);
+  if (inp) inp.value = '';
+  const btn = document.getElementById('btnNext');
+  if (btn) btn.disabled = !formData.unidades.every(u => (u.colorPedido || '').trim());
+}
+function setColorPedidoLibre(idx, txt) {
+  formData.unidades[idx].colorPedido = (txt || '').trim();
+  if ((txt || '').trim()) {
+    document.querySelectorAll(`input[name="colorSd${idx}"]`).forEach(r => { r.checked = false; });
+    document.querySelectorAll(`input[name="colorSd${idx}"]`).forEach(r => {
+      const lbl = r.closest('label'); if (lbl) lbl.classList.remove('selected');
+    });
+  }
+  const btn = document.getElementById('btnNext');
+  if (btn) btn.disabled = !formData.unidades.every(u => (u.colorPedido || '').trim());
+}
+
 // ----- Cantidad de unidades -----
 STEP_RENDERERS['cantidad-unidades'] = () => ({
   body: `
@@ -1336,29 +1637,38 @@ STEP_RENDERERS['cantidad-unidades'] = () => ({
 });
 
 // ----- Modelos en paralelo (1 select por unidad) -----
+// El listado depende del origen elegido en el primer paso.
 STEP_RENDERERS['modelos'] = () => {
-  const modelos = getModelosDisponibles();
-  const conReparto = modelos.filter(m => m.esReparto || m.cantReparto > 0).length;
-  const hint = conReparto > 0
-    ? `${modelos.length} modelos disponibles (entre paréntesis los chasis; "reparto" = asignados por VW, todavía no en el concesionario).`
-    : `${modelos.length} modelos con stock disponible. (cantidad libre entre paréntesis)`;
+  const origen = formData.origen || 'stock';
+  const modelos = getModelosDisponibles(origen);
+  const hint = origen === 'stock'
+    ? `${modelos.length} modelos con unidades en stock. Entre paréntesis, los chasis libres (incluye los "a recibir").`
+    : (origen === 'reparto'
+      ? `${modelos.length} modelos con unidades en el reparto en un color que NO tenemos en stock. Entre paréntesis, cuántas.`
+      : `El catálogo completo: ${modelos.length} modelos. Elegí cualquiera — después pedís el color.`);
   const allOk = formData.unidades.every(u => u.modelo);
+  const etiqueta = (m) => {
+    if (origen === 'stock') return `${m.cantLibres}`;
+    if (origen === 'reparto') return m.esReparto ? 'reparto' : `${m.cantRepartoNuevo} en reparto`;
+    // sin disponibilidad: avisamos qué hay para que no pida por acá algo que ya está
+    const partes = [];
+    if (m.cantLibres > 0) partes.push(`${m.cantLibres} en stock`);
+    if (m.cantReparto > 0) partes.push(`${m.cantReparto} en reparto`);
+    return partes.length ? partes.join(' · ') : 'sin unidades';
+  };
   return {
     body: `
       <h2>${formData.unidades.length === 1 ? '¿Qué modelo querés consultar?' : 'Modelo de cada unidad'}</h2>
       <p class="step-hint">${hint}</p>
+      ${modelos.length === 0 ? '<div class="empty"><div class="icon">📭</div><p>No hay modelos para este origen. Volvé atrás y elegí otro.</p></div>' : ''}
       ${formData.unidades.map((u, idx) => `
         <div class="field" style="margin-bottom:14px">
           <label class="field-label">Unidad ${idx + 1}</label>
           <select onchange="setUnidadModelo(${idx}, this.value)">
             <option value="">— Elegir modelo —</option>
             ${modelos.map(m => {
-              const etq = m.esReparto ? 'reparto'
-                : (m.cantReparto > 0
-                    ? (m.cantLibres > 0 ? `${m.cantLibres} + ${m.cantReparto} en reparto` : `${m.cantReparto} en reparto`)
-                    : m.cantLibres);
               const selected = u.modelo === m.modelo ? 'selected' : '';
-              return `<option value="${escapeHtml(m.modelo)}" ${selected}>${escapeHtml(m.modelo)} (${etq})</option>`;
+              return `<option value="${escapeHtml(m.modelo)}" ${selected}>${escapeHtml(m.modelo)} (${etiqueta(m)})</option>`;
             }).join('')}
           </select>
         </div>
@@ -1372,13 +1682,21 @@ STEP_RENDERERS['modelos'] = () => {
 };
 
 // ----- Colores en paralelo -----
+// Origen "stock": solo chasis físicos / a recibir.
+// Origen "reparto": solo unidades de reparto cuyo color NO está en stock, con el aviso
+// de qué colores sí tenemos (para que el vendedor sepa qué le está ofreciendo al cliente).
 STEP_RENDERERS['colores'] = () => {
-  // Las unidades de reparto no eligen color → no las validamos ni renderizamos.
+  const origen = formData.origen || 'stock';
+  const listaDe = (modelo) => origen === 'reparto' ? chasisRepartoNuevoPorModelo(modelo) : chasisStockPorModelo(modelo);
+  // Las unidades de reparto sin chasis (fallback CSV) no eligen color → no las validamos.
   const allOk = formData.unidades.every(u => u.esReparto || u.chasisSeleccionados.length > 0);
+  const hint = origen === 'reparto'
+    ? 'Estas unidades <strong>no están en el concesionario</strong>: VW ya nos las asignó con ese color y las podemos comprar. Solo salen las que no tenemos en stock.'
+    : 'Hasta 3 chasis por unidad. Tocá para seleccionar. Los marcados <strong>A RECIBIR</strong> ya se los compramos a VW y están en camino.';
   return {
     body: `
       <h2>Elegí los colores</h2>
-      <p class="step-hint">Hasta 3 chasis por unidad. Tocá para seleccionar. Los marcados <strong>EN REPARTO</strong> no están todavía en el concesionario: VW ya nos los asignó con ese color y se pueden vender igual.</p>
+      <p class="step-hint">${hint}</p>
       ${formData.unidades.map((u, idx) => {
         if (u.esReparto) {
           return `
@@ -1388,12 +1706,21 @@ STEP_RENDERERS['colores'] = () => {
             </div>
           `;
         }
-        const chasis = getChasisLibresPorModelo(u.modelo);
+        const chasis = listaDe(u.modelo);
+        // En origen reparto avisamos qué colores SÍ están en el salón, así el vendedor
+        // puede ofrecer una alternativa inmediata en vez de esperar el reparto.
+        const yaEnStock = origen === 'reparto' ? chasisStockPorModelo(u.modelo) : [];
+        const avisoStock = yaEnStock.length
+          ? `<div style="font-size:12px; background:#ecfdf5; border:1px solid #a7f3d0; color:#065f46; border-radius:8px; padding:6px 10px; margin-top:8px">
+               ✔ De este modelo ya tenemos en stock: ${[...new Set(yaEnStock.map(c => c.color))].map(escapeHtml).join(' · ')}</div>`
+          : `<div style="font-size:12px; background:#fef3c7; border:1px solid #fcd34d; color:#78350f; border-radius:8px; padding:6px 10px; margin-top:8px">
+               ⚠ De este modelo <strong>no tenemos ninguna unidad en stock</strong>.</div>`;
         return `
           <div class="resumen-card" style="margin-bottom:14px">
             <h5>Unidad ${idx+1}: ${escapeHtml(u.modelo || '—')}</h5>
+            ${origen === 'reparto' ? avisoStock : ''}
             <div class="scroll-list" style="max-height:240px; margin-top:10px">
-              ${chasis.length === 0 ? '<div class="empty"><p>Sin chasis libres</p></div>' : chasis.map(c => {
+              ${chasis.length === 0 ? '<div class="empty"><p>Sin unidades para este origen</p></div>' : chasis.map(c => {
                 const checked = u.chasisSeleccionados.includes(c.serie);
                 const disabled = !checked && u.chasisSeleccionados.length >= 3;
                 const fechaTxt = fmtFechaCorta(c.fecha_factura);
@@ -1402,7 +1729,7 @@ STEP_RENDERERS['colores'] = () => {
                     <input type="checkbox" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="toggleChasisParalelo(${idx}, '${escapeHtml(c.serie)}')">
                     <div class="info">
                       <div class="title">${escapeHtml(c.color || '—')}${badgeChasis(c)}</div>
-                      <div class="sub">${escapeHtml(c.serie)}${c.enReparto ? ' · ' + txtEstadoReparto(c) : (fechaTxt ? (c.aRecibir ? ' · Pedido ' : ' · Fact ') + fechaTxt : '')}</div>
+                      <div class="sub">${escapeHtml(c.serie)}${c.enReparto ? ' · ' + txtEstadoReparto(c) + ' · color que no hay en stock' : (fechaTxt ? (c.aRecibir ? ' · Pedido ' : ' · Fact ') + fechaTxt : '')}</div>
                     </div>
                     <div class="right">
                       ${fmtMoney(c.oferta_vigente)}
@@ -1425,47 +1752,59 @@ STEP_RENDERERS['colores'] = () => {
 
 // ----- Precios en paralelo (con análisis live por unidad) -----
 STEP_RENDERERS['precios'] = () => {
+  const sinDisp = formData.origen === 'sin_disponibilidad';
   // Pre-cargamos precio_pedido con la oferta vigente del modelo como referencia
   // (el vendedor lo ajusta segun lo que pidio el cliente). Vale tanto para stock como
   // para reparto, donde la oferta sale de cualquier registro de stockData del modelo.
-  formData.unidades.forEach(u => {
-    if (u.precioPedido != null || !u.modelo) return;
-    let registros;
-    if (u.esReparto) {
-      registros = stockData.filter(r => r.modelo === u.modelo);
-    } else if (u.chasisSeleccionados && u.chasisSeleccionados.length > 0) {
-      registros = u.chasisSeleccionados.map(s => stockData.find(r => r.serie === s)).filter(Boolean);
-    } else {
-      registros = stockData.filter(r => r.libre && r.modelo === u.modelo);
-    }
-    let min = Infinity;
-    registros.forEach(c => {
-      if (!isNaN(c.oferta_vigente) && c.oferta_vigente < min) min = c.oferta_vigente;
+  // En "sin disponibilidad" NO se pre-carga: el precio es opcional (puede estar
+  // consultando solo si el auto se consigue) y un valor puesto solo se pediría de gusto.
+  if (!sinDisp) {
+    formData.unidades.forEach(u => {
+      if (u.precioPedido != null || !u.modelo) return;
+      let registros;
+      if (u.esReparto) {
+        registros = stockData.filter(r => r.modelo === u.modelo);
+      } else if (u.chasisSeleccionados && u.chasisSeleccionados.length > 0) {
+        registros = u.chasisSeleccionados.map(s => stockData.find(r => r.serie === s)).filter(Boolean);
+      } else {
+        registros = stockData.filter(r => r.libre && r.modelo === u.modelo);
+      }
+      let min = Infinity;
+      registros.forEach(c => {
+        if (!isNaN(c.oferta_vigente) && c.oferta_vigente < min) min = c.oferta_vigente;
+      });
+      if (isFinite(min) && min > 0) u.precioPedido = Math.round(min);
     });
-    if (isFinite(min) && min > 0) u.precioPedido = Math.round(min);
-  });
-  const allOk = formData.unidades.every(u => u.precioPedido && u.precioPedido > 0);
+  }
+  // Sin disponibilidad: el precio no es obligatorio (la consulta puede ser solo "¿se consigue?").
+  const allOk = sinDisp || formData.unidades.every(u => u.precioPedido && u.precioPedido > 0);
   return {
     body: `
-      <h2>Precio pedido</h2>
-      <p class="step-hint">Para cada unidad, ingresá el precio que pidió el cliente. <strong>Con flete y formulario incluido</strong>.</p>
+      <h2>${sinDisp ? '¿Querés pedir un precio?' : 'Precio pedido'}</h2>
+      <p class="step-hint">${sinDisp
+        ? 'Este auto no lo tenemos, así que lo primero que se responde es <strong>si se consigue</strong>. Si además el cliente ya te pasó un número, cargalo; si no, dejalo vacío y va como consulta de disponibilidad.'
+        : 'Para cada unidad, ingresá el precio que pidió el cliente. <strong>Con flete y formulario incluido</strong>.'}</p>
       ${formData.unidades.map((u, idx) => {
         const colores = u.chasisSeleccionados.map(s => {
           const c = stockData.find(r => r.serie === s);
           return c ? c.color : s;
         }).join(' / ');
-        const headerExtra = u.esReparto
-          ? ' <span class="badge" style="background:#fbbf24; color:#78350f; margin-left:6px">REPARTO</span>'
-          : '';
-        const sub = u.esReparto
-          ? `<p class="muted">Sin chasis en stock — viene en reparto.</p>`
-          : `<p class="muted">Colores: ${escapeHtml(colores) || '—'}</p>`;
+        const headerExtra = sinDisp
+          ? ' <span class="badge" style="background:#e0e7ff; color:#3730a3; margin-left:6px">SIN DISPONIBILIDAD</span>'
+          : (u.esReparto ? ' <span class="badge" style="background:#fbbf24; color:#78350f; margin-left:6px">REPARTO</span>' : '');
+        const ref = sinDisp ? refPrecioModelo(u.modelo) : null;
+        const sub = sinDisp
+          ? `<p class="muted">Color pedido: <strong>${escapeHtml(u.colorPedido || '—')}</strong></p>
+             ${ref && ref.oferta ? `<p class="muted" style="margin-top:4px">Precio de referencia (el publicado hoy): <strong>${fmtMoney(ref.oferta)}</strong></p>` : ''}`
+          : (u.esReparto
+            ? `<p class="muted">Sin chasis en stock — viene en reparto.</p>`
+            : `<p class="muted">Colores: ${escapeHtml(colores) || '—'}</p>`);
         return `
           <div class="resumen-card" style="margin-bottom:14px">
             <h5>Unidad ${idx+1}: ${escapeHtml(u.modelo || '—')}${headerExtra}</h5>
             ${sub}
             <div class="field" style="margin-top:10px">
-              <input id="precioPedido${idx}" type="text" inputmode="numeric" placeholder="$0"
+              <input id="precioPedido${idx}" type="text" inputmode="numeric" placeholder="${sinDisp ? 'Opcional — dejalo vacío si solo consultás disponibilidad' : '$0'}"
                 value="${u.precioPedido != null ? '$' + Math.round(u.precioPedido).toLocaleString('es-AR') : ''}"
                 oninput="onPrecioPedidoInput(${idx}, this)"
                 style="font-size:20px; font-weight:600; padding:14px; letter-spacing:0.5px">
@@ -1720,8 +2059,9 @@ STEP_RENDERERS['observaciones'] = () => ({
 STEP_RENDERERS['resumen'] = () => {
   const f = formData;
   const cliente = f.tipoCliente === 'particular' ? `${f.cliNombre} ${f.cliApellido}` : f.reventaNombre;
+  const sinDisp = f.origen === 'sin_disponibilidad';
   const unidadesHtml = f.unidades.map((u, idx) => {
-    const a = calcularAnalisisUnidad(u);
+    const a = calcularAnalisisUnidad({ ...u, sinDisponibilidad: sinDisp });
     const chasisSel = u.chasisSeleccionados.map(s => stockData.find(r => r.serie === s)).filter(Boolean);
     const colores = u.chasisSeleccionados.map(s => {
       const c = stockData.find(r => r.serie === s);
@@ -1733,15 +2073,23 @@ STEP_RENDERERS['resumen'] = () => {
     const repartoBadge = soloReparto
       ? ' <span class="badge" style="background:#c7d2fe; color:#312e81; margin-left:6px">EN REPARTO</span>'
       : '';
-    const coloresRow = u.esReparto
-      ? `<p class="muted" style="margin:6px 0">Sin chasis — viene en reparto.</p>`
-      : `<p>Colores: ${escapeHtml(colores)}</p>`;
+    const coloresRow = sinDisp
+      ? `<p>Color pedido: <strong>${escapeHtml(u.colorPedido || '—')}</strong></p>`
+      : (u.esReparto
+        ? `<p class="muted" style="margin:6px 0">Sin chasis — viene en reparto.</p>`
+        : `<p>Colores: ${escapeHtml(colores)}</p>`);
+    const badgeSd = sinDisp
+      ? ' <span class="badge" style="background:#e0e7ff; color:#3730a3; margin-left:6px">SIN DISPONIBILIDAD</span>'
+      : '';
+    const filaPrecio = u.precioPedido
+      ? `<div class="precio-row"><span>Precio pedido:</span><strong>${fmtMoney(u.precioPedido)}</strong></div>`
+      : `<div class="precio-row"><span>Precio:</span><strong>Solo consulta de disponibilidad</strong></div>`;
     return `
       <div class="resumen-card">
-        <h5>Unidad ${idx+1}: ${escapeHtml(u.modelo)}${repartoBadge}</h5>
+        <h5>Unidad ${idx+1}: ${escapeHtml(u.modelo)}${sinDisp ? badgeSd : repartoBadge}</h5>
         ${coloresRow}
-        <div class="precio-row"><span>Precio pedido:</span><strong>${fmtMoney(u.precioPedido)}</strong></div>
-        ${a ? `<div class="precio-row"><span>Dto extra pedido:</span><strong>${fmtPct(a.dto_extra_pedido)}</strong></div>` : ''}
+        ${filaPrecio}
+        ${(a && a.dto_extra_pedido != null) ? `<div class="precio-row"><span>Dto extra pedido:</span><strong>${fmtPct(a.dto_extra_pedido)}</strong></div>` : ''}
       </div>
     `;
   }).join('');
@@ -1797,7 +2145,7 @@ function selectGerenteVendedor(id, usuario, nombre) {
 }
 function selectCantidad(n) {
   while (formData.unidades.length > n) formData.unidades.pop();
-  while (formData.unidades.length < n) formData.unidades.push({ modelo: null, chasisSeleccionados: [], precioPedido: null, esReparto: false });
+  while (formData.unidades.length < n) formData.unidades.push({ modelo: null, chasisSeleccionados: [], colorPedido: null, precioPedido: null, esReparto: false });
   nextStep();
 }
 function setUnidadModelo(idx, modelo) {
@@ -1805,6 +2153,7 @@ function setUnidadModelo(idx, modelo) {
   const modeloAnterior = u.modelo;
   u.modelo = modelo || null;
   u.chasisSeleccionados = [];
+  if (modelo !== modeloAnterior) u.colorPedido = null;
   // Si el modelo elegido esta solo en reparto (sin chasis libres), marcamos la unidad.
   // En ese caso el paso "colores" se saltea. Usamos el set canonico porque el modelo
   // viene del selector con el nombre canonico (resuelto contra stockData/bt).
@@ -1831,9 +2180,12 @@ function onPrecioPedidoInput(idx, el) {
   // Update solo el análisis live de esta unidad (sin re-render full → no pierde foco)
   updateDtoExtra(idx);
   updatePrecioWords(idx);
-  // Habilitar botón Siguiente
+  // Habilitar botón Siguiente. En "sin disponibilidad" el precio es opcional: la
+  // consulta puede ser solo "¿se consigue este auto?".
   const btn = document.getElementById('btnNext');
-  if (btn) btn.disabled = !formData.unidades.every(u => u.precioPedido && u.precioPedido > 0);
+  if (btn) btn.disabled = formData.origen === 'sin_disponibilidad'
+    ? false
+    : !formData.unidades.every(u => u.precioPedido && u.precioPedido > 0);
 }
 function updatePrecioWords(idx) {
   const div = document.getElementById('precioWords' + idx);
@@ -1846,7 +2198,13 @@ function updateDtoExtra(idx) {
   const div = document.getElementById('dtoExtra' + idx);
   if (!div) return;
   const u = formData.unidades[idx];
-  const a = calcularAnalisisUnidad(u);
+  // Sin disponibilidad y sin precio: no hay nada que analizar, es una consulta de
+  // disponibilidad pura. Se lo decimos en vez de pedirle un precio que no necesita.
+  if (formData.origen === 'sin_disponibilidad' && !u.precioPedido) {
+    div.innerHTML = '<span style="color:var(--vw-grey-3)">Sin precio: va como consulta de disponibilidad.</span>';
+    return;
+  }
+  const a = calcularAnalisisUnidad({ ...u, sinDisponibilidad: formData.origen === 'sin_disponibilidad' });
   if (!a) { div.innerHTML = '<span style="color:var(--vw-grey-3)">Cargá el precio para ver el análisis</span>'; return; }
   // Si no hay oferta vigente (caso muy raro de reparto sin registros en stockData),
   // mostramos solo el precio de lista.
@@ -1897,6 +2255,21 @@ function updateNextEnabled() {
 // ============ Análisis ============
 function calcularAnalisisUnidad(u) {
   if (!u || !u.modelo || u.precioPedido == null || isNaN(u.precioPedido)) return null;
+  // "Sin disponibilidad": el modelo puede no tener NINGUNA unidad en stockData (hoy 20
+  // de los 48 del catalogo). El analisis se hace igual contra el precio publicado del
+  // catalogo — mismo snapshot del Motor Baratito que usa todo el resto — asi el
+  // vendedor ve cuanto descuento extra esta pidiendo aunque el auto no exista todavia.
+  if (u.sinDisponibilidad) {
+    const ref = refPrecioModelo(u.modelo);
+    if (!ref || !ref.precio_lista) return null;
+    if (ref.oferta == null) {
+      return { oferta_vigente_min: null, gcia_vigente_min: null, precio_lista: ref.precio_lista,
+        dto_extra_pedido: null, gcia_resultante: null, chasisSnapshot: [] };
+    }
+    const dto = (ref.oferta - u.precioPedido) / ref.precio_lista;
+    return { oferta_vigente_min: ref.oferta, gcia_vigente_min: ref.gcia, precio_lista: ref.precio_lista,
+      dto_extra_pedido: dto, gcia_resultante: (ref.gcia || 0) - dto, chasisSnapshot: [] };
+  }
   // Para unidades en reparto no hay chasis seleccionados, pero el analisis se calcula igual:
   // tomamos cualquier registro de stockData con el mismo modelo (libre o vendido — los modelos
   // en reparto tipicamente tienen chasis pasados con su oferta_vigente y gcia_actual). Y para
@@ -1976,11 +2349,18 @@ function analisisAdminVivo(it) {
 // ============ SUBMIT ============
 async function submitConsulta() {
   const f = formData;
+  const sinDisp = f.origen === 'sin_disponibilidad';
   const errs = [];
   f.unidades.forEach((u, i) => {
     if (!u.modelo) errs.push(`Unidad ${i+1}: falta modelo`);
-    if (!u.esReparto && u.chasisSeleccionados.length === 0) errs.push(`Unidad ${i+1}: falta color`);
-    if (!u.precioPedido) errs.push(`Unidad ${i+1}: falta precio`);
+    if (sinDisp) {
+      // Sin disponibilidad: el color es obligatorio (es lo que se va a preguntar al
+      // zonal) y el precio NO (puede ser solo "¿se consigue?").
+      if (!(u.colorPedido || '').trim()) errs.push(`Unidad ${i+1}: falta el color a consultar`);
+    } else {
+      if (!u.esReparto && u.chasisSeleccionados.length === 0) errs.push(`Unidad ${i+1}: falta color`);
+      if (!u.precioPedido) errs.push(`Unidad ${i+1}: falta precio`);
+    }
   });
   if (errs.length) { alert('Faltan datos:\n\n• ' + errs.join('\n• ')); return; }
 
@@ -2005,7 +2385,7 @@ async function submitConsulta() {
     const consultaIds = [];
     for (let i = 0; i < N; i++) {
       const u = f.unidades[i];
-      const a = calcularAnalisisUnidad(u);
+      const a = calcularAnalisisUnidad({ ...u, sinDisponibilidad: sinDisp });
       // % financiacion calculado sobre el precio_pedido de ESTA unidad (antes era
       // siempre el de la unidad 1 — ahora cada consulta es independiente).
       let finPct = null;
@@ -2037,6 +2417,9 @@ async function submitConsulta() {
         concesionario_nombre: f.vsOtro === 'si' ? f.conceNombre : null,
         concesionario_precio: f.vsOtro === 'si' ? f.concePrecio : null,
         observaciones_vendedor: (f.observaciones || '').trim() || null,
+        // De que bolsa salio el auto. Define que ve el admin y como se responde:
+        // stock/reparto -> precio; sin_disponibilidad -> primero "¿se consigue?".
+        origen: f.origen || 'stock',
         estado: 'pendiente'
       };
       const inserted = await sbFetch('consultas_0km', { method: 'POST', body: JSON.stringify(cabecera) });
@@ -2055,7 +2438,11 @@ async function submitConsulta() {
         precio_lista: a ? a.precio_lista : null,
         oferta_vigente_min: a ? a.oferta_vigente_min : null,
         gcia_vigente_min: a ? a.gcia_vigente_min : null,
-        precio_pedido: u.precioPedido,
+        // En "sin disponibilidad" puede venir sin precio (consulta de disponibilidad pura).
+        precio_pedido: u.precioPedido || null,
+        // Color pedido a mano. Solo se llena en "sin disponibilidad": en los otros
+        // origenes el color va dentro del snapshot de `chasis`.
+        color_pedido: sinDisp ? (u.colorPedido || '').trim() : null,
         dto_extra_pedido: a ? a.dto_extra_pedido : null,
         gcia_resultante: a ? a.gcia_resultante : null,
         // es_reparto = el auto pedido no esta fisicamente: o el modelo entero venia
@@ -2116,7 +2503,7 @@ async function cargarMisConsultas() {
     //   sin filtrar x el — el dropdown de la UI filtra por vendedor despues.
     let filtro;
     if (currentMode === 'gerente' && gerenteTab === 'respondidas') {
-      filtro = `estado=neq.pendiente&`;
+      filtro = `estado=not.in.(pendiente,en_gestion)&`;
     } else if (currentMode === 'gerente') {
       filtro = `cargada_por_id=eq.${currentUser.id}&`;
     } else {
@@ -2187,11 +2574,24 @@ function renderVendedorList() {
   }
   cont.innerHTML = list.map(c => renderConsultaCard(c)).join('');
 }
+// Badge de origen para las cards. Los tres orígenes se leen de un vistazo:
+// stock no lleva badge (es lo normal), reparto ámbar, sin disponibilidad violeta.
+function badgeOrigen(c, it) {
+  const est = (txt, bg, fg) => ` <span style="background:${bg}; color:${fg}; padding:1px 5px; border-radius:6px; font-size:9px; font-weight:700; margin-left:4px">${txt}</span>`;
+  if (c && c.origen === 'sin_disponibilidad') return est('SIN DISPONIBILIDAD', '#e0e7ff', '#3730a3');
+  if ((c && c.origen === 'reparto') || (it && it.es_reparto)) return est('REPARTO', '#fbbf24', '#78350f');
+  return '';
+}
+// Texto del estado para mostrar (los crudos de la DB no se leen bien).
+function txtEstado(e) {
+  if (e === 'en_gestion') return 'en gestión';
+  return e || '';
+}
 function renderConsultaCard(c) {
   const cliente = c.tipo_cliente === 'particular' ? `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}`.trim() : (c.reventa_nombre || '—');
   const unidadesStr = (c.items || []).map(it => {
-    const tag = it.es_reparto ? ' <span style="background:#fbbf24; color:#78350f; padding:1px 5px; border-radius:6px; font-size:9px; font-weight:700">REPARTO</span>' : '';
-    return escapeHtml(it.modelo) + tag;
+    const col = it.color_pedido ? ` <span class="muted">${escapeHtml(it.color_pedido)}</span>` : '';
+    return escapeHtml(it.modelo) + col + badgeOrigen(c, it);
   }).join(' · ');
   const vendedorLine = currentMode === 'gerente'
     ? `<div style="font-size:12px; color:var(--vw-blue); font-weight:600">Vendedor: ${escapeHtml(c.vendedor_nombre || c.vendedor_usuario || '—')}${c.cargada_por_nombre ? ` · cargada por ${escapeHtml(c.cargada_por_nombre)}` : ''}</div>`
@@ -2205,7 +2605,7 @@ function renderConsultaCard(c) {
     <div class="card consulta-card" onclick="abrirDetalle(${c.id})">
       <div class="top">
         <h3>#${c.id} — ${escapeHtml(cliente)}</h3>
-        <div><span class="estado ${c.estado}">${c.estado}</span>${ventaBadge}</div>
+        <div><span class="estado ${c.estado}">${txtEstado(c.estado)}</span>${ventaBadge}</div>
       </div>
       <div class="body">
         ${vendedorLine}
@@ -2263,8 +2663,10 @@ function renderAdminList() {
   const cont = document.getElementById('adminConsultasList');
   const q = (document.getElementById('aSearch').value || '').toLowerCase().trim();
   let list = adminConsultas;
-  if (adminTab === 'pendiente') list = list.filter(c => c.estado === 'pendiente');
-  else list = list.filter(c => c.estado !== 'pendiente');
+  // "en_gestion" = esperando respuesta del zonal. Sigue siendo trabajo abierto para el
+  // admin, asi que queda en Pendientes (lo que corta son los recordatorios de WhatsApp).
+  if (adminTab === 'pendiente') list = list.filter(c => c.estado === 'pendiente' || c.estado === 'en_gestion');
+  else list = list.filter(c => c.estado !== 'pendiente' && c.estado !== 'en_gestion');
   if (q) list = list.filter(c => JSON.stringify(c).toLowerCase().includes(q));
   if (list.length === 0) {
     cont.innerHTML = '<div class="empty"><div class="icon">📭</div><p>No hay consultas en esta vista.</p></div>';
@@ -2289,13 +2691,15 @@ function renderAdminList() {
     <div id="adminCard-${c.id}" class="card consulta-card" ${onClickAttr} style="${outlineStyle}">
       <div class="top">
         <h3 style="display:flex; align-items:center">${checkbox}#${c.id} — ${escapeHtml((c.vendedor_nombre || c.vendedor_usuario || ''))}</h3>
-        <div><span class="estado ${c.estado}">${c.estado}</span>${ventaBadge}</div>
+        <div><span class="estado ${c.estado}">${txtEstado(c.estado)}</span>${ventaBadge}</div>
       </div>
       <div class="body">
         <div>${c.tipo_cliente === 'particular' ? `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}` : (c.reventa_nombre || '')} · ${escapeHtml(c.provincia || '')} / ${escapeHtml(c.localidad || '')}</div>
         <div class="resumen-units">${(c.items || []).map(it => {
-          const tag = it.es_reparto ? ' <span style="background:#fbbf24; color:#78350f; padding:1px 5px; border-radius:6px; font-size:9px; font-weight:700; margin-left:4px">REPARTO</span>' : '';
-          return `<span>${escapeHtml(it.modelo)}${tag} → ${fmtMoney(it.precio_pedido)}</span>`;
+          const tag = badgeOrigen(c, it);
+          const col = it.color_pedido ? ` <span class="muted">${escapeHtml(it.color_pedido)}</span>` : '';
+          const precio = it.precio_pedido ? ` → ${fmtMoney(it.precio_pedido)}` : ' → <em>¿se consigue?</em>';
+          return `<span>${escapeHtml(it.modelo)}${col}${tag}${precio}</span>`;
         }).join('')}</div>
         <div class="meta" style="margin-top:6px">${fmtDate(c.created_at)}</div>
       </div>
@@ -2375,6 +2779,68 @@ async function borrarSeleccionadas() {
 }
 
 // ============ DETALLE / MODAL ============
+// Bloque "¿Qué hay de lo que piden?" — la respuesta a la pregunta de Fer: me piden un
+// auto o un color que no está, ¿qué tengo de eso? Se muestra en las consultas SIN
+// DISPONIBILIDAD (y en cualquier item que traiga un color pedido a mano). Cruza el
+// modelo+color pedido contra stock, reparto e histórico, y arranca por el veredicto
+// para no tener que leer nada más en el 90% de los casos.
+function bloqueQueHay(c, it) {
+  if (!c || c.origen !== 'sin_disponibilidad') return '';
+  const modelo = it.modelo;
+  const color = it.color_pedido || '';
+  const q = queHayDe(modelo, color);
+  const nExacto = q.colorExacto.stock.length;
+  const nExactoRep = q.colorExacto.reparto.length;
+
+  // Veredicto de arriba: verde si el auto exacto está, ámbar si está en reparto,
+  // violeta si no hay nada de ese color, rojo si no hay nada del modelo entero.
+  let veredicto;
+  if (nExacto > 0) {
+    veredicto = { bg: '#dcfce7', bd: '#86efac', fg: '#166534',
+      txt: `✓ Ese auto SÍ está: ${nExacto} ${nExacto === 1 ? 'unidad' : 'unidades'} en stock`,
+      sub: 'El vendedor lo cargó como "sin disponibilidad" pero la unidad existe — se puede vender ya.' };
+  } else if (nExactoRep > 0) {
+    veredicto = { bg: '#fef3c7', bd: '#fcd34d', fg: '#78350f',
+      txt: `🚚 Ese auto está EN EL REPARTO: ${nExactoRep} ${nExactoRep === 1 ? 'unidad' : 'unidades'}`,
+      sub: 'No hay que pedirle nada al zonal: VW ya nos lo asignó, solo hay que comprarlo.' };
+  } else if (q.totalStock === 0 && q.totalReparto === 0) {
+    veredicto = { bg: '#fee2e2', bd: '#fca5a5', fg: '#991b1b',
+      txt: '✗ De este modelo no tenemos NADA',
+      sub: 'Ni una unidad en stock ni en el reparto, en ningún color.' };
+  } else {
+    veredicto = { bg: '#e0e7ff', bd: '#a5b4fc', fg: '#3730a3',
+      txt: `✗ Ese color no está — pero del modelo hay ${q.totalStock} en stock y ${q.totalReparto} en reparto`,
+      sub: 'Mirá abajo los colores que sí tenemos, por si le sirve al cliente.' };
+  }
+
+  const chips = (arr, vacio) => arr.length
+    ? arr.map(x => `<span style="display:inline-block; background:#fff; border:1px solid var(--vw-grey-2); border-radius:12px; padding:3px 10px; margin:3px 5px 3px 0; font-size:12px">${escapeHtml(x.color)}: <strong>${x.n}</strong></span>`).join('')
+    : `<span class="muted" style="font-size:12px">${vacio}</span>`;
+
+  // Histórico: ¿VW nos manda este modelo en este color alguna vez? Es lo que decide si
+  // vale la pena pedírselo al zonal o si directamente no lo producen para nosotros.
+  const h = q.historico;
+  const histTxt = !color
+    ? ''
+    : (h
+      ? `Tuvimos <strong>${h.n}</strong> ${h.n === 1 ? 'unidad' : 'unidades'} de <strong>${escapeHtml(modelo)}</strong> en <strong>${escapeHtml(color)}</strong>${h.ultima ? `, la última en <strong>${escapeHtml(new Date(h.ultima + 'T00:00:00').toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }))}</strong>` : ''}. VW nos lo manda.`
+      : `<strong>Nunca</strong> tuvimos este modelo en ${escapeHtml(color)} (últimos 18 meses de Oversoft + todo el reparto). Puede que VW no lo produzca en ese color.`);
+
+  return `
+    <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--vw-grey-2)">
+      <div style="font-size:13px; margin-bottom:8px"><strong>🔎 Piden:</strong> ${escapeHtml(modelo)}${color ? ` · <strong>${escapeHtml(color)}</strong>` : ''}</div>
+      <div style="background:${veredicto.bg}; border:1px solid ${veredicto.bd}; color:${veredicto.fg}; border-radius:8px; padding:10px 12px; margin-bottom:10px">
+        <div style="font-weight:700; font-size:13px">${veredicto.txt}</div>
+        <div style="font-size:12px; margin-top:3px; opacity:.85">${veredicto.sub}</div>
+      </div>
+      <div style="font-size:12px; margin-bottom:4px"><strong>📦 De este modelo hay en stock (${q.totalStock}):</strong></div>
+      <div style="margin-bottom:8px">${chips(q.otrosColoresStock.concat(q.colorExacto.stock.length ? [{ color: color, n: nExacto }] : []), 'ninguna unidad en stock.')}</div>
+      <div style="font-size:12px; margin-bottom:4px"><strong>🚚 En reparto (${q.totalReparto}):</strong></div>
+      <div style="margin-bottom:8px">${chips(q.otrosColoresReparto.concat(nExactoRep ? [{ color: color, n: nExactoRep }] : []), 'ninguna unidad en reparto.')}</div>
+      ${histTxt ? `<div style="font-size:12px; background:var(--vw-grey-1); border-radius:6px; padding:8px 10px">📅 ${histTxt}</div>` : ''}
+    </div>`;
+}
+
 function abrirDetalle(consultaId, editMode = false) {
   const list = currentMode === 'admin' ? adminConsultas : myConsultas;
   const c = list.find(x => x.id === consultaId);
@@ -2677,6 +3143,7 @@ function abrirDetalle(consultaId, editMode = false) {
         ${historialHtml}
         ${competenciaHtml}
         ${rotacionHtml}
+        ${showGcia ? bloqueQueHay(c, it) : ''}
         ${stockHtml}
         ${repartoStockHtml}
       </div>
@@ -2693,8 +3160,10 @@ function abrirDetalle(consultaId, editMode = false) {
   let fuenteTxt = c.fuente_dato === 'otro' ? (c.fuente_dato_otro || 'otro') : (c.fuente_dato || '—');
 
   const isAdmin = currentMode === 'admin';
-  const isPending = c.estado === 'pendiente';
+  const isPending = c.estado === 'pendiente' || c.estado === 'en_gestion';
   const showEditForm = isAdmin && (isPending || editMode);
+  // Sin disponibilidad: la respuesta no es "acepto el precio" sino "se consigue o no".
+  const esSinDisp = c.origen === 'sin_disponibilidad';
   const btnEliminar = (isAdmin && _esSuperadmin())
     ? `<button onclick="eliminarConsulta(${c.id})" style="background:#991B1B; color:#fff; padding:10px 14px; border-radius:8px; border:none; font-weight:600; cursor:pointer">🗑 Eliminar</button>`
     : '';
@@ -2710,9 +3179,9 @@ function abrirDetalle(consultaId, editMode = false) {
       // tenga que ajustarla (en vez de tipear desde cero). Si por algun motivo no hay
       // oferta vigente (reparto sin registros en stockData), caemos al precio pedido.
       const first = (c.items && c.items[0]) || null;
-      const defaultPrecio = first
-        ? (first.oferta_vigente_min || first.precio_pedido)
-        : null;
+      const defaultPrecio = esSinDisp
+        ? (first ? first.precio_pedido : null)   // solo si el vendedor pidio un numero
+        : (first ? (first.oferta_vigente_min || first.precio_pedido) : null);
       defaultVal = defaultPrecio ? '$' + Math.round(defaultPrecio).toLocaleString('es-AR') : '';
     }
     const cancelBtn = editMode
@@ -2726,7 +3195,7 @@ function abrirDetalle(consultaId, editMode = false) {
         ${editBanner}
         <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-start">
           <div style="flex:1; min-width:240px">
-            <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Mejor precio máximo (con FyF)</label>
+            <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">${esSinDisp ? 'Precio autorizado si se consigue (opcional, con FyF)' : 'Mejor precio máximo (con FyF)'}</label>
             <input id="adminPrecioMax" type="text" inputmode="numeric" placeholder="$0"
               value="${defaultVal}"
               oninput="onAdminPrecioMaxInput(${c.id}, this)"
@@ -2755,9 +3224,15 @@ function abrirDetalle(consultaId, editMode = false) {
           ${_esSuperadmin() ? `<button onclick="eliminarConsulta(${c.id})" style="background:#991B1B; color:#fff; padding:10px 14px; border-radius:8px; border:none; font-weight:600; cursor:pointer">🗑 Eliminar</button>` : '<div></div>'}
           <div style="display:flex; gap:8px; flex-wrap:wrap">
             ${cancelBtn}
-            <button class="btn-danger" onclick="rechazarMejora(${c.id})">No acepto</button>
-            <button onclick="contraofertarMejora(${c.id})" style="background:#3730a3; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">Contraofertar</button>
-            <button class="btn-success" onclick="aceptarMejora(${c.id})">Aceptar mejora</button>
+            ${esSinDisp ? `
+              ${c.estado === 'en_gestion' ? '' : `<button onclick="marcarEnGestion(${c.id})" style="background:#ede9fe; color:#5b21b6; padding:10px 16px; border-radius:8px; border:1px solid #c4b5fd; font-weight:600; cursor:pointer">⏳ En gestión con el zonal</button>`}
+              <button class="btn-danger" onclick="responderDisponibilidad(${c.id}, false)">✗ No se consigue</button>
+              <button class="btn-success" onclick="responderDisponibilidad(${c.id}, true)">✓ Se consigue</button>
+            ` : `
+              <button class="btn-danger" onclick="rechazarMejora(${c.id})">No acepto</button>
+              <button onclick="contraofertarMejora(${c.id})" style="background:#3730a3; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">Contraofertar</button>
+              <button class="btn-success" onclick="aceptarMejora(${c.id})">Aceptar mejora</button>
+            `}
           </div>
         </div>
       </div>
@@ -2775,7 +3250,8 @@ function abrirDetalle(consultaId, editMode = false) {
         <div class="kv"><span class="k">Nombre</span><span class="v">${escapeHtml(c.vendedor_nombre || c.vendedor_usuario || '')}</span></div>
         ${c.cargada_por_nombre ? `<div class="kv"><span class="k">Cargada por</span><span class="v">${escapeHtml(c.cargada_por_nombre)}</span></div>` : ''}
         <div class="kv"><span class="k">Fecha</span><span class="v">${fmtDate(c.created_at)}</span></div>
-        <div class="kv"><span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${c.estado}</span></span></div>
+        <div class="kv"><span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${txtEstado(c.estado)}</span></span></div>
+        <div class="kv"><span class="k">Origen</span><span class="v">${ORIGEN_LABEL[c.origen] || ORIGEN_LABEL.stock}</span></div>
       </div>
       <div class="detalle-section">
         <h4>Cliente</h4>
@@ -2808,8 +3284,9 @@ function abrirDetalle(consultaId, editMode = false) {
         <div class="detalle-section">
           <h4>Respuesta</h4>
           <div class="kv">
-            <span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${c.estado}</span></span>
-            ${c.precio_max_admin ? `<span class="k">Mejor precio máx</span><span class="v">${fmtMoney(c.precio_max_admin)}</span>` : ''}
+            <span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${txtEstado(c.estado)}</span></span>
+            ${c.disponibilidad ? `<span class="k">¿Se consigue?</span><span class="v"><strong style="color:${c.disponibilidad === 'se_consigue' ? 'var(--green)' : 'var(--red)'}">${c.disponibilidad === 'se_consigue' ? 'Sí, se consigue' : 'No se consigue'}</strong></span>` : ''}
+            ${c.precio_max_admin ? `<span class="k">${c.origen === 'sin_disponibilidad' ? 'Precio autorizado' : 'Mejor precio máx'}</span><span class="v">${fmtMoney(c.precio_max_admin)}</span>` : ''}
             ${c.admin_respuesta_at ? `<span class="k">Respondido</span><span class="v">${fmtDate(c.admin_respuesta_at)}</span>` : ''}
           </div>
           ${(c.observaciones_admin || '').trim() ? `
@@ -2986,6 +3463,66 @@ function getAdminPrecioMax() {
   if (!el) return null;
   const raw = (el.value || '').replace(/[^\d]/g, '');
   return raw ? parseInt(raw, 10) : null;
+}
+
+// ===== Respuesta a una consulta SIN DISPONIBILIDAD =====
+// Acá lo primero que se responde no es un precio sino si el auto se consigue. El precio
+// es opcional: si se consigue y además se autoriza un valor, va en precio_max_admin.
+// Los tres botones cubren el circuito real: consultar al zonal lleva tiempo, así que
+// "en gestión" existe para parar los recordatorios sin cerrar la consulta.
+async function marcarEnGestion(consultaId) {
+  if (currentMode !== 'admin') { showToast('No autorizado'); return; }
+  if (!confirm('¿Marcar como "en gestión con el zonal"?\n\nLa consulta queda abierta en Pendientes y dejan de llegar los recordatorios hasta que la respondas.')) return;
+  showLoading('Guardando...');
+  try {
+    const obs = getAdminObs();
+    await sbFetch(`consultas_0km?id=eq.${consultaId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        estado: 'en_gestion',
+        admin_user_id: currentUser.id,
+        observaciones_admin: obs || null
+      })
+    });
+    closeModal();
+    await cargarConsultasAdmin();
+    hideLoading();
+    showToast('Marcada en gestión — sin recordatorios');
+  } catch(e) { hideLoading(); console.error(e); alert('Error: ' + (e.message || e)); }
+}
+
+async function responderDisponibilidad(consultaId, seConsigue) {
+  if (currentMode !== 'admin') { showToast('No autorizado'); return; }
+  const obs = getAdminObs();
+  const precio = getAdminPrecioMax();
+  if (!seConsigue && !obs) {
+    if (!confirm('Vas a responder que NO se consigue, sin comentario. ¿Seguir igual?')) return;
+  } else {
+    const txtPrecio = precio ? ` y autorizar ${fmtMoney(precio)}` : '';
+    if (!confirm(`¿Responder que ${seConsigue ? 'SÍ' : 'NO'} se consigue${seConsigue ? txtPrecio : ''}?`)) return;
+  }
+  showLoading('Guardando...');
+  try {
+    await sbFetch(`consultas_0km?id=eq.${consultaId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        // Reusamos aceptada/rechazada para que toda la maquinaria existente (tabs,
+        // recordatorios, resultado de venta, WhatsApp) funcione sin cambios; el matiz
+        // "se consigue / no se consigue" vive en la columna `disponibilidad`.
+        estado: seConsigue ? 'aceptada' : 'rechazada',
+        disponibilidad: seConsigue ? 'se_consigue' : 'no_se_consigue',
+        admin_user_id: currentUser.id,
+        admin_respuesta_at: new Date().toISOString(),
+        precio_max_admin: seConsigue ? (precio || null) : null,
+        observaciones_admin: obs || null
+      })
+    });
+    notifyVendedorRespuesta(consultaId).catch(e => console.error(e));
+    closeModal();
+    await cargarConsultasAdmin();
+    hideLoading();
+    showToast(seConsigue ? 'Respondida: se consigue' : 'Respondida: no se consigue');
+  } catch(e) { hideLoading(); console.error(e); alert('Error: ' + (e.message || e)); }
 }
 
 async function aceptarMejora(consultaId) {
@@ -3667,7 +4204,7 @@ function renderConsultaUsadoCard(c, esAdmin) {
     <div class="card consulta-card" onclick="abrirDetalleUsado(${c.id})">
       <div class="top">
         <h3>#${c.id} — ${titulo}</h3>
-        <div><span class="estado ${c.estado}">${c.estado}</span>${ventaBadge}</div>
+        <div><span class="estado ${c.estado}">${txtEstado(c.estado)}</span>${ventaBadge}</div>
       </div>
       <div class="body">
         ${vendedorLine}
@@ -3793,7 +4330,7 @@ function abrirDetalleUsado(consultaId) {
           <span class="k">Nombre</span><span class="v">${escapeHtml(c.vendedor_nombre || c.vendedor_usuario || '')}</span>
           ${c.cargada_por_nombre ? `<span class="k">Cargada por</span><span class="v">${escapeHtml(c.cargada_por_nombre)}</span>` : ''}
           <span class="k">Fecha</span><span class="v">${fmtDate(c.created_at)}</span>
-          <span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${c.estado}</span></span>
+          <span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${txtEstado(c.estado)}</span></span>
         </div>
       </div>
       <div class="detalle-section">
@@ -3809,7 +4346,7 @@ function abrirDetalleUsado(consultaId) {
         <div class="detalle-section">
           <h4>Respuesta</h4>
           <div class="kv">
-            <span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${c.estado}</span></span>
+            <span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${txtEstado(c.estado)}</span></span>
             ${c.precio_max_admin ? `<span class="k">Mejor precio máx</span><span class="v">${fmtMoney(c.precio_max_admin)}</span>` : ''}
             ${c.admin_respuesta_at ? `<span class="k">Respondido</span><span class="v">${fmtDate(c.admin_respuesta_at)}</span>` : ''}
           </div>

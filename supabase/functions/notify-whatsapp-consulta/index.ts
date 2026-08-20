@@ -516,19 +516,43 @@ function buildVariables(evento: string, con: any, items: any[], propio = true): 
   }
 
   // ---- 0KM ----
+  // Nombre del auto para el WhatsApp. En "sin disponibilidad" el color es el corazon
+  // del pedido (piden un color que no tenemos), asi que va pegado al modelo.
+  function modelosTxt(): string {
+    const sinDisp = String(con.origen || "") === "sin_disponibilidad";
+    const partes: string[] = [];
+    const vistos = new Set<string>();
+    for (const i of items) {
+      if (!i.modelo) continue;
+      const txt = sinDisp && i.color_pedido ? `${i.modelo} ${i.color_pedido}` : String(i.modelo);
+      if (vistos.has(txt)) continue;
+      vistos.add(txt);
+      partes.push(txt);
+    }
+    return partes.join(" + ") || "—";
+  }
+  // Tercera variable del template de "nueva": normalmente el dto extra pedido. En una
+  // consulta de disponibilidad sin precio no hay descuento que informar, asi que se
+  // manda que hay que averiguar si el auto se consigue.
+  function dtoOAviso(): string {
+    let dtoMax = -Infinity;
+    for (const it of items) {
+      // OJO: Number(null) es 0, no NaN. Sin este guard, una consulta SIN precio
+      // (disponibilidad pura) informaba "0.0%" de descuento, que es mentira.
+      if (it.dto_extra_pedido === null || it.dto_extra_pedido === undefined) continue;
+      const d = Number(it.dto_extra_pedido);
+      if (isFinite(d) && d > dtoMax) dtoMax = d;
+    }
+    if (isFinite(dtoMax)) return fmtPct(dtoMax);
+    if (String(con.origen || "") === "sin_disponibilidad") return "consulta si se consigue";
+    return "—";
+  }
   if (evento === "consulta_0km_sin_responder") {
     // Recordatorio: reusa el template de consulta nueva (3 variables) y mete el
     // aviso adelante del vendedor, que es como arranca el cuerpo del mensaje.
     const vendedor = con.vendedor_nombre || con.vendedor_usuario || "—";
-    const modelosSet = new Set<string>();
-    for (const i of items) if (i.modelo) modelosSet.add(String(i.modelo));
-    const modelos = Array.from(modelosSet).join(" + ") || "—";
-    let dtoMax = -Infinity;
-    for (const it of items) {
-      const d = Number(it.dto_extra_pedido);
-      if (isFinite(d) && d > dtoMax) dtoMax = d;
-    }
-    const dtoStr = isFinite(dtoMax) ? fmtPct(dtoMax) : "—";
+    const modelos = modelosTxt();
+    const dtoStr = dtoOAviso();
     const marca = `⏰ SIN RESPONDER hace ${antiguedad(con.created_at)}` +
       ` (aviso ${Number(con.recordatorios_enviados || 0) + 1})`;
     return [`${marca} — ${vendedor}`, modelos, dtoStr];
@@ -536,25 +560,29 @@ function buildVariables(evento: string, con: any, items: any[], propio = true): 
   if (evento === "consulta_0km_nueva") {
     // Template: 3 variables = vendedor, modelo(s), dto extra pedido (peor caso)
     const vendedor = con.vendedor_nombre || con.vendedor_usuario || "—";
-    const modelos = items.map((i) => i.modelo).filter(Boolean).join(" + ") || "—";
-    let dtoMax = -Infinity;
-    for (const it of items) {
-      const d = Number(it.dto_extra_pedido);
-      if (isFinite(d) && d > dtoMax) dtoMax = d;
-    }
-    const dtoStr = isFinite(dtoMax) ? fmtPct(dtoMax) : "—";
-    return [vendedor, modelos, dtoStr];
+    return [vendedor, modelosTxt(), dtoOAviso()];
   }
   if (evento === "consulta_0km_respondida") {
     // Template: 4 variables = modelo(s), vendedor, estado, monto autorizado
-    const modelos = items.map((i) => i.modelo).filter(Boolean).join(" + ") || "—";
+    const modelos = modelosTxt();
     const vendedor = con.vendedor_nombre || con.vendedor_usuario || "—";
+    const sinDisp = String(con.origen || "") === "sin_disponibilidad";
     let estado = con.estado || "respondida";
-    if (estado === "aceptada") estado = "Aceptada";
+    // En "sin disponibilidad" aceptada/rechazada significan otra cosa: se consigue o no.
+    // El vendedor tiene que leer eso, no "Aceptada".
+    if (sinDisp) {
+      estado = con.disponibilidad === "no_se_consigue" || con.estado === "rechazada"
+        ? "NO se consigue"
+        : "SÍ se consigue";
+    } else if (estado === "aceptada") estado = "Aceptada";
     else if (estado === "rechazada") estado = "Rechazada";
     else if (estado === "contraoferta") estado = "Contraoferta (revisá el comentario en el portal)";
     let monto = "—";
-    if (con.estado === "aceptada") {
+    if (sinDisp) {
+      // Puede no haber precio: era una consulta de disponibilidad pura.
+      if (con.precio_max_admin) monto = fmtMoney(con.precio_max_admin);
+      else if (items[0]?.precio_pedido && con.estado === "aceptada") monto = fmtMoney(items[0].precio_pedido);
+    } else if (con.estado === "aceptada") {
       // Aceptada: el monto autorizado es lo que el vendedor pidio (precio_pedido de la primera unidad).
       const pedido = items[0]?.precio_pedido;
       if (pedido) monto = fmtMoney(pedido);
