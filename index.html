@@ -1149,7 +1149,7 @@ function txtEstadoReparto(c) {
 //                         combinaciones modelo+color que NO están en stock (si el
 //                         color ya está en el salón, pedirlo por reparto no aporta).
 //   sin_disponibilidad -> lo que no está ni en stock ni en reparto. El vendedor elige
-//                         modelo y color a mano; Fer consulta al zonal si se consigue.
+//                         modelo y color a mano; gerencia consulta la disponibilidad.
 const ORIGENES = ['stock', 'reparto', 'sin_disponibilidad'];
 const ORIGEN_LABEL = {
   stock: '🏬 Auto de stock',
@@ -1525,7 +1525,6 @@ STEP_RENDERERS['origen'] = () => {
   const mStock = getModelosDisponibles('stock').length;
   const rep = getModelosDisponibles('reparto');
   const nRep = rep.reduce((a, m) => a + m.cantRepartoNuevo, 0);
-  const mCat = getModelosDisponibles('sin_disponibilidad').length;
   const sel = (o) => formData.origen === o ? 'selected' : '';
   return {
     body: `
@@ -1550,7 +1549,7 @@ STEP_RENDERERS['origen'] = () => {
           <span class="opt-icon">🔎</span>
           <div>
             <div><strong>Auto sin disponibilidad</strong></div>
-            <div class="muted" style="font-size:12px; margin-top:2px">No lo tenemos ni en stock ni en el reparto. Elegís modelo y color, y Fer consulta al zonal si se consigue. Los ${mCat} modelos del catálogo.</div>
+            <div class="muted" style="font-size:12px; margin-top:2px">No lo tenemos ni en stock ni en el reparto. Elegís modelo y color, y gerencia consulta disponibilidad.</div>
           </div>
         </div>
       </div>
