@@ -2930,6 +2930,87 @@ async function borrarSeleccionadas() {
 }
 
 // ============ DETALLE / MODAL ============
+// Historial de consultas de disponibilidad YA respondidas para el mismo modelo.
+// Pedido de Fer: "si le respondo que no hay en VW y otro me pregunta de ese modelo,
+// que me aparezca lo contestado, para recordar que tal día ya pregunté y me dijeron
+// que no hay". Evita volver a molestar al zonal por lo mismo.
+//
+// Cruza por MODELO (canónico) sobre todas las consultas sin_disponibilidad, en
+// cualquier estado — una que quedó "en gestión" o sin responder también importa: es
+// una pregunta ya hecha. Las del MISMO COLOR van primero y resaltadas, porque son la
+// respuesta literal a lo que están preguntando de nuevo.
+function historialDisponibilidad(c, it) {
+  if (!c || c.origen !== 'sin_disponibilidad') return '';
+  const canonCur = resolveModeloCanonico(it.modelo) || it.modelo;
+  const colorCur = _normColor(it.color_pedido || '');
+  const previas = [];
+  (adminConsultas || []).forEach(oc => {
+    if (oc.id === c.id) return;
+    if (oc.origen !== 'sin_disponibilidad') return;
+    (oc.items || []).forEach(oit => {
+      if ((resolveModeloCanonico(oit.modelo) || oit.modelo) !== canonCur) return;
+      previas.push({
+        id: oc.id,
+        color: oit.color_pedido || '',
+        mismoColor: !!colorCur && _normColor(oit.color_pedido || '') === colorCur,
+        estado: oc.estado,
+        disponibilidad: oc.disponibilidad,
+        precio: oc.precio_max_admin,
+        obs: (oc.observaciones_admin || '').trim(),
+        vendedor: oc.vendedor_nombre || oc.vendedor_usuario || '',
+        fecha: oc.admin_respuesta_at || oc.created_at,
+        respondida: !!oc.admin_respuesta_at
+      });
+    });
+  });
+  if (previas.length === 0) return '';
+  // Mismo color primero; dentro de cada grupo, lo más reciente arriba.
+  previas.sort((a, b) => (b.mismoColor ? 1 : 0) - (a.mismoColor ? 1 : 0) || new Date(b.fecha) - new Date(a.fecha));
+  const nMismo = previas.filter(p => p.mismoColor).length;
+
+  const veredicto = (p) => {
+    if (p.disponibilidad === 'se_consigue') return { txt: 'SE CONSIGUE', bg: '#dcfce7', fg: '#166534' };
+    if (p.disponibilidad === 'no_se_consigue') return { txt: 'NO SE CONSIGUE', bg: '#fee2e2', fg: '#991b1b' };
+    if (p.estado === 'en_gestion') return { txt: 'EN GESTIÓN', bg: '#ede9fe', fg: '#5b21b6' };
+    if (p.estado === 'pendiente') return { txt: 'SIN RESPONDER', bg: '#fed7aa', fg: '#9a3412' };
+    // Respondida antes de que existiera la columna `disponibilidad`.
+    if (p.estado === 'aceptada') return { txt: 'SE CONSIGUE', bg: '#dcfce7', fg: '#166534' };
+    if (p.estado === 'rechazada') return { txt: 'NO SE CONSIGUE', bg: '#fee2e2', fg: '#991b1b' };
+    return { txt: (p.estado || '—').toUpperCase(), bg: '#e5e7eb', fg: '#374151' };
+  };
+
+  const MAX = 6;
+  const filas = previas.slice(0, MAX).map(p => {
+    const v = veredicto(p);
+    const marco = p.mismoColor ? 'background:#fffbeb; border-left:3px solid var(--orange); padding-left:7px' : '';
+    return `
+      <div style="padding:7px 6px; border-bottom:1px dashed var(--vw-grey-2); font-size:12px; ${marco}">
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+          <span class="muted" style="font-size:11px; white-space:nowrap">${p.respondida ? fmtDate(p.fecha) : 'pedida ' + fmtDate(p.fecha)}</span>
+          <strong>${escapeHtml(p.color || 'sin color')}</strong>
+          ${p.mismoColor ? '<span style="color:var(--orange); font-weight:700; font-size:10px">MISMO COLOR</span>' : ''}
+          <span style="background:${v.bg}; color:${v.fg}; padding:1px 7px; border-radius:6px; font-size:10px; font-weight:700">${v.txt}</span>
+          ${p.precio ? `<span class="muted">${fmtMoney(p.precio)}</span>` : ''}
+          <span class="muted" style="font-size:11px; margin-left:auto">#${p.id} · ${escapeHtml(p.vendedor)}</span>
+        </div>
+        ${p.obs ? `<div class="muted" style="margin-top:3px; font-style:italic">"${escapeHtml(p.obs)}"</div>` : ''}
+      </div>`;
+  }).join('');
+
+  const resumenMismo = nMismo
+    ? `<span style="color:var(--orange); font-weight:600">${nMismo} ${nMismo === 1 ? 'fue' : 'fueron'} por este mismo color</span>`
+    : '<span class="muted">ninguna por este color exacto</span>';
+
+  return `
+    <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--vw-grey-2)">
+      <div style="font-size:13px; margin-bottom:6px">
+        <strong>📋 Ya consultamos este modelo:</strong> ${previas.length} ${previas.length === 1 ? 'vez' : 'veces'} — ${resumenMismo}
+      </div>
+      ${filas}
+      ${previas.length > MAX ? `<div class="muted" style="font-size:11px; padding-top:6px">y ${previas.length - MAX} más, más viejas.</div>` : ''}
+    </div>`;
+}
+
 // Bloque "¿Qué hay de lo que piden?" — la respuesta a la pregunta de Fer: me piden un
 // auto o un color que no está, ¿qué tengo de eso? Se muestra en las consultas SIN
 // DISPONIBILIDAD (y en cualquier item que traiga un color pedido a mano). Cruza el
@@ -3295,6 +3376,7 @@ function abrirDetalle(consultaId, editMode = false) {
         ${competenciaHtml}
         ${rotacionHtml}
         ${showGcia ? bloqueQueHay(c, it) : ''}
+        ${showGcia ? historialDisponibilidad(c, it) : ''}
         ${stockHtml}
         ${repartoStockHtml}
       </div>
