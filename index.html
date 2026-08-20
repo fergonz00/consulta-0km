@@ -2493,8 +2493,37 @@ function analisisAdminVivo(it) {
   if (!a || a.gcia_vigente_min == null) {
     a = calcularAnalisisUnidad({ ...base, esReparto: true, chasisSeleccionados: [] });
   }
+  // 3) fallback: el modelo no tiene NINGUNA unidad en stockData (caso tipico de
+  // "sin disponibilidad"). Vamos al catalogo, que trae el precio Baratito y la
+  // ganancia del modelo del mismo snapshot del Motor.
+  if (!a || a.gcia_vigente_min == null) {
+    a = calcularAnalisisUnidad({ ...base, sinDisponibilidad: true });
+  }
   if (!a || a.gcia_vigente_min == null) return null;
   return a;
+}
+
+// Referencia de precio y ganancia de HOY para un item guardado, SIN depender de que
+// el vendedor haya pedido un precio (en "sin disponibilidad" puede no haberlo). Es lo
+// que pre-llena el input del admin y lo que se usa para calcular el margen mientras
+// tipea. Orden: chasis pedidos -> cualquier chasis del modelo -> catalogo (precio
+// Baratito del modelo) -> el snapshot guardado en la consulta.
+function refAdminUnidad(it) {
+  if (!it) return null;
+  if (it.precio_pedido != null) {
+    const a = analisisAdminVivo(it);
+    if (a && a.precio_lista > 0 && a.gcia_vigente_min != null) {
+      return { oferta: a.oferta_vigente_min, precio_lista: a.precio_lista, gcia: a.gcia_vigente_min };
+    }
+  }
+  const r = refPrecioModelo(resolveModeloCanonico(it.modelo) || it.modelo);
+  if (r && r.precio_lista > 0 && r.oferta) {
+    return { oferta: r.oferta, precio_lista: r.precio_lista, gcia: r.gcia || 0 };
+  }
+  if (it.precio_lista > 0) {
+    return { oferta: it.oferta_vigente_min, precio_lista: it.precio_lista, gcia: it.gcia_vigente_min || 0 };
+  }
+  return null;
 }
 
 // ============ SUBMIT ============
@@ -3312,13 +3341,23 @@ function abrirDetalle(consultaId, editMode = false) {
       : '';
     // El analisis se calcula igual para reparto y stock (oferta_vigente y gcia salen de cualquier
     // chasis del modelo en stockData, precio_lista override de bt para reparto).
-    const analisisHtml = `
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; font-size:13px">
-        <div><span class="muted">Precio pedido:</span> <strong>${fmtMoney(it.precio_pedido)}</strong></div>
-        <div><span class="muted">Oferta vigente:</span> <strong>${fmtMoney(it.oferta_vigente_min)}</strong></div>
-        <div><span class="muted">Dto extra pedido:</span> <strong>${fmtPct(it.dto_extra_pedido)}</strong></div>
-        ${showGcia ? `<div><span class="muted">Gcia resultante:</span> <strong style="color:${(it.gcia_resultante||0) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPct(it.gcia_resultante)}</strong></div>` : ''}
-      </div>`;
+    // Consulta de disponibilidad pura: el vendedor no pidió precio, así que no hay dto
+    // ni gcia resultante que mostrar. En vez de cuatro guiones, damos la referencia con
+    // la que el admin va a decidir: el precio Baratito del modelo y su ganancia de hoy.
+    const refIt = (c.origen === 'sin_disponibilidad' && it.precio_pedido == null) ? refAdminUnidad(it) : null;
+    const analisisHtml = refIt
+      ? `<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; font-size:13px">
+          <div><span class="muted">Precio pedido:</span> <strong>Solo consulta de disponibilidad</strong></div>
+          <div><span class="muted">Precio Baratito hoy:</span> <strong>${fmtMoney(refIt.oferta)}</strong></div>
+          <div><span class="muted">Precio de lista:</span> <strong>${fmtMoney(refIt.precio_lista)}</strong></div>
+          ${showGcia ? `<div><span class="muted">Gcia a ese precio:</span> <strong style="color:${(refIt.gcia||0) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPct(refIt.gcia)}</strong></div>` : ''}
+        </div>`
+      : `<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; font-size:13px">
+          <div><span class="muted">Precio pedido:</span> <strong>${fmtMoney(it.precio_pedido)}</strong></div>
+          <div><span class="muted">Oferta vigente:</span> <strong>${fmtMoney(it.oferta_vigente_min)}</strong></div>
+          <div><span class="muted">Dto extra pedido:</span> <strong>${fmtPct(it.dto_extra_pedido)}</strong></div>
+          ${showGcia ? `<div><span class="muted">Gcia resultante:</span> <strong style="color:${(it.gcia_resultante||0) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPct(it.gcia_resultante)}</strong></div>` : ''}
+        </div>`;
     // Últimos precios autorizados de ESTE modelo (solo admin). Referencia para decidir:
     // recorre todas las consultas ya resueltas del mismo modelo y toma el precio que se
     // autorizó en cada una — aceptada → precio_pedido; rechazada/contraoferta → precio_max_admin.
@@ -3412,9 +3451,12 @@ function abrirDetalle(consultaId, editMode = false) {
       // tenga que ajustarla (en vez de tipear desde cero). Si por algun motivo no hay
       // oferta vigente (reparto sin registros en stockData), caemos al precio pedido.
       const first = (c.items && c.items[0]) || null;
-      const defaultPrecio = esSinDisp
-        ? (first ? first.precio_pedido : null)   // solo si el vendedor pidio un numero
-        : (first ? (first.oferta_vigente_min || first.precio_pedido) : null);
+      // Base: el precio Baratito del modelo (igual que en stock/reparto, donde se
+      // pre-llena con la oferta vigente del chasis). En "sin disponibilidad" no hay
+      // chasis, asi que sale del catalogo via refAdminUnidad.
+      const refFirst = first ? refAdminUnidad(first) : null;
+      const defaultPrecio = (refFirst && refFirst.oferta)
+        || (first ? (first.oferta_vigente_min || first.precio_pedido) : null);
       defaultVal = defaultPrecio ? '$' + Math.round(defaultPrecio).toLocaleString('es-AR') : '';
     }
     const cancelBtn = editMode
@@ -3578,12 +3620,14 @@ function onAdminPrecioMaxInput(consultaId, el) {
   if (!raw) { hint.textContent = ''; return; }
   const precio = parseInt(raw, 10);
   const it = c.items[0];
-  // Gcia/oferta de HOY (no la guardada por el vendedor con ganancia blindada). Ver analisisAdminVivo.
-  const aLive = analisisAdminVivo(it);
-  const oferta_vigente = aLive ? aLive.oferta_vigente_min : it.oferta_vigente_min;
-  const precio_lista = (aLive && aLive.precio_lista) ? aLive.precio_lista : it.precio_lista;
-  const gcia_vigente = aLive ? aLive.gcia_vigente_min : it.gcia_vigente_min;
-  if (!precio_lista || precio_lista <= 0) { hint.textContent = ''; return; }
+  // Gcia/oferta de HOY (no la guardada por el vendedor con ganancia blindada). En
+  // "sin disponibilidad" el modelo puede no tener ninguna unidad: refAdminUnidad cae
+  // al catalogo (precio Baratito del modelo) para que igual haya margen.
+  const ref = refAdminUnidad(it);
+  if (!ref || !ref.precio_lista || ref.precio_lista <= 0) { hint.textContent = ''; return; }
+  const oferta_vigente = ref.oferta;
+  const precio_lista = ref.precio_lista;
+  const gcia_vigente = ref.gcia;
   const dto = (oferta_vigente - precio) / precio_lista;
   const gcia = (gcia_vigente || 0) - dto;
   hint.innerHTML = `Con ${fmtMoney(precio)}: dto extra ${fmtPct(dto)} · <strong style="color:${gcia>=0?'var(--green)':'var(--red)'}">gcia ${fmtPct(gcia)}</strong>`;
