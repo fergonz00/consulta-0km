@@ -1,0 +1,33 @@
+fix: en "sin disponibilidad" mostrar SOLO lo que no esta disponible
+
+Correccion de Fer: el selector listaba los 48 modelos con carteles de lo que si
+hay, y el paso de color mostraba los colores disponibles en gris. Eso es mostrar
+todo, no lo que corresponde.
+
+- El selector de modelos ahora solo lista un modelo si no tenemos NINGUNA unidad
+  suya, o si tiene colores que no estan ni en stock ni en reparto. Un modelo del
+  que ya tenemos todos sus colores no aparece (hoy quedan 46 de 48: se caen
+  Virtus Sense y Tiguan R-Line). La etiqueta pasa de "6 en stock - 6 en reparto"
+  a "no tenemos ninguna" / "4 colores que no tenemos".
+- El paso de color lista SOLO los colores que no estan en ninguna de las dos. Los
+  disponibles se resumen en un renglon verde ("ya podes vender en stock: ...") en
+  vez de ocupar filas grises.
+
+Los colores no se inventan, y ahora ademas se depuran:
+- La paleta suma compras_vw (lo que VW facturo) y portal_reparto (lo que ofrece)
+  al historico de Oversoft, y distingue nFact (nos lo facturaron) de nRep (VW nos
+  lo ofrecio) para poder decirlo en pantalla.
+- Se cruza contra reparto_colores, que es el catalogo de colores VIGENTE de VW.
+  El historico arrastra nombres de catalogos viejos que son la MISMA pintura con
+  otro nombre ("Candy White"/"Blanco Candy" = Blanco Cristal, "Plata Metalizada"
+  = Plata Pirita, "Gris Oscuro Metalizado", "Atlantic Blue Metallic"). Ofrecer
+  esos es ofrecer un color que hoy no existe: quedan fuera (52 de 248).
+- Alias mojawe/mojave: el catalogo VW lo escribe con w y Oversoft con v, y sin eso
+  se perdia el Beige Mojave, que es un color real.
+
+BUG: PostgREST corta en 1000 filas por request sin importar el `limit`. El
+historico devolvia solo las 1000 primeras (las mas viejas) y modelos recientes
+como el Tiguan Life quedaban SIN PALETA. Ahora se pagina ordenando por fecha
+descendente. La ventana pasa de 18 meses a 3 anios.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>

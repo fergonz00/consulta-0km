@@ -1063,25 +1063,28 @@ function getModelosDisponibles(origen) {
   origen = origen || 'stock';
   const out = [];
   if (origen === 'sin_disponibilidad') {
-    (catalogoModelos || []).forEach(c => {
-      const chasis = getChasisLibresPorModelo(c.modelo);
+    // Solo entra el modelo que tiene algo para consultar por acá:
+    //  - o no tenemos NINGUNA unidad (ni en stock ni en reparto), en ningún color;
+    //  - o sí tenemos el modelo pero hay colores suyos que no están en ninguna de las dos.
+    // Un modelo del que ya tenemos todos sus colores disponibles NO se lista: ese se
+    // vende hoy, no hay nada que preguntarle al zonal.
+    const agregar = (m) => {
+      const chasis = getChasisLibresPorModelo(m);
       const cantReparto = chasis.filter(x => x.enReparto).length;
+      const cantLibres = chasis.length - cantReparto;
+      const coloresSD = coloresSinDisponibilidad(m);
+      const sinNadaDelModelo = cantLibres === 0 && cantReparto === 0;
+      if (!sinNadaDelModelo && coloresSD.length === 0) return; // todo lo suyo ya está
       out.push({
-        modelo: c.modelo, esReparto: false,
-        cantLibres: chasis.length - cantReparto,
-        cantReparto,
-        cantRepartoNuevo: chasisRepartoNuevoPorModelo(c.modelo).length,
-        soloReparto: false
+        modelo: m, esReparto: false, cantLibres, cantReparto,
+        cantRepartoNuevo: chasisRepartoNuevoPorModelo(m).length,
+        cantColoresSD: coloresSD.length, sinNadaDelModelo, soloReparto: false
       });
-    });
+    };
+    (catalogoModelos || []).forEach(c => agregar(c.modelo));
     // Modelos que están en stock pero que el catálogo no trae (raro: precio sin publicar).
     new Set(stockData.filter(r => r.libre).map(r => r.modelo)).forEach(m => {
-      if (!out.some(x => x.modelo === m)) {
-        const chasis = getChasisLibresPorModelo(m);
-        const cantReparto = chasis.filter(x => x.enReparto).length;
-        out.push({ modelo: m, esReparto: false, cantLibres: chasis.length - cantReparto,
-          cantReparto, cantRepartoNuevo: chasisRepartoNuevoPorModelo(m).length, soloReparto: false });
-      }
+      if (!out.some(x => x.modelo === m)) agregar(m);
     });
     return out.sort((a, b) => _cmpModelo(a.modelo, b.modelo));
   }
@@ -1162,6 +1165,7 @@ const ORIGEN_LABEL = {
 function _normColor(s) {
   let t = String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   t = t.replace(/\b(metalizado|metalico|met|efecto perla|perlado|perla|premium)\b/g, '');
+  t = t.replace(/mojawe/g, 'mojave'); // el catálogo VW lo escribe con w, Oversoft con v
   return t.replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
@@ -1174,17 +1178,41 @@ function ncDeModelo(modelo) {
   return c ? c.nombreCorto : null;
 }
 
-// Colores reales del modelo: [{color, n, ultima}] de más frecuente a menos.
+// Colores reales del modelo: [{color, n, nFact, nRep, ultima}] de más frecuente a menos.
+// NO se inventa nada: sale de lo que VW nos facturó (Oversoft + compras_vw) o nos
+// ofreció en un reparto (reparto_vw + portal_reparto), 3 años para atrás.
 // Fallback por prefijo: las variantes "+ Pack Safe" son el mismo auto que la versión
 // base (Oversoft las carga con la descripción base), así que heredan su paleta. Sin
 // esto el vendedor no ve ningún color para "Tera Trend MSI MT + Pack Safe I".
 function paletaDeModelo(modelo) {
   const nc = ncDeModelo(modelo);
   if (!nc) return [];
-  if (paletaColores[nc]) return paletaColores[nc];
-  const base = nc.split('+')[0].trim();
-  if (base && base !== nc && paletaColores[base]) return paletaColores[base];
-  return [];
+  let pal = paletaColores[nc];
+  if (!pal) {
+    const base = nc.split('+')[0].trim();
+    if (base && base !== nc) pal = paletaColores[base];
+  }
+  if (!pal || !pal.length) return [];
+  // Solo los nombres que están en el catálogo de colores VIGENTE de VW (la Edge los
+  // marca con vw:true cruzando contra reparto_colores). El histórico de 3 años
+  // arrastra nombres de catálogos viejos que son la MISMA pintura con otro nombre
+  // ("Candy White" / "Blanco Candy" = Blanco Cristal, "Plata Metalizada" = Plata
+  // Pirita, "Gris Oscuro Metalizado"): ofrecérselos al cliente sería ofrecerle un
+  // color que hoy no existe.
+  const filtrada = pal.filter(c => c.vw);
+  return filtrada.length ? filtrada : pal; // si el cruce falla, mejor crudo que vacío
+}
+
+// Colores del modelo que NO están disponibles: ni en stock ni en el reparto. Es
+// EXACTAMENTE lo consultable por "sin disponibilidad" — pedir un color que ya está
+// no tiene sentido, para eso están las otras dos opciones.
+function coloresSinDisponibilidad(modelo) {
+  const enStock = coloresStockSet(modelo);
+  const enRep = coloresRepartoSet(modelo);
+  return paletaDeModelo(modelo).filter(c => {
+    const k = _normColor(c.color);
+    return !enStock.has(k) && !enRep.has(k);
+  });
 }
 
 // Chasis del modelo que están EN STOCK (físico libre + a recibir; NO reparto).
@@ -1543,51 +1571,60 @@ function selectOrigen(o) {
 }
 
 // ----- Color pedido (solo origen "sin disponibilidad") -----
-// El vendedor elige un color que NO tenemos ni en stock ni en el reparto. La lista sale
-// de la paleta real del modelo (lo que VW nos mandó de verdad en los últimos 18 meses +
-// todo el reparto histórico); los colores que SÍ están disponibles se muestran bloqueados
-// con el cartel de dónde están, para que no cargue por acá algo que puede vender ya.
+// Lista SOLO los colores que no están ni en stock ni en el reparto — pedir uno que ya
+// está no tiene sentido. Y no se inventa ninguno: la lista sale de lo que VW nos
+// facturó o nos ofreció en un reparto (Oversoft + compras_vw + reparto_vw +
+// portal_reparto, 3 años). Lo que sí está disponible se resume en un renglón, para
+// que el vendedor pueda ofrecer una alternativa inmediata sin salir de acá.
 STEP_RENDERERS['color-sd'] = () => {
   const allOk = formData.unidades.every(u => (u.colorPedido || '').trim());
   return {
     body: `
       <h2>¿Qué color querés consultar?</h2>
-      <p class="step-hint">Estos son los colores que VW nos mandó de verdad para cada modelo. Los que aparecen en gris ya están disponibles — esos conviene pedirlos por <strong>stock</strong> o <strong>reparto</strong>.</p>
+      <p class="step-hint">Estos son los colores del modelo que <strong>no tenemos</strong> ni en el salón ni en el reparto. Salen de lo que VW nos facturó u ofreció alguna vez — no hay colores inventados.</p>
       ${formData.unidades.map((u, idx) => {
-        const enStock = coloresStockSet(u.modelo);
-        const enRep = coloresRepartoSet(u.modelo);
-        // Primero los que SÍ se pueden pedir (es lo que vino a hacer el vendedor) y
-        // abajo los que ya están disponibles, bloqueados. Dentro de cada grupo, los
-        // colores que VW nos manda más seguido arriba.
-        const disponible = (c) => enStock.has(_normColor(c.color)) || enRep.has(_normColor(c.color));
-        const paleta = paletaDeModelo(u.modelo).slice()
-          .sort((a, b) => (disponible(a) ? 1 : 0) - (disponible(b) ? 1 : 0) || b.n - a.n);
-        const filas = paleta.map(c => {
-          const k = _normColor(c.color);
-          const hayStock = enStock.has(k), hayRep = enRep.has(k);
-          const bloqueado = hayStock || hayRep;
-          const checked = _normColor(u.colorPedido || '') === k;
-          const donde = hayStock ? 'ya hay en stock' : (hayRep ? 'ya hay en reparto' : '');
-          const ultima = c.ultima ? new Date(c.ultima + 'T00:00:00').toLocaleDateString('es-AR', { month: 'short', year: 'numeric' }) : null;
+        const opciones = coloresSinDisponibilidad(u.modelo);
+        const enStock = chasisStockPorModelo(u.modelo);
+        const enRep = stockData.filter(r => r.libre && r.enReparto && r.modelo === u.modelo);
+        const listaDisp = [];
+        if (enStock.length) listaDisp.push(`en stock: ${[...new Set(enStock.map(c => c.color))].map(escapeHtml).join(', ')}`);
+        if (enRep.length) listaDisp.push(`en reparto: ${[...new Set(enRep.map(c => c.color))].map(escapeHtml).join(', ')}`);
+        const avisoDisp = listaDisp.length
+          ? `<div style="font-size:12px; background:#ecfdf5; border:1px solid #a7f3d0; color:#065f46; border-radius:8px; padding:6px 10px; margin-top:8px">
+               ✔ De este modelo ya podés vender ${listaDisp.join(' · ')}</div>`
+          : `<div style="font-size:12px; background:#fef3c7; border:1px solid #fcd34d; color:#78350f; border-radius:8px; padding:6px 10px; margin-top:8px">
+               ⚠ De este modelo <strong>no tenemos ninguna unidad</strong>, en ningún color.</div>`;
+        const filas = opciones.map(c => {
+          const checked = _normColor(u.colorPedido || '') === _normColor(c.color);
+          const ultima = c.ultima
+            ? new Date(c.ultima + 'T00:00:00').toLocaleDateString('es-AR', { month: 'short', year: 'numeric' })
+            : null;
+          // "Facturado" = lo tuvimos de verdad. "Ofrecido" = VW nos lo asignó en un
+          // reparto aunque no lo hayamos comprado. Los dos prueban que existe.
+          const sub = (c.nFact > 0)
+            ? `nos facturaron ${c.nFact}${ultima ? ' · última ' + ultima : ''}`
+            : `VW nos lo ofreció en el reparto${c.nRep > 1 ? ' (' + c.nRep + ' veces)' : ''}`;
           return `
-            <label class="item ${checked ? 'selected' : ''}" style="${bloqueado ? 'opacity:.45; cursor:not-allowed' : ''}">
-              <input type="radio" name="colorSd${idx}" ${checked ? 'checked' : ''} ${bloqueado ? 'disabled' : ''}
+            <label class="item ${checked ? 'selected' : ''}">
+              <input type="radio" name="colorSd${idx}" ${checked ? 'checked' : ''}
                 onchange="setColorPedido(${idx}, ${JSON.stringify(c.color).replace(/"/g, '&quot;')})">
               <div class="info">
                 <div class="title">${escapeHtml(c.color)}</div>
-                <div class="sub">${bloqueado ? donde : `tuvimos ${c.n}${ultima ? ' · última ' + ultima : ''}`}</div>
+                <div class="sub">${sub}</div>
               </div>
             </label>`;
         }).join('');
-        const otroSel = (u.colorPedido || '').trim() && !paleta.some(c => _normColor(c.color) === _normColor(u.colorPedido));
+        const otroSel = (u.colorPedido || '').trim() &&
+          !opciones.some(c => _normColor(c.color) === _normColor(u.colorPedido));
         return `
           <div class="resumen-card" style="margin-bottom:14px">
             <h5>Unidad ${idx + 1}: ${escapeHtml(u.modelo || '—')}</h5>
-            <div class="scroll-list" style="max-height:360px; margin-top:10px">
-              ${filas || '<div class="empty" style="padding:10px"><p>De este modelo no tenemos histórico de colores. Escribilo abajo.</p></div>'}
+            ${avisoDisp}
+            <div class="scroll-list" style="max-height:340px; margin-top:10px">
+              ${filas || '<div class="empty" style="padding:10px"><p>De este modelo no tenemos histórico de colores. Escribí abajo el que pide el cliente.</p></div>'}
             </div>
             <div class="field" style="margin-top:10px">
-              <label class="field-label">Otro color (escribilo)</label>
+              <label class="field-label" style="font-size:12px">Otro color — solo si el cliente pide uno que no está en la lista</label>
               <input id="colorOtro${idx}" type="text" placeholder="Ej: Azul Egeo"
                 value="${otroSel ? escapeHtml(u.colorPedido) : ''}"
                 oninput="setColorPedidoLibre(${idx}, this.value)">
@@ -1645,16 +1682,14 @@ STEP_RENDERERS['modelos'] = () => {
     ? `${modelos.length} modelos con unidades en stock. Entre paréntesis, los chasis libres (incluye los "a recibir").`
     : (origen === 'reparto'
       ? `${modelos.length} modelos con unidades en el reparto en un color que NO tenemos en stock. Entre paréntesis, cuántas.`
-      : `El catálogo completo: ${modelos.length} modelos. Elegí cualquiera — después pedís el color.`);
+      : `Solo lo que no está disponible: ${modelos.length} modelos que no tenemos, o que tenemos pero en otros colores.`);
   const allOk = formData.unidades.every(u => u.modelo);
   const etiqueta = (m) => {
     if (origen === 'stock') return `${m.cantLibres}`;
     if (origen === 'reparto') return m.esReparto ? 'reparto' : `${m.cantRepartoNuevo} en reparto`;
-    // sin disponibilidad: avisamos qué hay para que no pida por acá algo que ya está
-    const partes = [];
-    if (m.cantLibres > 0) partes.push(`${m.cantLibres} en stock`);
-    if (m.cantReparto > 0) partes.push(`${m.cantReparto} en reparto`);
-    return partes.length ? partes.join(' · ') : 'sin unidades';
+    // sin disponibilidad: o no tenemos nada del modelo, o solo faltan colores.
+    if (m.sinNadaDelModelo) return 'no tenemos ninguna';
+    return `${m.cantColoresSD} ${m.cantColoresSD === 1 ? 'color' : 'colores'} que no tenemos`;
   };
   return {
     body: `

@@ -76,6 +76,7 @@ function ntrim(s: unknown): string {
 function normColor(s: unknown): string {
   let t = String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
   t = t.replace(/\b(metalizado|metalico|met|efecto perla|perlado|perla|premium)\b/g, "");
+  t = t.replace(/mojawe/g, "mojave"); // el catalogo VW lo escribe con w, Oversoft con v
   return t.replace(/[^a-z0-9]+/g, " ").trim();
 }
 
@@ -177,20 +178,41 @@ Deno.serve(async (req: Request) => {
     // compras_vw = lo facturado por VW (carga de Valeria); reparto_vw = lo asignado.
     const repDescP = rest(W, SUPA_KEY, "/reparto_vw?select=vin,descripcion&limit=5000").catch(() => []);
     const comprasP = rest(W, SUPA_KEY, "/compras_vw?select=serie,modelo_valeria&limit=5000").catch(() => []);
-    // Historico de unidades de los ultimos ~18 meses (CUALQUIER estado: vendidas,
-    // entregadas, asignadas). No es stock: es la unica forma de saber que colores
-    // nos manda VW realmente para cada modelo. Alimenta `paleta`, que es el
-    // selector de color de las consultas "sin disponibilidad" (el vendedor pide un
-    // color que hoy no tenemos ni en stock ni en reparto) y le dice al admin cuando
-    // fue la ultima vez que tuvimos esa combinacion modelo+color.
-    const desdeHist = new Date(Date.now() - 550 * 24 * 3600 * 1000).toISOString().slice(0, 10);
-    const histP = rest(
-      OV_URL, OV_KEY,
-      `/unidades?select=serie,modelo,color,fechadepedido&fechadepedido=gte.${desdeHist}&limit=8000`,
-    ).catch(() => [] as any[]);
+    // Historico de unidades (CUALQUIER estado: vendidas, entregadas, asignadas). No es
+    // stock: es la unica forma de saber que colores existen de verdad para cada modelo.
+    // Alimenta `paleta`, que es el selector de color de las consultas "sin
+    // disponibilidad" — ahi el vendedor pide un color que hoy no tenemos, y la lista
+    // NO se inventa: sale de lo que VW nos facturo o nos ofrecio alguna vez.
+    // Ventana de 4 anios (~2.500 filas): 18 meses dejaba afuera colores reales de
+    // modelos de rotacion lenta.
+    const desdeHist = new Date(Date.now() - 1095 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    // OJO: PostgREST corta en 1000 filas por request sin importar el `limit`. Sin
+    // paginar, el historico devolvia solo las 1000 primeras (las mas viejas) y los
+    // modelos recientes se quedaban SIN PALETA. Paginamos ordenando por fecha
+    // descendente, asi lo mas nuevo entra primero si algun dia se corta.
+    const histP = (async () => {
+      const all: any[] = [];
+      for (let off = 0; off < 6000; off += 1000) {
+        const ch = await rest(
+          OV_URL!, OV_KEY!,
+          `/unidades?select=serie,modelo,color,fechadepedido&fechadepedido=gte.${desdeHist}` +
+            `&order=fechadepedido.desc&limit=1000&offset=${off}`,
+        );
+        all.push(...ch);
+        if (ch.length < 1000) break;
+      }
+      return all;
+    })().catch(() => [] as any[]);
+    // Colores tal como los escribe VW en la factura (carga de Valeria) y en la oferta de
+    // reparto del Sheet. Suman al historico de Oversoft: cubren casos donde la unidad
+    // todavia no entro al sistema o donde Oversoft normalizo el nombre distinto.
+    const comprasColorP = rest(W, SUPA_KEY, "/compras_vw?select=modelo_valeria,modelo_oversoft,color,fecha_factura&limit=5000").catch(() => [] as any[]);
+    const portalRepP = rest(W, SUPA_KEY, "/portal_reparto?select=modelo,color&limit=2000").catch(() => [] as any[]);
 
-    const [unidades, modelos, colores, cat, snapArr, especiales, listaPrecios, repDesc, compras, hist] =
-      await Promise.all([unidadesP, modelosP, coloresP, catP, snapP, espP, listaP, repDescP, comprasP, histP]);
+    const [unidades, modelos, colores, cat, snapArr, especiales, listaPrecios, repDesc, compras, hist,
+           comprasColor, portalRep] =
+      await Promise.all([unidadesP, modelosP, coloresP, catP, snapP, espP, listaP, repDescP, comprasP, histP,
+                         comprasColorP, portalRepP]);
 
     // 3) Mapas de resolucion.
     const descByCode: Record<string, string> = {};
@@ -377,6 +399,12 @@ Deno.serve(async (req: Request) => {
     // Se llenan dentro del bloque de reparto y se reusan despues para la paleta.
     let repRowsAll: any[] = [];
     let colorNameFn: (cod: string) => string = (c) => c || "(sin color)";
+    // Catalogo de colores VIGENTE de VW (tabla reparto_colores + la base hardcodeada).
+    // Es la unica lista con los nombres que VW usa HOY. El historico de Oversoft
+    // arrastra nombres de catalogos viejos que son la MISMA pintura con otro nombre
+    // ("Candy White"/"Blanco Candy" = Blanco Cristal, "Plata Metalizada" = Plata
+    // Pirita), y ofrecerselos al cliente seria ofrecerle un color que no existe.
+    const catalogoColorVw = new Set<string>(Object.values(REPARTO_COLORES_BASE).map(normColor));
     {
       try {
         const repRows = await rest(W, SUPA_KEY, "/reparto_vw?select=vin,descripcion,color_codigo,estado_compra,periodo&limit=8000");
@@ -400,6 +428,7 @@ Deno.serve(async (req: Request) => {
           } catch (_) { /* usamos solo la base */ }
           const colorName = (cod: string) => coloresRep[cod] || REPARTO_COLORES_BASE[cod] || cod || "(sin color)";
           colorNameFn = colorName;
+          for (const n of Object.values(coloresRep)) if (n) catalogoColorVw.add(normColor(n));
 
           // Excluir las que YA estan en Oversoft (por serie = ultimos 8 del VIN):
           // esas ya las cuenta el stock fisico / a recibir.
@@ -489,29 +518,47 @@ Deno.serve(async (req: Request) => {
     //   - reparto_vw (todos los periodos)                       -> lo que VW nos asigno.
     // Es la lista que ve el vendedor cuando pide un color que hoy no tenemos, y la que
     // le dice al admin "de esa combinacion tuvimos N, la ultima el <fecha>".
-    const paletaAcc: Record<string, Record<string, { color: string; n: number; ultima: string | null }>> = {};
-    const addPaleta = (nc: string, color: string, fecha: string | null) => {
+    // Cada color guarda por separado cuantas veces nos lo FACTURARON (Oversoft +
+    // compras_vw) y cuantas VW nos lo OFRECIO en un reparto. No es lo mismo: un color
+    // que solo aparece ofrecido nunca lo tuvimos, pero VW lo produce para nosotros.
+    // `vw` = el nombre matchea el catalogo de colores vigente de VW. El front solo
+    // ofrece los que tienen vw=true; el resto queda en el payload para depurar.
+    type PalEntry = { color: string; n: number; nFact: number; nRep: number; ultima: string | null; vw: boolean };
+    const paletaAcc: Record<string, Record<string, PalEntry>> = {};
+    const addPaleta = (nc: string, color: string, fecha: string | null, tipo: "fact" | "rep") => {
       if (!nc || !color) return;
       const k = normColor(color);
       if (!k) return;
       const porNc = (paletaAcc[nc] ||= {});
-      const e = (porNc[k] ||= { color, n: 0, ultima: null });
+      const e = (porNc[k] ||= { color, n: 0, nFact: 0, nRep: 0, ultima: null, vw: catalogoColorVw.has(k) });
       e.n++;
+      if (tipo === "fact") e.nFact++;
+      else e.nRep++;
       if (fecha && (!e.ultima || fecha > e.ultima)) e.ultima = fecha;
     };
-    for (const h of hist as any[]) {
+    for (const h of hist as any[]) { // unidades de Oversoft (facturadas)
       const nc = resolveNc(String(h.modelo || "").trim(), String(h.serie || "").trim());
       if (!nc) continue;
       const col = colorById[String(h.color)];
       if (!col) continue;
-      addPaleta(nc, col, h.fechadepedido ? String(h.fechadepedido).slice(0, 10) : null);
+      addPaleta(nc, col, h.fechadepedido ? String(h.fechadepedido).slice(0, 10) : null, "fact");
     }
-    for (const r of repRowsAll) {
+    for (const r of comprasColor as any[]) { // facturas de VW (carga de Valeria)
+      const nc = ncByNorm[ntrimDesc(r.modelo_valeria)] || ncByNorm[ntrimDesc(r.modelo_oversoft)];
+      if (!nc || !r.color) continue;
+      addPaleta(nc, String(r.color), r.fecha_factura ? String(r.fecha_factura).slice(0, 10) : null, "fact");
+    }
+    for (const r of repRowsAll) { // reparto_vw: lo que VW nos ofrecio
       const nc = ncByNorm[ntrim(r.descripcion)];
       if (!nc) continue;
       // El periodo es "YYYY-MM": lo llevamos a fecha para poder comparar con el historico.
       const per = String(r.periodo || "");
-      addPaleta(nc, colorNameFn(String(r.color_codigo || "").trim()), /^\d{4}-\d{2}$/.test(per) ? per + "-01" : null);
+      addPaleta(nc, colorNameFn(String(r.color_codigo || "").trim()), /^\d{4}-\d{2}$/.test(per) ? per + "-01" : null, "rep");
+    }
+    for (const r of portalRep as any[]) { // oferta de reparto del Sheet
+      const nc = ncByNorm[ntrimDesc(r.modelo)];
+      if (!nc || !r.color) continue;
+      addPaleta(nc, String(r.color), null, "rep");
     }
     const paleta: Record<string, any[]> = {};
     for (const nc of Object.keys(paletaAcc)) {
