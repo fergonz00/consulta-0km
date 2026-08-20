@@ -643,7 +643,11 @@ function numToTextES(n) {
 }
 function fmtPct(n) {
   if (n == null || isNaN(n)) return '—';
-  return (n * 100).toFixed(2) + '%';
+  const v = n * 100;
+  // Sin esto, un delta minusculo por redondeo se muestra como "-0,00%", que confunde
+  // (pasa al pre-llenar el precio del admin con la oferta vigente: la diferencia es de
+  // centavos). Si a dos decimales da cero, es cero.
+  return (Math.abs(v) < 0.005 ? 0 : v).toFixed(2) + '%';
 }
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
