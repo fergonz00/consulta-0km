@@ -1059,7 +1059,11 @@ function getModelosEnReparto() {
 //                         o no unidades: el punto es justamente pedir lo que no hay.
 // Devuelve [{modelo, cantLibres, cantReparto, cantRepartoNuevo, soloReparto, esReparto}].
 // `esReparto` = el modelo no tiene ningún chasis concreto (solo pasa en el fallback CSV).
-function getModelosDisponibles(origen) {
+// `subtipo` solo aplica al origen "reparto" y parte el listado en las dos preguntas
+// que hace el paso `reparto-tipo`:
+//   'sin_stock'  -> modelos de los que NO tenemos ninguna unidad fisica.
+//   'otro_color' -> modelos que si tenemos, pero el reparto trae un color que falta.
+function getModelosDisponibles(origen, subtipo) {
   origen = origen || 'stock';
   const out = [];
   if (origen === 'sin_disponibilidad') {
@@ -1097,7 +1101,11 @@ function getModelosDisponibles(origen) {
     const cantLibres = chasis.length - cantReparto;
     const cantRepartoNuevo = chasisRepartoNuevoPorModelo(m).length;
     if (origen === 'stock' && cantLibres === 0) return;
-    if (origen === 'reparto' && cantRepartoNuevo === 0) return;
+    if (origen === 'reparto') {
+      if (cantRepartoNuevo === 0) return;
+      if (subtipo === 'sin_stock' && cantLibres > 0) return;
+      if (subtipo === 'otro_color' && cantLibres === 0) return;
+    }
     out.push({
       modelo: m, esReparto: false, cantLibres, cantReparto, cantRepartoNuevo,
       soloReparto: cantReparto > 0 && cantReparto === chasis.length
@@ -1106,7 +1114,7 @@ function getModelosDisponibles(origen) {
   // Fallback CSV espejo: modelos en reparto de los que no conocemos los chasis.
   // Resolvemos al nombre canonico para que todos los lookups (bt, competencia,
   // stockData) matcheen. Solo aplica al origen "reparto".
-  if (origen === 'reparto') {
+  if (origen === 'reparto' && subtipo !== 'otro_color') {
     Object.keys(repartoMap).forEach(m => {
       const canon = resolveModeloCanonico(m) || m;
       if (libres.has(canon)) return;
@@ -1305,6 +1313,7 @@ async function showNuevaConsulta() {
   // Reset state
   formData = {
     origen: null, // 'stock' | 'reparto' | 'sin_disponibilidad' — primera pregunta del wizard
+    repartoTipo: null, // solo si origen='reparto': 'sin_stock' | 'otro_color'
     unidades: [], // se setea según cantidad elegida en el primer paso
     tipoCliente: null,
     cliNombre: '', cliApellido: '',
@@ -1379,7 +1388,8 @@ function getNextStep(step) {
   if (step === 'u-observaciones') return 'u-resumen';
 
   if (step === 'gerente-vendedor') return 'origen';
-  if (step === 'origen') return 'cantidad-unidades';
+  if (step === 'origen') return formData.origen === 'reparto' ? 'reparto-tipo' : 'cantidad-unidades';
+  if (step === 'reparto-tipo') return 'cantidad-unidades';
   if (step === 'cantidad-unidades') return 'modelos';
   if (step === 'modelos') {
     // Sin disponibilidad: no hay chasis que elegir, el vendedor tipea el color que quiere.
@@ -1428,6 +1438,7 @@ function totalSteps() {
   // Pasos fijos: origen, cantidad, modelos, color(es), precios, tipo-cliente, nombre,
   // ubicación, financia, vs-otro, observaciones, resumen
   let n = 12;
+  if (formData.origen === 'reparto') n += 1;   // qué tipo de unidad del reparto
   if (currentMode === 'gerente') n += 1; // elegir vendedor
   if (formData.tipoCliente === 'particular') n += 2; // fuente, usado
   if (formData.fuenteDato === 'otro') n += 1;
@@ -1565,6 +1576,58 @@ function selectOrigen(o) {
     formData.unidades.forEach(u => { u.modelo = null; u.chasisSeleccionados = []; u.colorPedido = null; u.esReparto = false; u.precioPedido = null; });
   }
   formData.origen = o;
+  if (o !== 'reparto') formData.repartoTipo = null;
+  renderStep();
+  setTimeout(() => nextStep(), 150);
+}
+
+// ----- Qué tipo de unidad del reparto (solo si el origen es "reparto") -----
+// Antes de desplegar las 24 unidades, el vendedor acota: o busca un modelo que no
+// tenemos en absoluto, o busca otro color de un modelo que sí está en el salón. Son
+// dos conversaciones distintas con el cliente y conviene no mezclarlas.
+STEP_RENDERERS['reparto-tipo'] = () => {
+  const sinStock = getModelosDisponibles('reparto', 'sin_stock');
+  const otroColor = getModelosDisponibles('reparto', 'otro_color');
+  const uSin = sinStock.reduce((a, m) => a + m.cantRepartoNuevo, 0);
+  const uOtro = otroColor.reduce((a, m) => a + m.cantRepartoNuevo, 0);
+  const sel = (t) => formData.repartoTipo === t ? 'selected' : '';
+  const plural = (n, s, p) => `${n} ${n === 1 ? s : p}`;
+  return {
+    body: `
+      <h2>¿Qué estás buscando en el reparto?</h2>
+      <p class="step-hint">Las dos listas son de unidades que VW ya nos asignó y todavía no tenemos.</p>
+      <div class="opt-list">
+        <div class="opt ${sel('sin_stock')}" onclick="selectRepartoTipo('sin_stock')">
+          <span class="opt-icon">🚫</span>
+          <div>
+            <div><strong>Un modelo que no tenemos en stock</strong></div>
+            <div class="muted" style="font-size:12px; margin-top:2px">${sinStock.length === 0
+              ? 'Ahora mismo no hay ninguno: de todos los modelos del reparto tenemos al menos una unidad.'
+              : `${plural(uSin, 'unidad', 'unidades')} en ${plural(sinStock.length, 'modelo', 'modelos')} de los que no hay ni una en el salón: ${sinStock.map(m => escapeHtml(m.modelo.replace(/^VW /, ''))).join(' · ')}.`}</div>
+          </div>
+        </div>
+        <div class="opt ${sel('otro_color')}" onclick="selectRepartoTipo('otro_color')">
+          <span class="opt-icon">🎨</span>
+          <div>
+            <div><strong>Otro color de un modelo que sí tenemos</strong></div>
+            <div class="muted" style="font-size:12px; margin-top:2px">${otroColor.length === 0
+              ? 'Ahora mismo no hay ninguno: el reparto no trae colores distintos a los del salón.'
+              : `${plural(uOtro, 'unidad', 'unidades')} en ${plural(otroColor.length, 'modelo', 'modelos')}, en colores que hoy no están en stock.`}</div>
+          </div>
+        </div>
+      </div>
+    `,
+    footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
+  };
+};
+
+function selectRepartoTipo(t) {
+  if (t !== 'sin_stock' && t !== 'otro_color') return;
+  // Cambiar de subtipo invalida los modelos elegidos: el listado que sigue es otro.
+  if (formData.repartoTipo && formData.repartoTipo !== t) {
+    formData.unidades.forEach(u => { u.modelo = null; u.chasisSeleccionados = []; u.precioPedido = null; u.esReparto = false; });
+  }
+  formData.repartoTipo = t;
   renderStep();
   setTimeout(() => nextStep(), 150);
 }
@@ -1676,11 +1739,13 @@ STEP_RENDERERS['cantidad-unidades'] = () => ({
 // El listado depende del origen elegido en el primer paso.
 STEP_RENDERERS['modelos'] = () => {
   const origen = formData.origen || 'stock';
-  const modelos = getModelosDisponibles(origen);
+  const modelos = getModelosDisponibles(origen, origen === 'reparto' ? formData.repartoTipo : null);
   const hint = origen === 'stock'
     ? `${modelos.length} modelos con unidades en stock. Entre paréntesis, los chasis libres (incluye los "a recibir").`
     : (origen === 'reparto'
-      ? `${modelos.length} modelos con unidades en el reparto en un color que NO tenemos en stock. Entre paréntesis, cuántas.`
+      ? (formData.repartoTipo === 'sin_stock'
+        ? `${modelos.length} modelos del reparto de los que no hay ninguna unidad en el salón. Entre paréntesis, cuántas trae el reparto.`
+        : `${modelos.length} modelos que sí tenemos, con colores del reparto que hoy no están en stock. Entre paréntesis, cuántas unidades.`)
       : `Solo lo que no está disponible: ${modelos.length} modelos que no tenemos, o que tenemos pero en otros colores.`);
   const allOk = formData.unidades.every(u => u.modelo);
   const etiqueta = (m) => {
