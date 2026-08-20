@@ -349,3 +349,48 @@ Contra datos reales de producción: normalizador de color (5 pares), los 3 selec
 **Bug encontrado y corregido en el camino**: `Number(null)` es `0`, no `NaN`. La consulta sin precio informaba **"0.0% de descuento"** por WhatsApp, que es mentira. `dtoOAviso()` ahora saltea los `dto_extra_pedido` nulos explícitamente.
 
 ⏳ **Pendiente**: probar el circuito completo desde el navegador logueado como vendedor (se verificó la lógica contra producción y el render de cada paso en Chrome headless, pero no un submit real desde la UI).
+
+### Segunda pregunta antes de listar (`reparto-tipo` / `sd-tipo`)
+
+Pedido de Fer: no desplegarle todas las unidades de una. Cuando el origen es `reparto` o `sin_disponibilidad`, el wizard mete un paso más antes de `cantidad-unidades`. El estado vive en **`formData.subtipo`** — uno solo para los dos, porque la mecánica es idéntica y así hay un único lugar donde se resetea al cambiar de origen (`selectSubtipo`).
+
+| Origen | Subtipo | Qué lista | Al 20/08 |
+|---|---|---|---|
+| reparto | `sin_stock` | modelos sin ninguna unidad física en el salón | 3 modelos / 5 unidades |
+| reparto | `otro_color` | modelos que sí tenemos, en un color que falta | 11 modelos / 19 unidades |
+| sin_disponibilidad | `sin_ninguno` | modelos sin NADA (ni stock ni reparto) | 20 modelos / 62 colores |
+| sin_disponibilidad | `otro_color` | modelos que tenemos, a los que les falta algún color | 26 modelos / 76 colores |
+
+**Invariante a mantener: los dos subtipos particionan exacto el total** (3+11 = 14 modelos y 5+19 = 24 unidades; 20+26 = 46 modelos y 62+76 = 138 colores). Si al tocar los filtros deja de cerrar, hay unidades duplicadas o perdidas. En `reparto/sin_stock` entra además el fallback CSV (modelos sin chasis conocido).
+
+En reparto, la opción "sin stock" **nombra los modelos dentro de la propia opción** porque son pocos; en sin disponibilidad son 20 y no entran.
+
+### Historial de disponibilidad ya consultada (`historialDisponibilidad`)
+
+Pedido de Fer: *"si le respondo que no hay en VW y otro me pregunta de ese modelo, que me aparezca lo contestado, para recordar que tal día ya pregunté y me dijeron que no hay"*. Evita volver a molestar al zonal por lo mismo.
+
+Bloque en el detalle del admin, solo en `sin_disponibilidad`, abajo del "qué hay de lo que piden". Cruza por **modelo canónico** contra todas las consultas `sin_disponibilidad` anteriores, **en cualquier estado**: una que quedó `en_gestion` o `pendiente` también cuenta — es una pregunta ya hecha, aunque no tenga respuesta.
+
+Las del **mismo color van primero y resaltadas** en ámbar con el tag `MISMO COLOR`: son la respuesta literal a lo que están preguntando de nuevo. La cabecera lo resume (*"7 veces — 3 fueron por este mismo color"*). Cada fila trae fecha, color, veredicto, precio si hubo, quién la pidió y **el comentario del admin**, que suele ser el dato que decide (*"no lo producen"* no es lo mismo que *"no hay este trimestre"*). Corta en 6 y avisa cuántas más viejas hay.
+
+Compatibilidad: las respondidas antes de que existiera la columna `disponibilidad` se leen por estado (`aceptada` → se consigue, `rechazada` → no).
+
+### Precio de base y margen al responder (`refAdminUnidad`)
+
+Pedido de Fer: al poner un precio en una consulta sin disponibilidad, ver el margen como en las de 0km, y que el input arranque en el precio Baratito.
+
+`refAdminUnidad(it)` da la referencia de precio y ganancia **de hoy** para un item guardado, **sin depender de que el vendedor haya pedido un precio** (en `sin_disponibilidad` puede no haberlo). Cascada:
+
+1. `analisisAdminVivo` por los **chasis pedidos** (si siguen en stock);
+2. cualquier chasis del modelo;
+3. **catálogo** (precio Baratito + gcia del modelo, mismo snapshot del Motor) — es el escalón nuevo, para los 20 modelos sin ninguna unidad en `stockData`;
+4. el snapshot guardado en la consulta.
+
+Alimenta el pre-llenado del input del admin y el hint de margen mientras tipea. **Verificado en los tres orígenes**: al precio base el dto extra da 0,00% y la gcia es la de la fuente correspondiente (stock 9,00% del chasis, reparto 7,50% de la unidad asignada, sin disponibilidad 8,50% del catálogo). También el caso borde de una unidad de reparto que ya entró a Oversoft: cae al precio del modelo en vez de quedarse sin margen.
+
+Cuando la consulta es de disponibilidad pura, el bloque de la unidad ya no muestra cuatro guiones: pasa a **precio Baratito de hoy · precio de lista · gcia a ese precio**.
+
+⚠️ `fmtPct` clampea a cero lo que a dos decimales da cero. Sin eso, pre-llenar con la oferta vigente mostraba **"−0,00%"** de descuento extra (la diferencia contra sí misma son centavos por el redondeo a pesos). Pasaba en stock y en reparto.
+
+### Copy: nada de nombres propios en la UI del vendedor
+"gerencia consulta disponibilidad", no "Fer consulta al zonal". Y no poner el conteo del catálogo en la opción de sin disponibilidad.
