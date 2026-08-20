@@ -301,3 +301,42 @@ En `index.html`, `cargarStockOversoft()` concatena esas filas a `stockData` con 
 **Estado al cierre**: 68 unidades de Oversoft + 56 en reparto (21 modelos). Tres modelos sin ningún chasis físico pasaron a ser consultables: Vento GLI 350TSI DSG G2 (Gris Ártico, Gris Platino), Amarok Comfortline TDI AT 4x2 G2 (Blanco Puro, Plata Pirita) y Amarok Highline TDI AT 4x2 G2 (Plata Pirita).
 
 ⏳ **Pendiente**: probar el circuito completo logueado como vendedor (se verificó la Edge en producción y las funciones del wizard contra los datos reales, pero no el submit end-to-end desde el navegador).
+
+## Tres orígenes de consulta 0km (2026-08-20)
+
+Pedido de Fer: *"cuando el vendedor selecciona 0km ahí le pregunte 3 opciones: a) auto de stock b) auto en el reparto c) auto sin disponibilidad"*.
+
+El wizard 0km arranca con el paso **`origen`** (antes de "cuántas unidades"). Lo elegido queda en `consultas_0km.origen` y define todo lo que sigue:
+
+| origen | Qué lista | Cómo se responde |
+|---|---|---|
+| `stock` | chasis físicos libres + a recibir (lo que ya le compramos a VW) | precio: aceptar / no acepto / contraofertar |
+| `reparto` | unidades de `reparto_vw` **en un color que NO está en stock** | idem |
+| `sin_disponibilidad` | el catálogo entero (48 modelos), + color elegido a mano | **se consigue / no se consigue / en gestión con el zonal** |
+
+**La regla del reparto** (textual de Fer): *"solo las unidades que no tenemos en stock tienen que aparecer ahí"* + *"las unidades que tenemos el modelo pero que el reparto ofrece un color que no está en stock, que aclare esto"*. Implementado como: se listan las unidades de reparto cuya combinación **modelo+color** no está en stock. Al 20/08 eso deja 24 de 56 unidades en 14 modelos; 3 modelos no tienen nada de stock (Amarok Comfortline TDI AT 4x2, Amarok Highline TDI AT 4x2, Vento GLI) y los otros 11 aportan solo colores nuevos. El paso de colores muestra arriba, en verde, qué colores del modelo **sí** están en el salón.
+
+**"Sin disponibilidad"** era el agujero: el selector viejo solo mostraba modelos con alguna unidad, así que **20 de los 48 modelos del catálogo eran inconsultables**. Ahora se listan todos; el vendedor elige color de la paleta real del modelo (los ya disponibles salen bloqueados con el cartel de dónde están, para que no cargue por acá algo que puede vender ya) o lo escribe a mano. El **precio es opcional**: si lo deja vacío, la consulta va como disponibilidad pura y el WhatsApp dice `consulta si se consigue` en vez de un `%`.
+
+### ⚠️ Normalizador de color — no romper
+`normColor()` en `stock-disponible/index.ts` y `_normColor()` en `index.html` son **gemelos**: si se cambia uno hay que cambiar el otro. Oversoft y `reparto_vw` escriben distinto el mismo color (`Gris Volcan` / `Gris Volcán`, `Blanco Puro` / `Blanco puro`, `Gris Indy metalizado` / `Gris Indy`). Sin normalizar acentos, mayúsculas y los sufijos `metalizado|metalico|met|efecto perla|perlado|perla|premium`, una Amarok Hero que **está en el salón** figuraba como "color que no tenemos" y se ofrecía como reparto.
+
+### Datos nuevos de la Edge `stock-disponible`
+- **`catalogoModelos`** — los 48 modelos con precio publicado (del snapshot del Motor Baratito), tengan o no unidades. La gcia solo si `includeGcia`.
+- **`paleta`** — `nombreCorto -> [{color, n, ultima}]`, ordenado por cantidad. Union de **18 meses de `unidades` de Oversoft en cualquier estado** (query aparte, sin el filtro de disponible) + **todo `reparto_vw`**. 44 de 48 modelos tienen paleta; los que no (Polo Robust, que es nuevo, y Amarok Highline TDI MT 4x2) caen al campo de texto libre. Las variantes `+ Pack Safe` heredan la paleta de la versión base por prefijo (`paletaDeModelo`), porque Oversoft las carga con la descripción base.
+
+### Bloque del admin "🔎 Qué hay de lo que piden"
+`bloqueQueHay(c, it)` — solo en consultas `sin_disponibilidad` y solo para admin. Responde de arriba hacia abajo:
+1. **Veredicto** con color: ✓ ese auto sí está en stock / 🚚 está en el reparto (no hace falta pedirle nada al zonal) / ✗ ese color no está pero del modelo hay N / ✗ de este modelo no tenemos nada.
+2. Chips de colores del modelo **en stock** y **en reparto**, con cantidades.
+3. **Histórico**: cuántas unidades tuvimos de ese modelo en ese color y cuándo fue la última — es lo que decide si vale la pena pedírselo al zonal o si VW directamente no lo produce así.
+
+### Estado `en_gestion`
+Botón "⏳ En gestión con el zonal" (solo en `sin_disponibilidad`). La consulta **sigue en el tab Pendientes** del admin pero sale del barrido de `notify-sin-responder`, que filtra `estado='pendiente'` — así consultar al zonal no dispara los 5 recordatorios. El tab "Respondidas" del gerente filtra `estado=not.in.(pendiente,en_gestion)`.
+
+### Verificado el 20/08/2026
+Contra datos reales de producción: normalizador de color (5 pares), los 3 selectores, la invariante de que ninguna unidad de reparto listada tenga su color en stock, `refPrecioModelo` en los 20 modelos sin unidades, `queHayDe` en los 4 casos límite, y el render de los 9 pasos. End-to-end en la DB: alta de consulta `sin_disponibilidad` sin precio → WhatsApp con el color en el modelo y `consulta si se consigue` → `en_gestion` → `se consigue` con precio → `no se consigue`. Fila de prueba borrada y config de notificaciones restaurada.
+
+**Bug encontrado y corregido en el camino**: `Number(null)` es `0`, no `NaN`. La consulta sin precio informaba **"0.0% de descuento"** por WhatsApp, que es mentira. `dtoOAviso()` ahora saltea los `dto_extra_pedido` nulos explícitamente.
+
+⏳ **Pendiente**: probar el circuito completo desde el navegador logueado como vendedor (se verificó la lógica contra producción y el render de cada paso en Chrome headless, pero no un submit real desde la UI).
