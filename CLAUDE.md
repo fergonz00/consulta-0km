@@ -183,6 +183,21 @@ Corta solo: en cuanto la consulta deja de estar `pendiente` (aceptada / rechazad
 
 **Ojo con el stock real**: al 19/08/2026 hay **una sola** unidad consultable (Chevrolet Cruze AF935MN, a recibir, $25.900.000). El resto del stock reciente ya está vendido y la chatarra vieja cae por la ventana de 18 meses. Que la lista salga casi vacía no es un bug.
 
+## Demoras de unidades A RECIBIR (2026-08-21)
+
+Una unidad "a recibir" cuenta como stock y el vendedor la puede consultar y vender igual que una que está en el salón. Cuando VW la traba (papeles, producción), nadie se enteraba hasta que el cliente reclamaba. Ahora, si lleva más de **7 días hábiles** cargada en Oversoft sin entrar físicamente, la Edge **`notify-unidad-demorada`** (repo `tasador-tga`) le avisa por WhatsApp a Fer y a Daniel López, ellos le consultan a VW, y **Fer anota el problema y la fecha estimada de llegada en el panel `/precios` de portal-precios**. Esa nota es lo que aparece acá.
+
+**Cómo llega el dato:** `stock-disponible` lee `unidades_demora` (wjfgl, service role) y le cuelga a cada unidad un objeto `demora = {serie, problema, fechaEstimada, diasHabiles}`. **Va para todos, no es dato de gerencia** — es justamente lo que el vendedor necesita antes de prometerle una fecha al cliente. Solo se manda lo que es novedad: hay algo anotado, o ya pasó el plazo sin respuesta de VW. Una unidad a recibir dentro del plazo normal no ensucia la pantalla.
+
+**Dónde se ve en el front:**
+- Badge **NO LLEGÓ** (rojo) al lado de **A RECIBIR** (`badgeChasis`), y debajo el texto de lo que contestó VW.
+- En el selector de chasis del wizard, como sub-línea de la unidad.
+- En la consulta ya guardada (detalle admin), el estado se **cruza EN VIVO contra `stockData`**: la demora es de hoy, no de cuando el vendedor pidió el precio (`cartelDemora`).
+
+**Rojo vs. ámbar** (`demoraGrave`): ámbar mientras haya una fecha estimada por delante; rojo cuando no hay fecha o cuando la que había ya venció.
+
+**`habilesEntre()` de la Edge es GEMELO del de `notify-unidad-demorada`** (lun-vie sin feriados, tabla `feriados_ar`). Si se toca uno, tocar el otro: el umbral de 7 días hábiles tiene que dar igual en los dos lados o el badge y el WhatsApp se contradicen. Misma relación que `normColor()` / `_normColor()`.
+
 ## Convenciones heredadas del tasador
 
 - Login NO hashea claves (deuda técnica conocida, NO arreglar acá sin avisar).
