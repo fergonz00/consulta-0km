@@ -849,6 +849,9 @@ async function cargarStockOversoft() {
     return {
       serie: u.serie, modelo: (u.modelo || '').trim(), nombreCorto: u.nombreCorto || null,
       color: (u.color || '').trim(), libre: true, aRecibir: !!u.aRecibir,
+      // Unidad a recibir que no llega: {problema, fechaEstimada, diasHabiles}. La
+      // carga Fer en el panel /precios con la respuesta de VW. null = sin novedad.
+      demora: u.demora || null,
       oferta_baratito: Number(u.oferta_baratito) || 0,
       gcia_actual: Number(u.gcia_actual) || 0,
       precio_lista: Number(u.precio_lista) || 0,
@@ -1149,8 +1152,50 @@ function getChasisLibresPorModelo(modelo) {
 function badgeChasis(c) {
   if (!c) return '';
   if (c.enReparto) return ' <span class="badge" style="background:#c7d2fe; color:#312e81">EN REPARTO</span>';
-  if (c.aRecibir) return ' <span class="badge" style="background:#fbbf24; color:#78350f">A RECIBIR</span>';
+  if (c.aRecibir) {
+    // Una unidad a recibir demorada NO se puede prometer como una normal: el badge
+    // tiene que cantarlo solo, sin que haya que abrir el detalle.
+    const b = ' <span class="badge" style="background:#fbbf24; color:#78350f">A RECIBIR</span>';
+    return c.demora ? b + ' <span class="badge" style="background:#fecaca; color:#7f1d1d">NO LLEGÓ</span>' : b;
+  }
   return '';
+}
+// ============ DEMORAS DE UNIDADES A RECIBIR ============
+// Lo que Fer anota en el panel /precios despues de consultarle a VW, para que el
+// vendedor sepa que plazo prometerle al cliente. Ver project: notify-unidad-demorada.
+function fechaCortaISO(iso) {
+  const p = String(iso || '').slice(0, 10).split('-');
+  return p.length === 3 ? (p[2] + '/' + p[1] + '/' + p[0]) : '';
+}
+function textoDemora(d) {
+  if (!d) return '';
+  const hoy = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+  const partes = [];
+  if (d.problema) partes.push(d.problema);
+  if (d.fechaEstimada) {
+    partes.push(d.fechaEstimada < hoy
+      ? 'se esperaba para el ' + fechaCortaISO(d.fechaEstimada) + ' y todavía no llegó'
+      : 'llegada estimada ' + fechaCortaISO(d.fechaEstimada));
+  }
+  if (!partes.length) return 'no llega hace ' + d.diasHabiles + ' días hábiles y VW todavía no contestó';
+  return partes.join(' — ');
+}
+// Rojo cuando no hay fecha o ya se venció; ámbar mientras haya una fecha por delante.
+function demoraGrave(d) {
+  if (!d) return false;
+  if (!d.fechaEstimada) return true;
+  return d.fechaEstimada < new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+}
+// Cartel para el detalle de un chasis demorado.
+function cartelDemora(d) {
+  if (!d) return '';
+  const grave = demoraGrave(d);
+  const bg = grave ? '#fef2f2' : '#fffbeb', bd = grave ? '#fecaca' : '#fde68a', tx = grave ? '#991b1b' : '#92400e';
+  return '<div style="background:' + bg + '; border:1px solid ' + bd + '; border-radius:8px; padding:6px 8px; margin-top:6px">' +
+    '<div style="font-size:11px; font-weight:700; color:' + tx + '">🚚 Esta unidad todavía no llegó</div>' +
+    '<div style="font-size:11px; color:#3f3f46; margin-top:2px">' + escapeHtml(textoDemora(d)) + '</div>' +
+    '<div style="font-size:10px; color:#71717a; margin-top:2px">Confirmá el plazo antes de comprometer una fecha de entrega.</div>' +
+    '</div>';
 }
 // Texto corto del estado de una unidad de reparto.
 function txtEstadoReparto(c) {
@@ -1847,7 +1892,7 @@ STEP_RENDERERS['colores'] = () => {
   const allOk = formData.unidades.every(u => u.esReparto || u.chasisSeleccionados.length > 0);
   const hint = origen === 'reparto'
     ? 'Estas unidades <strong>no están en el concesionario</strong>: VW ya nos las asignó con ese color y las podemos comprar. Solo salen las que no tenemos en stock.'
-    : 'Hasta 3 chasis por unidad. Tocá para seleccionar. Los marcados <strong>A RECIBIR</strong> ya se los compramos a VW y están en camino.';
+    : 'Hasta 3 chasis por unidad. Tocá para seleccionar. Los marcados <strong>A RECIBIR</strong> ya se los compramos a VW y están en camino; si además dicen <strong>NO LLEGÓ</strong>, están demorados y abajo figura lo que contestó VW.';
   return {
     body: `
       <h2>Elegí los colores</h2>
@@ -1885,6 +1930,7 @@ STEP_RENDERERS['colores'] = () => {
                     <div class="info">
                       <div class="title">${escapeHtml(c.color || '—')}${badgeChasis(c)}</div>
                       <div class="sub">${escapeHtml(c.serie)}${c.enReparto ? ' · ' + txtEstadoReparto(c) + ' · color que no hay en stock' : (fechaTxt ? (c.aRecibir ? ' · Pedido ' : ' · Fact ') + fechaTxt : '')}</div>
+                      ${c.demora ? `<div class="sub" style="color:${demoraGrave(c.demora) ? '#991b1b' : '#92400e'}; font-weight:600">🚚 ${escapeHtml(textoDemora(c.demora))}</div>` : ''}
                     </div>
                     <div class="right">
                       ${fmtMoney(c.oferta_vigente)}
@@ -3152,14 +3198,19 @@ function abrirDetalle(consultaId, editMode = false) {
           gcia_resultante: aLive.gcia_resultante };
       }
     }
-    const chasis = (it.chasis || []).map(ch =>
-      `<div style="font-size:12px; padding:4px 0; border-bottom:1px dashed var(--vw-grey-2)">
+    const chasis = (it.chasis || []).map(ch => {
+      // El chasis que pidieron quedo guardado en la consulta, pero la demora es un
+      // dato de HOY: se cruza en vivo contra el stock para que al responder no se
+      // prometa una entrega de una unidad que sigue trabada en la terminal.
+      const dem = ((stockData || []).find(r => r.serie === ch.serie) || {}).demora || null;
+      return `<div style="font-size:12px; padding:4px 0; border-bottom:1px dashed var(--vw-grey-2)">
         <strong>${escapeHtml(ch.color || '—')}</strong> · <span class="muted">${escapeHtml(ch.serie || '')}</span>
         ${ch.enReparto ? ' <span class="tag-badge" style="background:#c7d2fe; color:#312e81">EN REPARTO</span>' : ''}
         ${ch.fecha_factura ? `· <span class="muted">Fact ${escapeHtml(ch.fecha_factura)}</span>` : ''}
         · ${fmtMoney(ch.oferta_vigente)}${ch.fuente_oferta === 'stock_limitado' ? ' <span class="tag-badge lim">LIM</span>' : ''}
-      </div>`
-    ).join('');
+        ${cartelDemora(dem)}
+      </div>`;
+    }).join('');
     // Stock actual del mismo modelo (solo admin), ordenado de mas viejo a mas nuevo,
     // con los chasis pedidos resaltados.
     let stockHtml = '';
@@ -3182,7 +3233,9 @@ function abrirDetalle(consultaId, editMode = false) {
           ${r.fecha_factura_str ? `· <span class="muted">${escapeHtml(r.fecha_factura_str)}</span>` : ''}
           ${r.enReparto ? ' <span class="tag-badge" style="background:#c7d2fe; color:#312e81">EN REPARTO</span>' : ''}
           ${r.aRecibir ? ' <span class="tag-badge" style="background:#fbbf24; color:#78350f">A RECIBIR</span>' : ''}
+          ${r.demora ? ' <span class="tag-badge" style="background:#fecaca; color:#7f1d1d">NO LLEGÓ</span>' : ''}
           ${pedido ? ' <span style="color:var(--orange); font-weight:700; font-size:11px">PEDIDO</span>' : ''}
+          ${r.demora ? `<div style="font-size:11px; color:${demoraGrave(r.demora) ? '#991b1b' : '#92400e'}">🚚 ${escapeHtml(textoDemora(r.demora))}</div>` : ''}
         </div>`;
       }).join('') || '<div class="muted" style="font-size:12px; padding:6px 0">Sin stock libre actual.</div>';
       stockHtml = `

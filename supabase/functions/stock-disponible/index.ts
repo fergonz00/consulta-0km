@@ -49,6 +49,28 @@ function json(body: unknown, status = 200) {
 }
 
 // GET helper para PostgREST (Oversoft o wjfgl) con manejo de error.
+// Dias habiles que puede estar una unidad "a recibir" antes de que sea una demora.
+// Mismo umbral que la Edge notify-unidad-demorada (tasador-tga).
+const DIAS_DEMORA = 7;
+
+const hoyAR = () => new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
+const _dow = (iso: string) => new Date(iso.slice(0, 10) + "T12:00:00Z").getUTCDay();
+const _masDias = (iso: string, n: number) =>
+  new Date(new Date(iso.slice(0, 10) + "T12:00:00Z").getTime() + n * 86400_000).toISOString().slice(0, 10);
+
+/** Dias habiles (lun-vie sin feriados) entre dos fechas. Gemelo del de la Edge de avisos. */
+function habilesEntre(desde: string, hasta: string, feriados: Set<string>): number {
+  let f = desde.slice(0, 10);
+  const fin = hasta.slice(0, 10);
+  let n = 0, guarda = 0;
+  while (f < fin && guarda++ < 800) {
+    f = _masDias(f, 1);
+    const d = _dow(f);
+    if (d !== 0 && d !== 6 && !feriados.has(f)) n++;
+  }
+  return n;
+}
+
 async function rest(base: string, key: string, path: string): Promise<any[]> {
   const res = await fetch(base + path, {
     headers: { apikey: key, Authorization: "Bearer " + key },
@@ -208,11 +230,35 @@ Deno.serve(async (req: Request) => {
     // todavia no entro al sistema o donde Oversoft normalizo el nombre distinto.
     const comprasColorP = rest(W, SUPA_KEY, "/compras_vw?select=modelo_valeria,modelo_oversoft,color,fecha_factura&limit=5000").catch(() => [] as any[]);
     const portalRepP = rest(W, SUPA_KEY, "/portal_reparto?select=modelo,color&limit=2000").catch(() => [] as any[]);
+    // Unidades A RECIBIR que no llegan, con lo que contesto VW. La fila la crea la
+    // Edge `notify-unidad-demorada` (repo tasador-tga) y la nota la carga Fer en el
+    // panel /precios del portal. Es lo unico que tiene el vendedor para saber que
+    // plazo prometerle al cliente cuando el auto todavia no esta fisico.
+    const demorasP = rest(
+      W, SUPA_KEY,
+      "/unidades_demora?select=serie,fecha_oversoft,problema,fecha_estimada&recibida_at=is.null&limit=2000",
+    ).catch(() => [] as any[]);
+    const feriadosP = rest(W, SUPA_KEY, "/feriados_ar?select=fecha&limit=2000").catch(() => [] as any[]);
 
     const [unidades, modelos, colores, cat, snapArr, especiales, listaPrecios, repDesc, compras, hist,
-           comprasColor, portalRep] =
+           comprasColor, portalRep, demoras, feriadosRows] =
       await Promise.all([unidadesP, modelosP, coloresP, catP, snapP, espP, listaP, repDescP, comprasP, histP,
-                         comprasColorP, portalRepP]);
+                         comprasColorP, portalRepP, demorasP, feriadosP]);
+
+    // Demora por chasis, lista para colgarle a la unidad.
+    const feriados = new Set<string>((feriadosRows || []).map((f: any) => String(f.fecha).slice(0, 10)));
+    const demoraBySerie: Record<string, any> = {};
+    for (const d of demoras || []) {
+      const serie = String(d.serie || "").trim().toUpperCase();
+      if (!serie) continue;
+      const alta = d.fecha_oversoft ? String(d.fecha_oversoft).slice(0, 10) : null;
+      const diasHabiles = alta ? habilesEntre(alta, hoyAR(), feriados) : 0;
+      const problema = String(d.problema || "").trim() || null;
+      const fechaEstimada = d.fecha_estimada ? String(d.fecha_estimada).slice(0, 10) : null;
+      // Solo lo que es novedad: hay algo anotado, o ya paso el plazo sin respuesta.
+      if (!problema && !fechaEstimada && diasHabiles < DIAS_DEMORA) continue;
+      demoraBySerie[serie] = { serie, problema, fechaEstimada, diasHabiles };
+    }
 
     // 3) Mapas de resolucion.
     const descByCode: Record<string, string> = {};
@@ -348,6 +394,10 @@ Deno.serve(async (req: Request) => {
         oferta_vigente,
         fuente_oferta,
       };
+      // Demora: la unidad esta a recibir y no llega. Va para TODOS (vendedores
+      // incluidos): es justamente el dato que necesitan antes de prometer fecha.
+      const dem = demoraBySerie[String(u.serie || "").trim().toUpperCase()];
+      if (dem) row.demora = dem;
       // gcia solo para admin (ver bloque de credenciales arriba).
       if (includeGcia) { row.gcia_actual = gcia_actual; row.gcia_vigente = gcia_vigente; }
       out.push(row);
@@ -591,6 +641,7 @@ Deno.serve(async (req: Request) => {
       count: out.length,
       fisico: out.filter((r) => !r.aRecibir).length,
       aRecibir: out.filter((r) => r.aRecibir).length,
+      demoradas: out.filter((r) => r.demora).length,
       sinResolver: sinResolver.length,
       enReparto: repartoUnidades.length,
       unidades: out,
