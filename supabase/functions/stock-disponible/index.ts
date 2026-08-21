@@ -236,7 +236,7 @@ Deno.serve(async (req: Request) => {
     // plazo prometerle al cliente cuando el auto todavia no esta fisico.
     const demorasP = rest(
       W, SUPA_KEY,
-      "/unidades_demora?select=serie,fecha_oversoft,problema,fecha_estimada&recibida_at=is.null&limit=2000",
+      "/unidades_demora?select=serie,fecha_oversoft,problema,fecha_estimada,silenciada_at&recibida_at=is.null&limit=2000",
     ).catch(() => [] as any[]);
     const feriadosP = rest(W, SUPA_KEY, "/feriados_ar?select=fecha&limit=2000").catch(() => [] as any[]);
 
@@ -255,6 +255,9 @@ Deno.serve(async (req: Request) => {
       const diasHabiles = alta ? habilesEntre(alta, hoyAR(), feriados) : 0;
       const problema = String(d.problema || "").trim() || null;
       const fechaEstimada = d.fecha_estimada ? String(d.fecha_estimada).slice(0, 10) : null;
+      // Silenciada sin nota = ya se chequeo con VW y no hay nada que contarle al
+      // vendedor. Con nota si se muestra: la nota manda sobre el silencio.
+      if (d.silenciada_at && !problema && !fechaEstimada) continue;
       // Solo lo que es novedad: hay algo anotado, o ya paso el plazo sin respuesta.
       if (!problema && !fechaEstimada && diasHabiles < DIAS_DEMORA) continue;
       demoraBySerie[serie] = { serie, problema, fechaEstimada, diasHabiles };
