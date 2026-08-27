@@ -1439,7 +1439,8 @@ function getNextStep(step) {
   // DE USADOS" mas abajo.
   if (step === 'u-gerente-vendedor') return 'u-unidad';
   if (step === 'u-unidad') return 'u-precio';
-  if (step === 'u-precio') return 'u-cliente';
+  if (step === 'u-precio') return 'u-tipo-cliente';
+  if (step === 'u-tipo-cliente') return 'u-cliente';
   if (step === 'u-cliente') return 'u-observaciones';
   if (step === 'u-observaciones') return 'u-resumen';
 
@@ -1493,8 +1494,9 @@ function getNextStep(step) {
 }
 
 function totalSteps() {
-  // Usados: unidad, precio, cliente, observaciones, resumen (+ vendedor si gerente)
-  if (wizardTipo === 'usado') return currentMode === 'gerente' ? 6 : 5;
+  // Usados: unidad, precio, tipo de cliente, cliente, observaciones, resumen
+  // (+ vendedor si gerente)
+  if (wizardTipo === 'usado') return currentMode === 'gerente' ? 7 : 6;
   // Pasos fijos: origen, cantidad, modelos, color(es), precios, tipo-cliente, nombre,
   // ubicación, financia, vs-otro, observaciones, resumen
   let n = 12;
@@ -4028,6 +4030,22 @@ function tituloUsadoStock(u) {
   return u.patente ? `${u.unidad} (${u.patente})` : u.unidad;
 }
 
+// Particular vs. reventa (pedido de Fer, 27/08/2026). Las consultas anteriores a
+// esa fecha no tienen el dato: en vez de inventar "particular" no se muestra nada,
+// asi se ve de una que es una consulta vieja y no una venta a particular.
+function badgeTipoClienteUsado(tipo) {
+  const base = 'padding:2px 7px; border-radius:8px; font-size:10px; font-weight:700; margin-left:6px; white-space:nowrap';
+  if (tipo === 'reventa') return `<span style="background:#ede9fe; color:#5b21b6; ${base}">🏢 REVENTA</span>`;
+  if (tipo === 'particular') return `<span style="background:#e0f2fe; color:#075985; ${base}">👤 PARTICULAR</span>`;
+  return '';
+}
+
+function txtTipoClienteUsado(tipo) {
+  if (tipo === 'reventa') return '🏢 Reventa';
+  if (tipo === 'particular') return '👤 Particular';
+  return '<span style="color:var(--vw-grey-4)">sin dato (consulta anterior al 27/08/2026)</span>';
+}
+
 function badgeEstadoUsado(estado) {
   return estado === 'a_recibir'
     ? '<span style="background:#fef3c7; color:#92400e; padding:2px 7px; border-radius:8px; font-size:10px; font-weight:700">A RECIBIR</span>'
@@ -4148,6 +4166,7 @@ function historialUsadoHtml(c) {
         <div style="font-size:12px; color:var(--vw-grey-4); min-width:120px">
           ${fmtFechaCorta(new Date(p.admin_respuesta_at || p.created_at))} ·
           ${escapeHtml(p.vendedor_nombre || p.vendedor_usuario || '—')}
+          ${p.tipo_cliente ? `<span style="color:${p.tipo_cliente === 'reventa' ? '#5b21b6' : '#075985'}"> · ${p.tipo_cliente === 'reventa' ? '🏢 reventa' : '👤 particular'}</span>` : ''}
         </div>
         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
           <span style="background:${ESTADO_BG[p.estado]}; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700">${ESTADO_LBL[p.estado]}</span>
@@ -4176,6 +4195,7 @@ async function showNuevaConsultaUsado() {
   formUsado = {
     usadoid: null,
     precioPedido: null,
+    tipoCliente: null,
     cliNombre: '', cliApellido: '',
     observaciones: ''
   };
@@ -4342,25 +4362,63 @@ function onUsadoPrecioInput(el) {
   if (btn) btn.disabled = !formUsado.precioPedido;
 }
 
-// ----- Paso: cliente -----
-STEP_RENDERERS['u-cliente'] = () => ({
+// ----- Paso: tipo de cliente (particular / reventa) -----
+// Pedido de Fer el 27/08/2026: antes de decidir el precio quiere saber si el que
+// compra es un particular o un reventa. No es un dato de color: contra un reventa
+// el margen que se resigna es distinto (compra para revender) y el precio se
+// negocia de otra forma. Es obligatorio — por eso la opcion avanza sola y no hay
+// boton "Siguiente".
+STEP_RENDERERS['u-tipo-cliente'] = () => ({
   body: `
-    <h2>¿Para qué cliente es?</h2>
-    <p class="step-hint">Sirve para no mezclar dos pedidos por la misma unidad. Si todavía no tenés el nombre, dejalo vacío.</p>
-    <div class="field">
-      <label class="field-label">Nombre</label>
-      <input id="uCliNombre" type="text" value="${escapeHtml(formUsado.cliNombre)}" oninput="formUsado.cliNombre = this.value">
-    </div>
-    <div class="field">
-      <label class="field-label">Apellido</label>
-      <input id="uCliApellido" type="text" value="${escapeHtml(formUsado.cliApellido)}" oninput="formUsado.cliApellido = this.value">
+    <h2>¿Es venta a particular o a un reventa?</h2>
+    <p class="step-hint">Es lo primero que mira para decidir el precio.</p>
+    <div class="opt-list">
+      <div class="opt ${formUsado.tipoCliente === 'particular' ? 'selected' : ''}" onclick="selectTipoClienteUsado('particular')">
+        <span class="opt-icon">👤</span> Particular
+      </div>
+      <div class="opt ${formUsado.tipoCliente === 'reventa' ? 'selected' : ''}" onclick="selectTipoClienteUsado('reventa')">
+        <span class="opt-icon">🏢</span> Reventa
+      </div>
     </div>
   `,
-  footer: `
-    <button class="btn-back" onclick="wizardBack()">Atrás</button>
-    <button class="btn-next" onclick="nextStep()">Siguiente</button>
-  `
+  footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
 });
+
+function selectTipoClienteUsado(t) {
+  formUsado.tipoCliente = t;
+  // Un reventa no tiene apellido: si venia tipeado de un paso atras, se limpia
+  // para que no viaje un dato que la pantalla ya no muestra.
+  if (t === 'reventa') formUsado.cliApellido = '';
+  nextStep();
+}
+
+// ----- Paso: cliente -----
+// El mismo paso sirve para los dos casos: si es reventa se pide un solo nombre
+// (el de la agencia) y se guarda igual en cliente_nombre, asi el titulo de la
+// consulta y el buscador siguen funcionando sin una columna extra.
+STEP_RENDERERS['u-cliente'] = () => {
+  const esReventa = formUsado.tipoCliente === 'reventa';
+  return {
+    body: `
+      <h2>${esReventa ? '¿Qué reventa es?' : '¿Para qué cliente es?'}</h2>
+      <p class="step-hint">Sirve para no mezclar dos pedidos por la misma unidad. Si todavía no tenés el nombre, dejalo vacío.</p>
+      <div class="field">
+        <label class="field-label">${esReventa ? 'Nombre del reventa' : 'Nombre'}</label>
+        <input id="uCliNombre" type="text" ${esReventa ? 'placeholder="Ej: Auto del Sur"' : ''}
+          value="${escapeHtml(formUsado.cliNombre)}" oninput="formUsado.cliNombre = this.value">
+      </div>
+      ${esReventa ? '' : `
+        <div class="field">
+          <label class="field-label">Apellido</label>
+          <input id="uCliApellido" type="text" value="${escapeHtml(formUsado.cliApellido)}" oninput="formUsado.cliApellido = this.value">
+        </div>`}
+    `,
+    footer: `
+      <button class="btn-back" onclick="wizardBack()">Atrás</button>
+      <button class="btn-next" onclick="nextStep()">Siguiente</button>
+    `
+  };
+};
 
 // ----- Paso: observaciones -----
 STEP_RENDERERS['u-observaciones'] = () => ({
@@ -4399,7 +4457,8 @@ STEP_RENDERERS['u-resumen'] = () => {
           <span class="k">Publicado</span><span class="v">${fmtMoney(pub)}</span>
           <span class="k">Pedís</span><span class="v"><strong>${fmtMoney(ped)}</strong></span>
           ${dif > 0 ? `<span class="k">Rebaja</span><span class="v">${fmtMoney(dif)} (${pub ? ((dif/pub)*100).toFixed(1) : '0'}%)</span>` : ''}
-          <span class="k">Cliente</span><span class="v">${escapeHtml(cliente || '—')}</span>
+          <span class="k">Tipo</span><span class="v">${formUsado.tipoCliente === 'reventa' ? '🏢 Reventa' : '👤 Particular'}</span>
+          <span class="k">${formUsado.tipoCliente === 'reventa' ? 'Reventa' : 'Cliente'}</span><span class="v">${escapeHtml(cliente || '—')}</span>
         </div>
         ${(formUsado.observaciones || '').trim() ? `
           <div style="margin-top:10px">
@@ -4419,6 +4478,7 @@ async function submitConsultaUsado() {
   const u = getUsadoStock(formUsado.usadoid);
   if (!u) { alert('Se perdió la unidad elegida. Volvé atrás y elegila de nuevo.'); return; }
   if (!formUsado.precioPedido) { alert('Falta el precio pedido'); return; }
+  if (!formUsado.tipoCliente) { alert('Falta decir si es venta a particular o a un reventa'); return; }
   if (currentMode === 'gerente' && !gerenteVendedorActivo) { alert('Elegí el vendedor'); return; }
 
   const esGerente = currentMode === 'gerente' && gerenteVendedorActivo;
@@ -4444,6 +4504,7 @@ async function submitConsultaUsado() {
       // el precio, el pedido sigue siendo legible ("pidio X sobre Y").
       precio_publicado: u.precio_venta || null,
       precio_pedido: formUsado.precioPedido,
+      tipo_cliente: formUsado.tipoCliente,
       cliente_nombre: (formUsado.cliNombre || '').trim() || null,
       cliente_apellido: (formUsado.cliApellido || '').trim() || null,
       observaciones_vendedor: (formUsado.observaciones || '').trim() || null,
@@ -4537,7 +4598,7 @@ function renderConsultaUsadoCard(c, esAdmin) {
   return `
     <div class="card consulta-card" onclick="abrirDetalleUsado(${c.id})">
       <div class="top">
-        <h3>#${c.id} — ${titulo}</h3>
+        <h3>#${c.id} — ${titulo}${badgeTipoClienteUsado(c.tipo_cliente)}</h3>
         <div><span class="estado ${c.estado}">${txtEstado(c.estado)}</span>${ventaBadge}</div>
       </div>
       <div class="body">
@@ -4654,7 +4715,7 @@ function abrirDetalleUsado(consultaId) {
 
   cont.innerHTML = `
     <div class="modal-header">
-      <h2>#${c.id} — ${escapeHtml(cliente)}</h2>
+      <h2>#${c.id} — ${escapeHtml(cliente)}${badgeTipoClienteUsado(c.tipo_cliente)}</h2>
       <button class="modal-close" onclick="closeModal()">×</button>
     </div>
     <div class="modal-body">
@@ -4665,6 +4726,13 @@ function abrirDetalleUsado(consultaId) {
           ${c.cargada_por_nombre ? `<span class="k">Cargada por</span><span class="v">${escapeHtml(c.cargada_por_nombre)}</span>` : ''}
           <span class="k">Fecha</span><span class="v">${fmtDate(c.created_at)}</span>
           <span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${txtEstado(c.estado)}</span></span>
+        </div>
+      </div>
+      <div class="detalle-section">
+        <h4>Cliente</h4>
+        <div class="kv">
+          <span class="k">Tipo</span><span class="v">${txtTipoClienteUsado(c.tipo_cliente)}</span>
+          <span class="k">${c.tipo_cliente === 'reventa' ? 'Reventa' : 'Nombre'}</span><span class="v">${escapeHtml(cliente)}</span>
         </div>
       </div>
       <div class="detalle-section">

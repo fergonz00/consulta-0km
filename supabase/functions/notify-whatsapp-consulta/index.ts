@@ -497,7 +497,14 @@ function buildVariables(evento: string, con: any, items: any[], propio = true): 
     const pub = Number(con.precio_publicado) || 0;
     const ped = Number(con.precio_pedido) || 0;
     const rebaja = pub > 0 && ped > 0 ? fmtPct((pub - ped) / pub) : "—";
-    return [quien, `${unidadUsado(con)} · pide ${fmtMoney(ped)}`, rebaja];
+    // Particular vs. reventa (pedido de Fer, 27/08/2026): va PEGADO a {{2}} y no
+    // como variable nueva, porque agregar una variable obliga a recrear el
+    // template en Meta y esperar la aprobacion de nuevo. Las consultas viejas no
+    // tienen el dato y no agregan nada al texto.
+    const tipo = con.tipo_cliente === "reventa"
+      ? " · a REVENTA"
+      : (con.tipo_cliente === "particular" ? " · a particular" : "");
+    return [quien, `${unidadUsado(con)} · pide ${fmtMoney(ped)}${tipo}`, rebaja];
   }
   if (evento === "consulta_usado_respondida") {
     const vendedor = con.vendedor_nombre || con.vendedor_usuario || "—";

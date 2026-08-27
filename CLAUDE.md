@@ -147,11 +147,21 @@ El costo y el margen **nunca** se guardan en `consultas_usados` ni viajan al bro
 - El costo lo sirve la Edge Function **`usados-disponibles`**, que lo adjunta **solo** si las credenciales `{usuario, clave}` del POST son de `COSTO_USUARIOS` (`fngonzalez`, `fgonzalez`, `cgonzalez`) — mismo patrón que la gcia en `stock-disponible`. Vendedor, gerente, cualquier otro admin y cualquier GET reciben la lista sin costo, y con `usadosCostoOk = false` el front no puede calcular ningún margen.
 - Verificado el 19/08/2026 en producción: sin credenciales la respuesta no trae `costo_toma`; con las de Fer sí.
 
+### Particular o reventa (2026-08-27)
+
+Pedido de Fer: *"cuando me hacen la consulta por mejorar el precio de un usado quiero que tmb me digan si es venta particular o reventa"*. Contra un reventa el precio se negocia distinto (compra para revender), así que es lo primero que mira antes de autorizar.
+
+- **Paso obligatorio del wizard** (`u-tipo-cliente`, entre el precio y el cliente): Particular / Reventa, con el mismo patrón de opciones que el `tipo-cliente` del 0km — se toca la opción y avanza sola, no hay "Siguiente". El wizard pasó de 5 a **6 pasos** (7 si lo carga un gerente); `totalSteps()` está actualizado.
+- **Si es reventa, el paso del cliente pide un solo campo** ("Nombre del reventa") y se guarda en el **mismo `cliente_nombre`** — no hay columna `reventa_nombre` como en el 0km, así el título de la consulta, el buscador y el historial siguen andando sin tocar nada. Al elegir "reventa" se limpia `cliApellido` para que no viaje un dato que la pantalla ya no muestra.
+- **Columna nueva `consultas_usados.tipo_cliente`** (`text`, check `particular | reventa`, **NULL permitido**). Las consultas anteriores al 27/08/2026 quedan en NULL: la UI muestra "sin dato (consulta anterior al 27/08/2026)" y **no** asume "particular", que sería inventar un dato de negocio.
+- **Dónde se ve**: badge 🏢 REVENTA / 👤 PARTICULAR en el título de la tarjeta (lista del vendedor y del admin) y en el header del detalle, sección **Cliente** propia en el modal (Tipo + Nombre), fila "Tipo" en el resumen del wizard, y como sufijo de cada línea del historial por unidad (comparar contra qué se autorizó antes tiene sentido solo sabiendo a quién).
+- **WhatsApp**: va **pegado a `{{2}}`** (`Cruze LT ... · pide $24.000.000 · a REVENTA`), no como variable nueva. Agregar una variable obliga a recrear el template en Meta y esperar la aprobación de nuevo; el texto adentro de la variable es libre. Las consultas sin el dato no agregan nada al texto.
+
 ### Piezas
-- **Tabla `consultas_usados`** (wjfgl). Snapshot de la unidad (usadoid, patente, unidad, modelo, año, km, color, estado_unidad) + `precio_publicado` (el precio al momento de pedir) + `precio_pedido` + cliente + observaciones + el bloque de respuesta/resultado igual que el 0km. Constraint de `estado` en (pendiente, aceptada, rechazada, contraoferta).
+- **Tabla `consultas_usados`** (wjfgl). Snapshot de la unidad (usadoid, patente, unidad, modelo, año, km, color, estado_unidad) + `precio_publicado` (el precio al momento de pedir) + `precio_pedido` + cliente (`tipo_cliente` particular/reventa + nombre) + observaciones + el bloque de respuesta/resultado igual que el 0km. Constraint de `estado` en (pendiente, aceptada, rechazada, contraoferta).
 - **Edge Function `usados-disponibles`**: mismo universo que la solapa `/usados` de portal-precios (estado=Activado, fechadeventa null, alta ≤18 meses, sin ocultas ni vendidas de `portal_usados`), físicas **y** a recibir. Precio publicado = override de `portal_usados.precio_venta` si existe, sino `preciodeventa` de Oversoft.
 - **`notify-whatsapp-consulta`**: eventos `consulta_usado_nueva` / `consulta_usado_respondida` leyendo la tabla nueva (sin items: un usado es una unidad). Config propia en `consultas_0km_notif_config`, clonada de la del 0km → **hereda los mismos destinatarios** (Fer + gerentes).
-- **`index.html`**: wizard de 5 pasos (unidad → precio → cliente → observaciones → resumen; +1 si es gerente), lista propia, y detalle del admin con ganancia + historial.
+- **`index.html`**: wizard de 6 pasos (unidad → precio → particular/reventa → cliente → observaciones → resumen; +1 si es gerente), lista propia, y detalle del admin con ganancia + historial.
 
 ### Templates de Meta propios (✅ 19/08/2026)
 
