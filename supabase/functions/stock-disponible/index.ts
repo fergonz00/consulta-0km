@@ -463,14 +463,18 @@ Deno.serve(async (req: Request) => {
         const repRows = await rest(W, SUPA_KEY, "/reparto_vw?select=vin,descripcion,color_codigo,estado_compra,periodo&limit=8000");
         repRowsAll = repRows;
         if (repRows.length) {
-          // "Disponibles para pedir" = solo el reparto del periodo mas nuevo (la
+          // "Disponibles para pedir" = solo el reparto del MES EN CURSO (la
           // asignacion vigente de VW; la de meses pasados ya no se puede pedir).
+          // OJO: antes esto era "el periodo mas nuevo que haya en la tabla", y al
+          // cambiar el mes el reparto viejo seguia vivo — el 1ro se ofrecian autos
+          // de la asignacion del mes anterior, que VW ya no da. Ahora, cuando cambia
+          // el mes, no hay NADA para ofrecer hasta que se cargue el reparto nuevo.
           // "Ya pedidas / en camino" (comprado u ok) = de cualquier periodo,
-          // mientras no hayan entrado a Oversoft todavia.
-          const perMax = repRows.reduce((m: string, r: any) => (String(r.periodo || "") > m ? String(r.periodo) : m), "");
+          // mientras no hayan entrado a Oversoft todavia (esas SI son nuestras).
+          const perVigente = hoyAR().slice(0, 7);
           const PEDIDA = new Set(["comprado", "ok"]);
           const vigentes = repRows.filter((r: any) =>
-            String(r.periodo || "") === perMax || PEDIDA.has(String(r.estado_compra || "").toLowerCase()));
+            String(r.periodo || "") === perVigente || PEDIDA.has(String(r.estado_compra || "").toLowerCase()));
 
           // Nombres de color (codigo VW -> nombre); DB pisa la base.
           const coloresRep: Record<string, string> = {};
@@ -508,7 +512,7 @@ Deno.serve(async (req: Request) => {
             if (!nc) continue;                                // no matchea catalogo -> lo salteamos
             const esPedida = PEDIDA.has(String(r.estado_compra || "").toLowerCase());
             // pendiente/elegida solo cuenta como "disponible" si es del reparto vigente
-            if (!esPedida && String(r.periodo || "") !== perMax) continue;
+            if (!esPedida && String(r.periodo || "") !== perVigente) continue;
             const price = priceByNc[nc];
             const friendly = price ? (price.modelo || nc) : nc;
             if (!rep[friendly]) rep[friendly] = { modelo: friendly, nombreCorto: nc, total: 0, disponibles: { total: 0, colores: {} }, pedidas: { total: 0, colores: {} } };
