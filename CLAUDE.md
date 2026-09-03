@@ -42,19 +42,20 @@ RLS deshabilitado en las 4 tablas. Patrón heredado del tasador.
 
 ## Datos de stock
 
-Sheet espejo público "Tito — espejo público consulta0km" (CSV publicado), IMPORTRANGE desde el sheet maestro privado `1KvuRZzHuVpWSppZqT8xDf8WSrplR-vYzeY0gQPftlpQ`. El espejo no trae costo histórico ni paga/impaga.
+**Todo sale de Supabase en vivo. Ya no hay ninguna lectura del sheet espejo** (se sacó el 03-09-2026, ver "Cambio 12"). El espejo público y su maestro `1KvuRZzHuVpWSppZqT8xDf8WSrplR-vYzeY0gQPftlpQ` siguen existiendo para otras cosas, pero `index.html` no los toca.
 
-URLs CSV (constantes en `index.html`):
-- stock (gid=0): `https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=0&single=true&output=csv`
-- stock_limitado (gid=1137307261): misma URL con otro gid.
-- competencia (gid=132095265): IMPORTRANGE de `Resumen Competencia 2!A:K` del maestro. Lee modelo (col A), precio ElCeroKm c/fyf (col D) y precio Espasa c/fyf (col H). Solo se muestra al admin en el detalle de cada unidad.
+| dato | fuente |
+|---|---|
+| stock físico + a recibir + reparto | Edge `stock-disponible` (Oversoft en vivo) |
+| catálogo completo con precio de lista | `catalogoModelos` de la misma Edge |
+| vendidos por mes / meses de stock / días en venderse | `rotacion` de la misma Edge (snapshot del Motor Baratito) |
+| precios de la competencia | tabla `competencia_precios` (wjfgl), que refresca el cron de portal-precios |
 
-Columnas `stock`: `serie, fecha_factura, modelo, color, disponibilidad, oferta_baratito, gcia_actual, precio_lista, dto_baratito` (9).
-Columnas `stock_limitado`: `serie, dto_nuevo, gcia_resultante, oferta_final_fyf` (4).
+**No hay fallback.** Si la Edge falla, la pantalla avisa y no muestra stock: preferimos eso antes que servir números viejos de una planilla que nadie mantiene.
+
+`competencia_precios`: una fila por `(modelo_tga, fuente)` con `fuente` = `elcerokm` | `espasa`. Los dos precios ya vienen **con FyF**: ElCeroKm lo publica así y al de Espasa se lo suma el cron (`competencia.ts`, `esp.precio + FYF`). El match con el modelo es exacto por `modelo_tga`. Solo se muestra al admin, en el detalle de cada unidad.
 
 Reglas:
-- `disponibilidad === '#N/A'` → libre. Otro valor → vendida (típicamente vuelve el modelo).
-- Si serie está en stock_limitado, gana esa oferta sobre baratito (siempre baja el precio). Pero si en stock figura vendida, descartar.
 - Chasis libres ordenados por `fecha_factura` ASC (más viejos primero) para que el vendedor priorice unidades antiguas.
 
 ## Fórmulas
@@ -419,3 +420,42 @@ Cuando la consulta es de disponibilidad pura, el bloque de la unidad ya no muest
 
 ### Copy: nada de nombres propios en la UI del vendedor
 "gerencia consulta disponibilidad", no "Fer consulta al zonal". Y no poner el conteo del catálogo en la opción de sin disponibilidad.
+
+## Fuera el sheet viejo (2026-09-03)
+
+**Pedido de Fer: "nada tiene que salir del sheets viejo".** `index.html` ya no hace ni una lectura de Google Sheets — cero `docs.google.com` en el archivo.
+
+### El bug que lo destapó
+
+El cartel del detalle admin decía **"📈 Vendidos último mes: 17 unidades de VW Taos Comfortline 250TSI AT MY26"**. Fer: *"ni en pedo vendí 17"*. Tenía razón, dos veces:
+
+1. **Columna equivocada.** El cartel leía la col **M** de la tab `bt` del espejo. El comentario del código decía `M = vendidos en el ultimo mes`, pero el encabezado real de esa columna es **`vendidos 60 dias`**. La col del mes es la **G** (`Vendidos`). Para ese Taos: G=21, M=17 — mostraba 17 y lo rotulaba "último mes".
+2. **Ninguno de los dos números era real.** Contra Oversoft (`unidades` con `modelo = 'CL23LZ MY26'`, por `fechaasignacion`): abr 7 · may 10 · jun 3 · jul 2 · **ago 2**. La planilla estaba desactualizada.
+
+El `ventasPorMes` del snapshot del Motor coincide exacto con Oversoft, mes a mes. Por eso ahora el cartel sale de ahí y muestra el **último mes COMPLETO**, con el mes en el título (`Vendidos en ago 26: 2 unidades`) para que no se pueda volver a confundir el período.
+
+### Qué se reemplazó
+
+| antes (sheet) | ahora |
+|---|---|
+| `VENTAS_BT_CSV` col M → `ventasBtMap` | `rotacionData[nombreCorto].ventasPorMes` (Edge `stock-disponible`) |
+| `VENTAS_BT_CSV` col C → `preciosListaBtMap` | `catalogoModelos` de la misma Edge |
+| `COMPETENCIA_CSV` cols D/H | tabla `competencia_precios` (wjfgl) |
+| `STOCK_CSV` + `STOCK_LIM_CSV` (fallback) | — se sacaron, sin reemplazo |
+| `REPARTO_CSV` (fallback) | — se sacó, sin reemplazo |
+
+`ncRot` (el `nombreCorto`, clave de `rotacionData`) se calcula **una vez** y lo comparten el cartel de vendidos y el bloque de rotación; `MES_ABR` también. Antes cada bloque tenía el suyo.
+
+### Verificado contra producción
+
+- `competencia_precios` cubre los **47 modelos** del sheet (los 3 "extra" del CSV eran filas de leyenda que el parser viejo comía como modelos) y está **más fresca**: 4 celdas diferían, todas con el sheet atrasado — ej. Amarok Highline TDI AT 4x2, vacía en el sheet y $56.900.000 en la tabla.
+- Los dos precios de la tabla ya vienen **con FyF** (ElCeroKm lo publica así; a Espasa se lo suma el cron en `competencia.ts`: `esp.precio + FYF`), igual que las cols D y H del sheet. La migración no cambia ninguna comparación.
+- La `anon key` del front lee `competencia_precios` sin problema (RLS abierto, 94 filas).
+
+### Se fue el fallback CSV — a propósito
+
+Si la Edge `stock-disponible` falla, antes caía al espejo. Ese camino ya venía roto: el `REPARTO_CSV` ofrecía modelos no asignados y se comía los que sí (ver "Sesión 2026-08-18"), y en modo fallback `catalogoModelos` queda vacío, así que tampoco habría precio de lista. **Ahora avisa y no muestra stock.** El costo es real: con la Edge caída el vendedor no puede cargar consultas. Es la contrapartida elegida de no volver a mostrar un número inventado.
+
+Quedaron huérfanos y se borraron `parseCSV`, `parseCSVLine`, `parseMoney`, `parsePct`, `cargarStockCSV`, `cargarReparto` y `stockLimMap`.
+
+⚠️ `repartoMap` queda **siempre vacío** (el reparto viene por `repartoUnidades`). El bloque de `getModelosDisponibles` que lo recorre no se borró, por si alguna vez vuelve a alimentarse.

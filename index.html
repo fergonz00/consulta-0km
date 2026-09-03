@@ -390,20 +390,8 @@ input, select, textarea { font-family: var(--font); }
 const SUPABASE_URL = 'https://wjfglsafgaltusmbnccl.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndqZmdsc2FmZ2FsdHVzbWJuY2NsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MzM2OTksImV4cCI6MjA4OTAwOTY5OX0.OOwgyKDNQsbBaGDaL0OhJfc8eOsCClvvAPW0VFBKrOA';
 // Stock EN VIVO desde Oversoft (incluye unidades "a recibir"). Edge Function en wjfgl.
-// Fuente principal; si falla, cae al CSV espejo (STOCK_CSV) como fallback.
-const STOCK_EDGE_URL = SUPABASE_URL + '/functions/v1/stock-disponible';
-const STOCK_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=0&single=true&output=csv';
-const STOCK_LIM_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=1137307261&single=true&output=csv';
-// Reparto — modelos sin stock libre que vienen en camino. Tab "reparto" del espejo publico,
-// con IMPORTRANGE del maestro privado "reparto!E2:E" (modelo) y "reparto!L2:L" (stock_actual).
-// Headers de la tab espejo: A1='modelo', B1='stock_actual'. Solo se usan filas con stock_actual=0.
-const REPARTO_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=978193397&single=true&output=csv';
+// Unica fuente de stock: no hay espejo en Google Sheets detras.
 // Competencia (tu0km y espasaonline) — col A modelo, col D precio ElCeroKm, col H precio EspasaOnline.
-// Tab "competencia" del espejo publico con IMPORTRANGE de "Resumen Competencia 2!A:K" del maestro.
-const COMPETENCIA_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=132095265&single=true&output=csv';
-// Ventas BT — tab "bt" del espejo publico con IMPORTRANGE de "Actual BT!A:EM" del maestro.
-// col B (idx 1) = modelo, col M (idx 12) = vendidos en el ultimo mes.
-const VENTAS_BT_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxMSuaIaQ9krTGnAYj73w1H9BuQnIyTQo1f9WwOgRVCAcf3eniWiCji7GFR2Ts__HtCvoFZkjbC5o1/pub?gid=332004614&single=true&output=csv';
 const FYF = 1110000;
 // Superadmin: god mode — alta/edicion/desactivar/entrar como otros + borrar consultas.
 // Los tres duenios (Fer, el padre y Catalina).
@@ -516,19 +504,13 @@ let catalogoModelos = [];
 // (18 meses de Oversoft + todo reparto_vw), ordenados por cantidad. Alimenta el
 // selector de color de las consultas "sin disponibilidad" y el bloque del admin.
 let paletaColores = {};
-let stockLimMap = {};
 // Modelos en reparto (sin stock libre actual). Map modelo -> { stock_actual }.
 // Si el modelo no figura en stockData con precio_lista, no podemos calcular analisis;
 // igual se permite cargar la consulta (admin la resuelve manualmente).
 let repartoMap = {};
-// Map modelo -> {tu0km, espasa} con precios FyF incluido. Vacio si el CSV no esta seteado.
+// Map modelo -> {tu0km, espasa}, los dos c/FyF (a Espasa se lo suma el cron de
+// portal-precios al escribir la tabla). Vacio si la consulta falla.
 let competenciaMap = {};
-// Map modelo -> cantidad vendida en el ultimo mes (col M de tab "bt"). Vacio si falla.
-let ventasBtMap = {};
-// Map modelo -> precio_lista (col C de tab "bt"). Contiene TODOS los modelos del catalogo,
-// esten o no en stock. Usado como fallback para items "en reparto" cuando no hay registro
-// en stockData con ese modelo.
-let preciosListaBtMap = {};
 let myConsultas = [];
 let adminConsultas = [];
 let adminTab = 'pendiente';
@@ -587,45 +569,6 @@ async function sbFetch(path, options = {}) {
   return res.json();
 }
 
-function parseCSVLine(line) {
-  const out = []; let cur = ''; let inQ = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (c === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
-    else if (c === ',' && !inQ) { out.push(cur); cur = ''; }
-    else cur += c;
-  }
-  out.push(cur);
-  return out;
-}
-function parseCSV(text) {
-  // Quitar BOM si existe
-  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-  const lines = text.replace(/\r/g, '').split('\n').filter(l => l.length > 0);
-  if (lines.length < 2) return [];
-  const headers = parseCSVLine(lines[0]).map(h => h.trim().replace(/^"|"$/g, ''));
-  const rows = [];
-  for (let i = 1; i < lines.length; i++) {
-    const vals = parseCSVLine(lines[i]);
-    const obj = {};
-    headers.forEach((h, idx) => obj[h] = (vals[idx] || '').trim().replace(/^"|"$/g, ''));
-    rows.push(obj);
-  }
-  return rows;
-}
-
-function parseMoney(s) {
-  if (s == null) return NaN;
-  const clean = String(s).replace(/[^\d.\-]/g, '');
-  if (!clean) return NaN;
-  return parseFloat(clean);
-}
-function parsePct(s) {
-  if (s == null) return NaN;
-  const clean = String(s).replace(/[^\d.\-]/g, '');
-  if (!clean) return NaN;
-  return parseFloat(clean) / 100;
-}
 function fmtMoney(n) {
   if (n == null || isNaN(n)) return '—';
   return '$' + Math.round(n).toLocaleString('es-AR');
@@ -804,21 +747,16 @@ function entrarComo(modo) {
 // ============ CARGAR STOCK ============
 async function cargarStock() {
   showLoading('Cargando stock...');
-  // La competencia y ventas-bt cargan en paralelo con stock pero no bloquean (si fallan, se ignoran).
+  // La competencia carga en paralelo con stock pero no bloquea (si falla, se ignora).
   cargarCompetencia();
-  cargarVentasBt();
   try {
-    // Fuente principal: Oversoft EN VIVO via Edge Function (incluye unidades "a recibir").
+    // Unica fuente: Oversoft EN VIVO via Edge Function (incluye unidades "a recibir" y
+    // el reparto). Si falla, no hay respaldo: preferimos no mostrar nada antes que
+    // mostrar stock viejo de una planilla que ya nadie mantiene.
     await cargarStockOversoft();
   } catch(e) {
-    // Fallback: CSV espejo (solo stock fisico). Mejor algo que nada si la Edge esta caida.
-    console.error('[Stock] Edge Oversoft fallo, fallback a CSV espejo:', e);
-    showToast('Stock en vivo no disponible, usando respaldo');
-    try { await cargarStockCSV(); }
-    catch(e2) { console.error('Error cargando stock (fallback):', e2); showToast('Error al cargar stock'); }
-    // Solo en modo fallback: el reparto sale del CSV espejo (lista de modelos, sin
-    // colores ni chasis). Con la Edge viva el reparto viene en `repartoUnidades`.
-    cargarReparto();
+    console.error('[Stock] Edge Oversoft fallo:', e);
+    showToast('No se pudo cargar el stock en vivo. Reintentá en un momento.');
   } finally {
     hideLoading();
   }
@@ -839,7 +777,6 @@ async function cargarStockOversoft() {
   const data = await res.json();
   if (!data || data.ok === false) throw new Error(data && data.error ? data.error : 'respuesta invalida');
 
-  stockLimMap = {}; // sin uso en modo Oversoft (el precio especial ya viene resuelto en oferta_vigente)
   catalogoModelos = data.catalogoModelos || []; // todos los modelos con precio, haya o no unidades
   paletaColores = data.paleta || {};            // nombreCorto -> colores reales del modelo
   rotacionData = data.rotacion || {}; // comparativos Baratito por modelo (solo admin)
@@ -888,101 +825,22 @@ async function cargarStockOversoft() {
   if (stockData.length === 0) showToast('Atención: no hay unidades disponibles en el stock.');
 }
 
-// Fallback CSV espejo (legacy). Solo stock fisico recibido; NO trae "a recibir".
-async function cargarStockCSV() {
-  const [resStock, resLim] = await Promise.all([
-    fetch(STOCK_CSV).then(r => r.text()),
-    fetch(STOCK_LIM_CSV).then(r => r.text())
-  ]);
-  const rawStock = parseCSV(resStock);
-  const rawLim = parseCSV(resLim);
 
-  stockLimMap = {};
-  rawLim.forEach(r => {
-    const serie = (r.serie || '').trim();
-    if (!serie) return;
-    stockLimMap[serie] = {
-      dto_nuevo: parsePct(r.dto_nuevo),
-      gcia_resultante: parsePct(r.gcia_resultante),
-      oferta_final_fyf: parseMoney(r.oferta_final_fyf)
-    };
-  });
-
-  stockData = rawStock.map(r => {
-    const serie = (r.serie || '').trim();
-    const disponibilidad = (r.disponibilidad || '').trim();
-    const libre = disponibilidad === '#N/A';
-    const oferta_baratito = parseMoney(r.oferta_baratito);
-    const gcia_actual = parsePct(r.gcia_actual);
-    const precio_lista = parseMoney(r.precio_lista);
-    const fecha_factura_str = (r.fecha_factura || '').trim();
-    const fecha_factura = parseFechaAR(fecha_factura_str);
-    const lim = stockLimMap[serie];
-    const oferta_vigente = lim && !isNaN(lim.oferta_final_fyf) ? lim.oferta_final_fyf : oferta_baratito;
-    const gcia_vigente = lim && !isNaN(lim.gcia_resultante) ? lim.gcia_resultante : gcia_actual;
-    const fuente_oferta = lim ? 'stock_limitado' : 'baratito';
-    return { serie, modelo: (r.modelo || '').trim(), color: (r.color || '').trim(),
-      libre, aRecibir: false, oferta_baratito, gcia_actual, precio_lista, oferta_vigente, gcia_vigente, fuente_oferta,
-      fecha_factura, fecha_factura_str };
-  }).filter(r => r.serie && r.modelo);
-
-  const libres = stockData.filter(r => r.libre).length;
-  console.log(`[Stock] CSV espejo (fallback): ${stockData.length} registros (${libres} libres). LimMap: ${Object.keys(stockLimMap).length} entradas.`);
-  if (libres === 0) showToast('Atención: no hay unidades disponibles en el stock.');
-}
-
-// Carga la tab "reparto" del espejo publico. Headers esperados: 'modelo', 'stock_actual'.
-// Solo nos interesan filas con stock_actual=0 (los demas estan en reparto pero con stock real,
-// que en la solapa de stock ya figurarian igual). Tolerante: si REPARTO_CSV esta vacio o falla,
-// deja repartoMap vacio y el wizard se comporta igual que antes.
-async function cargarReparto() {
-  if (!REPARTO_CSV) {
-    console.log('[Reparto] CSV no configurado, sin modelos en reparto.');
-    return;
-  }
-  try {
-    const txt = await fetch(REPARTO_CSV).then(r => r.text());
-    const rows = parseCSV(txt);
-    const map = {};
-    rows.forEach(r => {
-      const modelo = (r.modelo || '').trim();
-      if (!modelo) return;
-      const rawStock = (r.stock_actual || '').replace(/[^\d\-]/g, '');
-      const stock = parseInt(rawStock || '0', 10);
-      if (isNaN(stock)) return;
-      if (stock > 0) return; // solo los que no tienen stock libre (0 o negativo)
-      map[modelo] = { stock_actual: stock };
-    });
-    repartoMap = map;
-    console.log(`[Reparto] ${Object.keys(map).length} modelos sin stock libre.`);
-  } catch(e) {
-    console.warn('[Reparto] error al cargar (no critico):', e.message || e);
-  }
-}
 
 // Carga el sheet de competencia (tu0km y espasaonline). Tolerante a errores:
 // si la URL no esta seteada o falla la fetch, deja competenciaMap vacio y la UI no muestra la seccion.
 async function cargarCompetencia() {
-  if (!COMPETENCIA_CSV) {
-    console.log('[Competencia] CSV no configurado, sin datos de comparacion.');
-    return;
-  }
   try {
-    let txt = await fetch(COMPETENCIA_CSV).then(r => r.text());
-    if (txt.charCodeAt(0) === 0xFEFF) txt = txt.slice(1);
-    const lines = txt.replace(/\r/g, '').split('\n').filter(l => l.length > 0);
-    if (lines.length < 2) return;
+    const filas = await sbFetch('competencia_precios?select=modelo_tga,fuente,precio');
     const map = {};
-    // Salteamos la fila 0 (header). A=modelo, D=ElCeroKm, H=EspasaOnline.
-    for (let i = 1; i < lines.length; i++) {
-      const cols = parseCSVLine(lines[i]).map(v => v.trim().replace(/^"|"$/g, ''));
-      const modelo = cols[0] || '';
-      if (!modelo) continue;
-      const tu0km = parseMoney(cols[3]);
-      const espasa = parseMoney(cols[7]);
-      if (isNaN(tu0km) && isNaN(espasa)) continue;
-      map[modelo] = { tu0km, espasa };
-    }
+    (filas || []).forEach(f => {
+      const modelo = (f.modelo_tga || '').trim();
+      const precio = Number(f.precio);
+      if (!modelo || !precio || isNaN(precio)) return;
+      if (!map[modelo]) map[modelo] = { tu0km: NaN, espasa: NaN };
+      if (f.fuente === 'elcerokm') map[modelo].tu0km = precio;
+      else if (f.fuente === 'espasa') map[modelo].espasa = precio;
+    });
     competenciaMap = map;
     console.log(`[Competencia] ${Object.keys(map).length} modelos cargados.`);
   } catch(e) {
@@ -990,39 +848,6 @@ async function cargarCompetencia() {
   }
 }
 
-// Carga el sheet "bt" (modelo -> vendidos en el ultimo mes). Tolerante a errores: si
-// falla la fetch, deja ventasBtMap vacio y la UI no muestra el dato.
-async function cargarVentasBt() {
-  if (!VENTAS_BT_CSV) return;
-  try {
-    let txt = await fetch(VENTAS_BT_CSV).then(r => r.text());
-    if (txt.charCodeAt(0) === 0xFEFF) txt = txt.slice(1);
-    const lines = txt.replace(/\r/g, '').split('\n').filter(l => l.length > 0);
-    if (lines.length < 2) return;
-    const map = {};
-    const preciosMap = {};
-    // Salteamos fila 0 (header). B=modelo (idx 1), C=Lista (idx 2), M=vendidos en el mes (idx 12).
-    for (let i = 1; i < lines.length; i++) {
-      const cols = parseCSVLine(lines[i]).map(v => v.trim().replace(/^"|"$/g, ''));
-      const modelo = (cols[1] || '').trim();
-      if (!modelo) continue;
-      // Precio de lista: aprovechamos la misma pasada (lo precisamos para items en reparto
-      // que no figuran en stockData). Se popula aunque "vendidos" sea vacio o no parseable.
-      const precioLista = parseMoney(cols[2]);
-      if (!isNaN(precioLista) && precioLista > 0) preciosMap[modelo] = precioLista;
-      const raw = (cols[12] || '').replace(/[^\d\-]/g, '');
-      if (!raw) continue;
-      const vendidos = parseInt(raw, 10);
-      if (isNaN(vendidos)) continue;
-      map[modelo] = vendidos;
-    }
-    ventasBtMap = map;
-    preciosListaBtMap = preciosMap;
-    console.log(`[VentasBt] ${Object.keys(map).length} modelos con ventas, ${Object.keys(preciosMap).length} con precio_lista.`);
-  } catch(e) {
-    console.warn('[VentasBt] error al cargar (no critico):', e.message || e);
-  }
-}
 
 function getModelosLibres() {
   const set = new Set();
@@ -1032,7 +857,7 @@ function getModelosLibres() {
 // Normaliza el nombre del modelo para comparaciones: minusculas, sin "vw " prefix
 // ni sufijos de model year (" my26", " my25"), y colapsa espacios. Necesario porque
 // la solapa "reparto" del maestro suele venir sin "VW " y sin sufijo "MY##", mientras
-// que stock, bt y competencia los tienen.
+// que stock, catalogo y competencia los tienen.
 function _normalizeModelo(s) {
   return (s || '').toLowerCase()
     .replace(/^\s*vw\s+/, '')
@@ -1040,15 +865,15 @@ function _normalizeModelo(s) {
     .replace(/\s+/g, ' ')
     .trim();
 }
-// Resuelve un nombre de modelo (alias) al nombre canonico usado en stockData / bt /
-// competencia. Devuelve null si no hay match. Match exacto primero, despues relajado.
+// Resuelve un nombre de modelo (alias) al nombre canonico usado en catalogoModelos /
+// stockData / competencia. Devuelve null si no hay match. Exacto primero, despues relajado.
 function resolveModeloCanonico(alias) {
   if (!alias) return null;
-  if (preciosListaBtMap[alias]) return alias;
+  for (const c of catalogoModelos) if (c.modelo === alias) return c.modelo;
   for (const r of stockData) if (r.modelo === alias) return r.modelo;
   const norm = _normalizeModelo(alias);
   if (!norm) return null;
-  for (const m of Object.keys(preciosListaBtMap)) if (_normalizeModelo(m) === norm) return m;
+  for (const c of catalogoModelos) if (_normalizeModelo(c.modelo) === norm) return c.modelo;
   for (const r of stockData) if (_normalizeModelo(r.modelo) === norm) return r.modelo;
   return null;
 }
@@ -1065,7 +890,7 @@ function getModelosEnReparto() {
 //   sin_disponibilidad -> el catálogo ENTERO (48 modelos con precio publicado), tengan
 //                         o no unidades: el punto es justamente pedir lo que no hay.
 // Devuelve [{modelo, cantLibres, cantReparto, cantRepartoNuevo, soloReparto, esReparto}].
-// `esReparto` = el modelo no tiene ningún chasis concreto (solo pasa en el fallback CSV).
+// `esReparto` = el modelo no tiene ningún chasis concreto.
 // `subtipo` parte el listado en dos, segun la segunda pregunta del wizard:
 //   reparto            'sin_stock'   -> modelos sin ninguna unidad fisica en el salon.
 //                      'otro_color'  -> modelos que si tenemos, en un color que falta.
@@ -1121,9 +946,9 @@ function getModelosDisponibles(origen, subtipo) {
       soloReparto: cantReparto > 0 && cantReparto === chasis.length
     });
   });
-  // Fallback CSV espejo: modelos en reparto de los que no conocemos los chasis.
-  // Resolvemos al nombre canonico para que todos los lookups (bt, competencia,
-  // stockData) matcheen. Solo aplica al origen "reparto".
+  // Modelos en reparto de los que no conocemos los chasis. Hoy `repartoMap` queda
+  // siempre vacio (la Edge devuelve el reparto unidad por unidad en `repartoUnidades`);
+  // el bloque se mantiene por si vuelve a alimentarse. Solo aplica al origen "reparto".
   if (origen === 'reparto' && subtipo !== 'otro_color') {
     Object.keys(repartoMap).forEach(m => {
       const canon = resolveModeloCanonico(m) || m;
@@ -1348,16 +1173,17 @@ function queHayDe(modelo, color) {
 }
 
 // Precio de lista por modelo, util para items en reparto que no tienen chasis seleccionado.
-// Prioriza stockData (cualquier registro, libre o no) y cae a preciosListaBtMap (tab "bt"
-// del espejo, que incluye TODOS los modelos del catalogo aunque no figuren en stock).
-// Devuelve NaN si no se conoce.
+// Prioriza stockData (cualquier registro, libre o no) y cae a catalogoModelos, que trae
+// TODOS los modelos con precio publicado aunque no figuren en stock — mismo snapshot del
+// Motor Baratito que el resto de la pantalla. Devuelve NaN si no se conoce.
 function getPrecioListaModelo(modelo) {
   if (!modelo) return NaN;
   for (const r of stockData) {
     if (r.modelo === modelo && !isNaN(r.precio_lista) && r.precio_lista > 0) return r.precio_lista;
   }
-  const p = preciosListaBtMap[modelo];
-  return (p && !isNaN(p)) ? p : NaN;
+  const c = catalogoModelos.find(x => x.modelo === modelo || x.nombreCorto === modelo);
+  const p = c ? Number(c.precio_lista) : NaN;
+  return (p && !isNaN(p) && p > 0) ? p : NaN;
 }
 
 // ============ NUEVA CONSULTA ============
@@ -2476,8 +2302,8 @@ function calcularAnalisisUnidad(u) {
   // Para unidades en reparto no hay chasis seleccionados, pero el analisis se calcula igual:
   // tomamos cualquier registro de stockData con el mismo modelo (libre o vendido — los modelos
   // en reparto tipicamente tienen chasis pasados con su oferta_vigente y gcia_actual). Y para
-  // el precio de lista usamos como override el de la tab "bt" del espejo, que cubre TODOS los
-  // modelos del catalogo (esten o no en stock).
+  // el precio de lista usamos como override el del catalogo de la Edge, que cubre TODOS los
+  // modelos con precio publicado (esten o no en stock).
   let chasisData;
   if (u.esReparto) {
     chasisData = stockData.filter(r => r.modelo === u.modelo);
@@ -2486,7 +2312,7 @@ function calcularAnalisisUnidad(u) {
     chasisData = u.chasisSeleccionados.map(s => stockData.find(r => r.serie === s)).filter(Boolean);
   }
   if (chasisData.length === 0) {
-    // Sin registros en stockData. Para reparto, devolvemos al menos el precio_lista de bt.
+    // Sin registros en stockData. Para reparto, devolvemos al menos el precio_lista del catalogo.
     if (u.esReparto) {
       const pl = getPrecioListaModelo(u.modelo);
       if (isNaN(pl) || pl <= 0) return null;
@@ -2503,7 +2329,7 @@ function calcularAnalisisUnidad(u) {
     }
     if (precio_lista == null || c.precio_lista > precio_lista) precio_lista = c.precio_lista;
   });
-  // Reparto: override del precio_lista con el de bt si lo tenemos (mas actualizado y cubre catalogo entero).
+  // Reparto: override del precio_lista con el del catalogo si lo tenemos (cubre el catalogo entero).
   if (u.esReparto) {
     const pl = getPrecioListaModelo(u.modelo);
     if (!isNaN(pl) && pl > 0) precio_lista = pl;
@@ -2541,7 +2367,7 @@ function analisisAdminVivo(it) {
   const base = { modelo: it.modelo, precioPedido: Number(it.precio_pedido) };
   // 1) por los chasis pedidos (si siguen en stock).
   let a = calcularAnalisisUnidad({ ...base, esReparto: false, chasisSeleccionados: series });
-  // 2) fallback: cualquier chasis del modelo (la gcia es por-modelo) + precio_lista de bt.
+  // 2) fallback: cualquier chasis del modelo (la gcia es por-modelo) + precio_lista del catalogo.
   if (!a || a.gcia_vigente_min == null) {
     a = calcularAnalisisUnidad({ ...base, esReparto: true, chasisSeleccionados: [] });
   }
@@ -2660,7 +2486,7 @@ async function submitConsulta() {
 
       // calcularAnalisisUnidad ya funciona igual para stock y reparto: para reparto toma
       // los datos del analisis de cualquier registro de stockData con el mismo modelo y
-      // el precio_lista de la tab "bt".
+      // el precio_lista del catalogo.
       const item = {
         consulta_id: consultaId,
         orden: 1,
@@ -3315,16 +3141,30 @@ function abrirDetalle(consultaId, editMode = false) {
         `;
       }
     }
-    // Vendidos en el ultimo mes — solo admin, solo si el modelo aparece en la pestaña "bt".
+    // nombreCorto del modelo = clave de rotacionData (el snapshot del Motor). Sale del stock
+    // si el modelo tiene unidades, y si no del catalogo. Lo comparten el cartel de vendidos
+    // y el bloque de rotacion de mas abajo.
+    const MES_ABR = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+    const ncRot = showGcia
+      ? ((((stockData || []).find(s => s.modelo === it.modelo)) || {}).nombreCorto
+         || (((catalogoModelos || []).find(c => c.modelo === it.modelo || c.nombreCorto === it.modelo)) || {}).nombreCorto
+         || null)
+      : null;
+    // Vendidos en el ULTIMO MES COMPLETO — solo admin. Sale de rotacionData (Oversoft en vivo,
+    // mismo snapshot del Motor que los precios y que el bloque de rotacion), no de ninguna
+    // planilla. Antes leia la col M de la tab "bt" del espejo, que en realidad era "vendidos
+    // 60 dias": el cartel decia "ultimo mes" y mostraba otra cosa.
     let ventasMesHtml = '';
-    if (showGcia) {
-      const v = ventasBtMap[it.modelo];
-      if (v != null && !isNaN(v)) {
-        ventasMesHtml = `
-          <div style="margin-top:8px; padding:6px 8px; background:#e7f1ff; border-left:3px solid var(--vw-blue); border-radius:4px; font-size:12px">
-            <strong>📈 Vendidos último mes:</strong> ${v} ${v === 1 ? 'unidad' : 'unidades'} de <strong>${escapeHtml(it.modelo)}</strong>
-          </div>`;
-      }
+    if (showGcia && ncRot && rotacionData[ncRot]) {
+      const _hoyV = new Date();
+      const _mesV = new Date(_hoyV.getFullYear(), _hoyV.getMonth() - 1, 1);
+      const mkUlt = _mesV.getFullYear() + '-' + String(_mesV.getMonth() + 1).padStart(2, '0');
+      const v = Number((rotacionData[ncRot].ventasPorMes || {})[mkUlt]) || 0;
+      const mesTxt = MES_ABR[_mesV.getMonth()] + ' ' + String(_mesV.getFullYear()).slice(2);
+      ventasMesHtml = `
+        <div style="margin-top:8px; padding:6px 8px; background:#e7f1ff; border-left:3px solid var(--vw-blue); border-radius:4px; font-size:12px">
+          <strong>📈 Vendidos en ${mesTxt}:</strong> ${v} ${v === 1 ? 'unidad' : 'unidades'} de <strong>${escapeHtml(it.modelo)}</strong>
+        </div>`;
     }
     // Rotación del modelo (los comparativos del Baratito) — solo admin. Los datos
     // vienen de la Edge (rotacionData, mismo snapshot del Motor que los precios):
@@ -3333,10 +3173,8 @@ function abrirDetalle(consultaId, editMode = false) {
     // el panel Baratito de precios.
     let rotacionHtml = '';
     if (showGcia) {
-      const ncRot = (((stockData || []).find(s => s.modelo === it.modelo)) || {}).nombreCorto;
       const rot = ncRot ? rotacionData[ncRot] : null;
       if (rot) {
-        const MES_ABR = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
         const mesesKeys = [];
         const _hoy = new Date();
         for (let k = 4; k >= 1; k--) {
