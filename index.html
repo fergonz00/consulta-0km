@@ -391,7 +391,7 @@ const SUPABASE_URL = 'https://wjfglsafgaltusmbnccl.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndqZmdsc2FmZ2FsdHVzbWJuY2NsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MzM2OTksImV4cCI6MjA4OTAwOTY5OX0.OOwgyKDNQsbBaGDaL0OhJfc8eOsCClvvAPW0VFBKrOA';
 // Stock EN VIVO desde Oversoft (incluye unidades "a recibir"). Edge Function en wjfgl.
 // Unica fuente de stock: no hay espejo en Google Sheets detras.
-// Competencia (tu0km y espasaonline) — col A modelo, col D precio ElCeroKm, col H precio EspasaOnline.
+const STOCK_EDGE_URL = SUPABASE_URL + '/functions/v1/stock-disponible';
 const FYF = 1110000;
 // Superadmin: god mode — alta/edicion/desactivar/entrar como otros + borrar consultas.
 // Los tres duenios (Fer, el padre y Catalina).
