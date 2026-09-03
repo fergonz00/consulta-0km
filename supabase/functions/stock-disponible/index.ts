@@ -51,7 +51,7 @@ function json(body: unknown, status = 200) {
 // GET helper para PostgREST (Oversoft o wjfgl) con manejo de error.
 // Dias habiles que puede estar una unidad "a recibir" antes de que sea una demora.
 // Mismo umbral que la Edge notify-unidad-demorada (tasador-tga).
-const DIAS_DEMORA = 7;
+const DIAS_DEMORA = 12;
 
 const hoyAR = () => new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
 const _dow = (iso: string) => new Date(iso.slice(0, 10) + "T12:00:00Z").getUTCDay();
