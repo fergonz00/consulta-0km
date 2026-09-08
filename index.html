@@ -3030,12 +3030,17 @@ function abrirDetalle(consultaId, editMode = false) {
       // El chasis que pidieron quedo guardado en la consulta, pero la demora es un
       // dato de HOY: se cruza en vivo contra el stock para que al responder no se
       // prometa una entrega de una unidad que sigue trabada en la terminal.
-      const dem = ((stockData || []).find(r => r.serie === ch.serie) || {}).demora || null;
+      const liveCh = (stockData || []).find(r => r.serie === ch.serie) || {};
+      const dem = liveCh.demora || null;
+      // El precio especial por chasis tambien es dato de HOY: puede haberse cargado
+      // (o sacado) despues de que el vendedor mando la consulta.
+      const espCh = liveCh.fuente_oferta === 'unidad' && liveCh.oferta_vigente > 0;
       return `<div style="font-size:12px; padding:4px 0; border-bottom:1px dashed var(--vw-grey-2)">
         <strong>${escapeHtml(ch.color || '—')}</strong> · <span class="muted">${escapeHtml(ch.serie || '')}</span>
         ${ch.enReparto ? ' <span class="tag-badge" style="background:#c7d2fe; color:#312e81">EN REPARTO</span>' : ''}
         ${ch.fecha_factura ? `· <span class="muted">Fact ${escapeHtml(ch.fecha_factura)}</span>` : ''}
         · ${fmtMoney(ch.oferta_vigente)}${ch.fuente_oferta === 'stock_limitado' ? ' <span class="tag-badge lim">LIM</span>' : ''}
+        ${espCh ? ' <span class="tag-badge" style="background:#dcfce7; color:#166534">OFERTA ESPECIAL</span>' : ''}
         ${cartelDemora(dem)}
       </div>`;
     }).join('');
@@ -3052,9 +3057,18 @@ function abrirDetalle(consultaId, editMode = false) {
           if (b.fecha_factura) return 1;
           return 0;
         });
+      // Ofertas especiales por chasis (portal_precios_unidad): se muestran SIEMPRE,
+      // aunque la unidad con oferta no sea la que estan consultando. Es justo el dato
+      // que decide la respuesta: en vez de bajarle el precio al chasis pedido, ofrecer
+      // el otro que ya esta de oferta.
+      const nEsp = stockMismoModelo.filter(r => r.fuente_oferta === 'unidad' && r.oferta_vigente > 0).length;
       const filas = stockMismoModelo.map(r => {
         const pedido = seriesPedidas.has(r.serie);
-        const style = pedido ? 'background:#fff3cd; border-left:3px solid var(--orange); padding-left:6px' : '';
+        const esp = r.fuente_oferta === 'unidad' && r.oferta_vigente > 0;
+        // Diferencia contra la oferta normal del modelo (la del Baratito).
+        const deltaEsp = esp && r.oferta_baratito > 0 ? r.oferta_vigente - r.oferta_baratito : null;
+        const style = pedido ? 'background:#fff3cd; border-left:3px solid var(--orange); padding-left:6px'
+          : (esp ? 'background:#f0fdf4; border-left:3px solid #16a34a; padding-left:6px' : '');
         return `<div style="font-size:12px; padding:4px 6px; border-bottom:1px dashed var(--vw-grey-2); ${style}">
           ${pedido ? '<strong>► </strong>' : ''}<strong>${escapeHtml(r.color || '—')}</strong>
           · <span class="muted">${escapeHtml(r.serie)}</span>
@@ -3063,6 +3077,7 @@ function abrirDetalle(consultaId, editMode = false) {
           ${r.aRecibir ? ' <span class="tag-badge" style="background:#fbbf24; color:#78350f">A RECIBIR</span>' : ''}
           ${r.demora ? ' <span class="tag-badge" style="background:#fecaca; color:#7f1d1d">NO LLEGÓ</span>' : ''}
           ${pedido ? ' <span style="color:var(--orange); font-weight:700; font-size:11px">PEDIDO</span>' : ''}
+          ${esp ? `<div style="font-size:11px; color:#166534; font-weight:700; margin-top:2px">💲 Oferta especial: ${fmtMoney(r.oferta_vigente)}${deltaEsp != null ? ` <span style="font-weight:400">(${deltaEsp < 0 ? '−' : '+'}${fmtMoney(Math.abs(deltaEsp))} vs ${fmtMoney(r.oferta_baratito)} del modelo)</span>` : ''}${r.gcia_vigente ? ` <span style="font-weight:400">· gcia ${fmtPct(r.gcia_vigente)}</span>` : ''}</div>` : ''}
           ${r.demora ? `<div style="font-size:11px; color:${demoraGrave(r.demora) ? '#991b1b' : '#92400e'}">🚚 ${escapeHtml(textoDemora(r.demora))}</div>` : ''}
         </div>`;
       }).join('') || '<div class="muted" style="font-size:12px; padding:6px 0">Sin stock libre actual.</div>';
@@ -3071,6 +3086,7 @@ function abrirDetalle(consultaId, editMode = false) {
           <div style="font-size:13px; margin-bottom:6px">
             <strong>📦 Stock actual del modelo:</strong> ${stockMismoModelo.filter(r => !r.enReparto).length} chasis libre${stockMismoModelo.filter(r => !r.enReparto).length === 1 ? '' : 's'}${stockMismoModelo.some(r => r.enReparto) ? ` + ${stockMismoModelo.filter(r => r.enReparto).length} en reparto` : ''}
             <span class="muted" style="font-size:11px">(de más viejo a más nuevo)</span>
+            ${nEsp ? `<div style="font-size:12px; color:#166534; font-weight:700; margin-top:2px">💲 ${nEsp} ${nEsp === 1 ? 'chasis tiene' : 'chasis tienen'} oferta especial cargada</div>` : ''}
           </div>
           ${filas}
         </div>
