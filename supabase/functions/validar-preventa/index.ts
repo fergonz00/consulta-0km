@@ -164,7 +164,10 @@ Deno.serve(async (req: Request) => {
 function partirPV(pv: string): { num: number; suf: string } | null {
   const m = String(pv || "").trim().replace(/^PV\s*/i, "").match(/^0*(\d{1,6})\s*\/\s*(\w{1,3})$/);
   if (!m) return null;
-  return { num: parseInt(m[1], 10), suf: m[2] };
+  // El sufijo va en MAYUSCULA: Oversoft guarda "PV 08114/A" y la busqueda es
+  // exacta, asi que un "8114/a" tipeado en minuscula no matchearia nunca y la
+  // consulta valida saldria rechazada como "no existe".
+  return { num: parseInt(m[1], 10), suf: m[2].toUpperCase() };
 }
 
 async function ov(url: string, key: string, path: string) {
