@@ -3477,6 +3477,28 @@ async function solicitarTransferencia(consultaId, tipo) {
   }
 }
 
+/**
+ * Aviso que va PEGADO a la contestacion, para el vendedor: si esa parte que iba
+ * por transferencia termina entrando por SICE o con e-cheque a la orden, la plata
+ * no pasa por nuestro banco y no paga impuestos — asi que ese ahorro se le puede
+ * dar al cliente como mejora de precio. Pedido de Fer: que el vendedor lo tenga a
+ * mano para negociar la forma de pago, no solo el precio.
+ */
+function notaVolverASice(c, tipo) {
+  const it = tipo === '0km' ? (c.items || [])[0] : c;
+  const monto = Number(it && it.transferencia_monto) || 0;
+  if (monto <= 0) return '';
+  if (['pendiente', 'en_gestion'].includes(c.estado)) return '';
+  const ahorro = costoTransferencia(monto);
+  return `
+    <div style="margin-top:10px; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:10px 12px; font-size:13px; color:#065f46">
+      💡 <strong>Si esa parte la termina pagando por SICE o con e-cheque a la orden</strong>, se le pueden sumar
+      <strong>${fmtMoney(ahorro)}</strong> más de descuento: es exactamente lo que nos ahorramos de impuestos
+      (${fmtPct(alicuotaTransferencia())} sobre los ${fmtMoney(monto)} que iban por transferencia).
+      Avisá antes de cerrar si cambia la forma de pago.
+    </div>`;
+}
+
 function bloqueTransferencia(it, showGcia, precioRef) {
   const monto = Number(it && it.transferencia_monto) || 0;
   if (monto <= 0) return '';
@@ -4002,6 +4024,7 @@ function abrirDetalle(consultaId, editMode = false) {
             ${c.precio_max_admin ? `<span class="k">${c.origen === 'sin_disponibilidad' ? 'Precio autorizado' : 'Mejor precio máx'}</span><span class="v">${fmtMoney(c.precio_max_admin)}</span>` : ''}
             ${c.admin_respuesta_at ? `<span class="k">Respondido</span><span class="v">${fmtDate(c.admin_respuesta_at)}</span>` : ''}
           </div>
+          ${notaVolverASice(c, '0km')}
           ${(c.observaciones_admin || '').trim() ? `
             <div style="margin-top:10px">
               <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Comentario del administrador</div>
@@ -4102,6 +4125,7 @@ function renderResultadoVentaSection(c) {
         <h4>Resultado de venta</h4>
         <div class="kv">
           <span class="k">Resultado</span><span class="v">${badge}</span>
+          ${c.preventa ? `<span class="k">Preventa</span><span class="v"><strong>${escapeHtml(c.preventa)}</strong></span>` : ''}
           ${c.resultado_venta_at ? `<span class="k">Cargado</span><span class="v">${fmtDate(c.resultado_venta_at)}</span>` : ''}
         </div>
         ${(c.motivo_no_venta || '').trim() ? `
@@ -4118,9 +4142,12 @@ function renderResultadoVentaSection(c) {
     <div class="detalle-section">
       <h4>Resultado de venta</h4>
       <p style="font-size:13px; color:var(--vw-grey-4); margin-bottom:10px">¿Cómo terminó esta consulta con el cliente?</p>
-      <div id="resultadoVentaActions" style="display:flex; gap:8px; flex-wrap:wrap">
-        <button onclick="marcarVendida(${c.id})" style="background:#16a34a; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">✓ Sí, se vendió</button>
-        <button onclick="mostrarMotivoNoVenta(${c.id})" style="background:#dc2626; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">✗ No se vendió</button>
+      <div id="resultadoVentaActions">
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button onclick="marcarVendida(${c.id})" style="background:#16a34a; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">✓ Sí, se vendió</button>
+          <button onclick="mostrarMotivoNoVenta(${c.id})" style="background:#dc2626; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">✗ No se vendió</button>
+        </div>
+        ${bloquePreventaVenta(c, '0km')}
       </div>
       <div id="resultadoVentaMotivo" class="hidden" style="margin-top:12px">
         <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Motivo (obligatorio)</label>
@@ -4144,6 +4171,12 @@ function ocultarMotivoNoVenta() {
   document.getElementById('resultadoVentaMotivo').classList.add('hidden');
 }
 async function marcarVendida(consultaId) {
+  const c = (myConsultas || []).find(x => x.id === consultaId);
+  if (!c) { alert('No se encontró la consulta. Recargá la pantalla.'); return; }
+  // La PV se valida ANTES de pedir la confirmacion: si esta mal, no tiene sentido
+  // preguntar nada. Devuelve null cuando el vendedor tiene que corregirla.
+  const pv = await resolverPreventa(c, '0km');
+  if (pv === null) return;
   if (!confirm('¿Confirmar que esta consulta terminó en venta?')) return;
   showLoading('Guardando...');
   try {
@@ -4152,6 +4185,7 @@ async function marcarVendida(consultaId) {
       body: JSON.stringify({
         resultado_venta: 'vendida',
         motivo_no_venta: null,
+        preventa: pv || null,
         resultado_venta_at: new Date().toISOString()
       })
     });
@@ -5240,6 +5274,7 @@ function abrirDetalleUsado(consultaId) {
             ${c.precio_max_admin ? `<span class="k">Mejor precio máx</span><span class="v">${fmtMoney(c.precio_max_admin)}</span>` : ''}
             ${c.admin_respuesta_at ? `<span class="k">Respondido</span><span class="v">${fmtDate(c.admin_respuesta_at)}</span>` : ''}
           </div>
+          ${notaVolverASice(c, 'usado')}
           ${(c.observaciones_admin || '').trim() ? `
             <div style="margin-top:10px">
               <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Comentario del administrador</div>
@@ -5357,6 +5392,7 @@ function renderResultadoVentaUsadoSection(c) {
         <h4>Resultado de venta</h4>
         <div class="kv">
           <span class="k">Resultado</span><span class="v">${badge}</span>
+          ${c.preventa ? `<span class="k">Preventa</span><span class="v"><strong>${escapeHtml(c.preventa)}</strong></span>` : ''}
           ${c.resultado_venta_at ? `<span class="k">Cargado</span><span class="v">${fmtDate(c.resultado_venta_at)}</span>` : ''}
         </div>
         ${(c.motivo_no_venta || '').trim() ? `
@@ -5370,9 +5406,12 @@ function renderResultadoVentaUsadoSection(c) {
     <div class="detalle-section">
       <h4>Resultado de venta</h4>
       <p style="font-size:13px; color:var(--vw-grey-4); margin-bottom:10px">¿Cómo terminó esta consulta con el cliente?</p>
-      <div id="resultadoVentaActions" style="display:flex; gap:8px; flex-wrap:wrap">
-        <button onclick="marcarVendidaUsado(${c.id})" style="background:#16a34a; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">✓ Sí, se vendió</button>
-        <button onclick="mostrarMotivoNoVenta()" style="background:#dc2626; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">✗ No se vendió</button>
+      <div id="resultadoVentaActions">
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button onclick="marcarVendidaUsado(${c.id})" style="background:#16a34a; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">✓ Sí, se vendió</button>
+          <button onclick="mostrarMotivoNoVenta()" style="background:#dc2626; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">✗ No se vendió</button>
+        </div>
+        ${bloquePreventaVenta(c, 'usado')}
       </div>
       <div id="resultadoVentaMotivo" class="hidden" style="margin-top:12px">
         <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">Motivo (obligatorio)</label>
@@ -5386,7 +5425,7 @@ function renderResultadoVentaUsadoSection(c) {
     </div>`;
 }
 
-async function marcarResultadoUsado(consultaId, resultado, motivo) {
+async function marcarResultadoUsado(consultaId, resultado, motivo, preventa) {
   showLoading('Guardando...');
   try {
     await sbFetch(`consultas_usados?id=eq.${consultaId}`, {
@@ -5394,6 +5433,7 @@ async function marcarResultadoUsado(consultaId, resultado, motivo) {
       body: JSON.stringify({
         resultado_venta: resultado,
         motivo_no_venta: motivo || null,
+        ...(preventa ? { preventa } : {}),
         resultado_venta_at: new Date().toISOString()
       })
     });
@@ -5405,8 +5445,12 @@ async function marcarResultadoUsado(consultaId, resultado, motivo) {
 }
 
 async function marcarVendidaUsado(consultaId) {
+  const c = (misConsultasUsados || []).find(x => x.id === consultaId);
+  if (!c) { alert('No se encontró la consulta. Recargá la pantalla.'); return; }
+  const pv = await resolverPreventa(c, 'usado');
+  if (pv === null) return;
   if (!confirm('¿Confirmar que este usado se vendió?')) return;
-  return marcarResultadoUsado(consultaId, 'vendida', null);
+  return marcarResultadoUsado(consultaId, 'vendida', null, pv || null);
 }
 
 async function marcarNoVendidaUsado(consultaId) {

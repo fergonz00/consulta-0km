@@ -549,3 +549,50 @@ Parte de ese 1,5% es **pago a cuenta**, no costo hundido: el SIRCREB se computa 
 ### Smoke test
 
 `smoke-test.js` (en la raiz del repo; `npm i jsdom` y `node smoke-test.js`) levanta `index.html` en jsdom con los scripts corriendo y verifica ~40 aserciones: la alícuota, la matemática del ejemplo de Fer, la equivalencia contra el precio efectivo, los casos borde que devolvían `null`, el blindaje (el vendedor no ve ganancia en el bloque de reapertura), la máquina de pasos y los carteles de desactualizado. Chequear sólo la sintaxis no alcanza: un `ReferenceError` se lo come un `catch` y deja la pantalla en cero.
+
+
+### Del 0,6% "por las dudas" al costo real (2026-09-09)
+
+Hasta hoy el motor de precios le cargaba **0,6% sobre la venta neta a TODAS las ventas** (`PRECIOS_CHEQUE` en `gestion-tga/live/Código.js`). Era una precaución de Fer contemplando que algunas se iban a cobrar por transferencia. Con este circuito el costo se calcula donde de verdad ocurre, así que ese recargo **se puso en 0** — dejarlo habría contado ~0,6% dos veces sobre el monto transferido.
+
+**La ganancia de todos los modelos subió entre 0,41 y 0,55 puntos** (0,49 promedio; verificado: Polo Robust 2,631% → 3,185%, Polo Track 1,734% → 2,141%). Se replica en cuatro lugares que tienen que coincidir: `PRECIOS_CHEQUE` del motor, `CHEQUE` de `PreciosClient.tsx` y de `AnalisisModelo.tsx`, y `_GCIA_TAXRATE` de la Edge `stock-disponible`.
+
+⚠️ **No alcanzó con `clasp push`.** El web app del motor corre sobre un deployment versionado, no sobre HEAD: hubo que `clasp deploy --deploymentId AKfycby13Nu...` (quedó @218). Sin eso el endpoint seguía devolviendo `cheque: 0.006` incluso con `&fresh=1`.
+
+**No se reescribió nada del pasado**, y no hizo falta código para lograrlo: el 0,6% vivía **solo** en la ganancia del precio de hoy. La fórmula de la ganancia realizada (`_gciaVentaPct`, tanto en el Apps Script como en gestion-next) nunca lo tuvo — tiene comisión e IIBB y nada más. Las ventas viejas de la solapa Ventas y el promedio de ganancia real quedaron intactos.
+
+### El N° de preventa: el nexo con la ganancia real (2026-09-09)
+
+Pedido de Fer: *"cuando sale una venta, cómo identificamos que una parte iba por transferencia"*. Sin ese dato el costo se quedaba en la consulta y la solapa Ventas seguía mostrando la ganancia sin descontarlo.
+
+Al marcar la consulta como **vendida**, el vendedor carga el **N° de preventa**. Es **obligatorio si la consulta lleva transferencia** (sin él, el monto se pierde) y **opcional** si no (no hay nada que perder). Se guarda normalizado (`8114/1`) en `consultas_0km.preventa` / `consultas_usados.preventa`.
+
+**Validación**: Edge `validar-preventa`. Chequea contra la réplica de Oversoft que la PV exista, no esté anulada, no la esté usando otra consulta, y que sea **del vendedor que dice haberla cerrado**. Vive en una Edge y no en el front porque la key de Oversoft no puede viajar al navegador — este repo es público. Usa el **mismo mapa que el CRM** (`pv_vendedores_map`, usuario → vendedorid) para que los dos validadores digan lo mismo sobre la misma PV; un vendedor puede tener varios vendedorid (Loisi 6 y 141, Castro 5 y 140) y vale cualquiera. Sin mapeo (Fer, un gerente) **no bloquea**: deja pasar marcado para revisar. Si la Edge no responde, tampoco bloquea: guarda el número tal cual.
+
+Verificado contra producción: formato inválido → rechaza · PV inexistente → rechaza · PV de otro vendedor → *"figura a nombre de Buena Gisela"* · PV propia → verifica · `fngonzalez` → `sin_mapeo` con `revisar` · acepta `8123/1` y `PV 08123/1`.
+
+⚠️ El `cliente` que devuelve Oversoft es el **documento** (`17012849`), no el nombre: por eso no se muestra en el mensaje.
+
+### Ventas descuenta el costo (gestion-next)
+
+`lib/ventas.ts` cruza por PV normalizada contra las consultas con transferencia y le resta el costo a la ganancia, en el mismo lugar donde suma los accesorios:
+
+```
+gciaPesos += accesorios − costoTransferencia
+```
+
+Resta **antes** de calcular el `%` y el acumulado del mes, para que los tres números cuenten la misma historia. La alícuota es la del **mes de la venta** (que es cuando la plata se mueve), resuelta igual que en el panel: si ese mes no se cargó, cae al último anterior.
+
+En la fila aparece el badge **`TRANSF −$X`** y el desglose suma el bloque "Cobrado por transferencia" con el monto, los impuestos y el número de consulta. Sin el badge, esa venta parecería peor que las demás sin motivo visible.
+
+**No hace falta ningún corte por fecha**: ninguna venta anterior a hoy tiene una consulta con transferencia cargada, así que el cruce no las toca. Las ventas **sin consulta** siguen sin contemplar transferencia — es el agujero conocido y aceptado (criterio de Fer: lo de antes queda como estaba, lo nuevo siempre se cruza contra la consulta).
+
+⚠️ Las consultas de **usados** también guardan la PV, pero Ventas sólo mira preventas 0km (`tipopv=eq.O`): el cruce no las alcanza. La ganancia del usado con transferencia se ve en la consulta, no en Ventas.
+
+### "Si vuelve a SICE, te sumo el impuesto al descuento"
+
+Pedido de Fer: que el vendedor lo tenga a mano para negociar **la forma de pago**, no solo el precio. Cuando la consulta lleva transferencia y ya está respondida, la sección "Respuesta" muestra en verde:
+
+> 💡 **Si esa parte la termina pagando por SICE o con e-cheque a la orden**, se le pueden sumar **$150.000** más de descuento: es exactamente lo que nos ahorramos de impuestos.
+
+Lo ven vendedor y admin (`notaVolverASice`). No aparece mientras está pendiente o en gestión: todavía no hay nada que ofrecer.

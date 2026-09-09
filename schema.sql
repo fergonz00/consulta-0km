@@ -305,3 +305,13 @@ CREATE TABLE IF NOT EXISTS consultas_reaperturas (
 );
 CREATE INDEX IF NOT EXISTS idx_consultas_reaperturas_consulta ON consultas_reaperturas(tipo, consulta_id);
 ALTER TABLE consultas_reaperturas DISABLE ROW LEVEL SECURITY;
+
+-- 2026-09-09: N° de preventa que el vendedor carga al marcar la consulta como
+-- VENDIDA. Es el nexo entre la consulta (donde quedo el monto por transferencia)
+-- y la venta real: la solapa Ventas cruza por aca para descontarle el costo a la
+-- ganancia. Normalizado tipo "8114/1" (sin el "PV 0..." de Oversoft). Lo valida la
+-- Edge `validar-preventa` contra la replica de Oversoft.
+ALTER TABLE consultas_0km    ADD COLUMN IF NOT EXISTS preventa TEXT;
+ALTER TABLE consultas_usados ADD COLUMN IF NOT EXISTS preventa TEXT;
+CREATE INDEX IF NOT EXISTS idx_consultas_0km_preventa    ON consultas_0km(preventa)    WHERE preventa IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_consultas_usados_preventa ON consultas_usados(preventa) WHERE preventa IS NOT NULL;

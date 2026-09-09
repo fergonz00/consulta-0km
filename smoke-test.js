@@ -198,6 +198,31 @@ const TEST = `
     periodoActual: '2026-09-01', desactualizado: true, sinDatos: true };
   ok(avisoAlicuota().indexOf('ninguna al') >= 0, 'sin ninguna fila deberia avisar aparte');
 
+
+  // 13) Aviso "si vuelve a SICE": solo con transferencia y solo una vez respondida.
+  costoTransfer = { total: 0.015, sircreb: 0.003, debCred: 0.012, periodo: '2026-09-01',
+    periodoActual: '2026-09-01', desactualizado: false, sinDatos: false };
+  const cTr = { id: 5, estado: 'contraoferta', items: [{ transferencia_monto: 10000000 }] };
+  const nota = notaVolverASice(cTr, '0km');
+  ok(nota.indexOf('$150.000') >= 0, 'la nota deberia decir cuanto mas de descuento se puede dar');
+  ok(nota.indexOf('SICE') >= 0, 'la nota deberia nombrar SICE');
+  ok(notaVolverASice({ id: 5, estado: 'pendiente', items: [{ transferencia_monto: 10000000 }] }, '0km') === '',
+    'sin responder todavia no va la nota');
+  ok(notaVolverASice({ id: 5, estado: 'contraoferta', items: [{}] }, '0km') === '',
+    'sin transferencia no va la nota');
+  // Usados: la transferencia vive en la cabecera, no en items.
+  ok(notaVolverASice({ id: 5, estado: 'aceptada', transferencia_monto: 4000000 }, 'usado').indexOf('$60.000') >= 0,
+    'usados: la nota deberia calcular sobre la cabecera');
+
+  // 14) Pedido de la preventa al marcar la venta.
+  ok(transferenciaDe(cTr, '0km') === 10000000, 'transferenciaDe deberia leer el item');
+  ok(transferenciaDe({ transferencia_monto: 7 }, 'usado') === 7, 'transferenciaDe deberia leer la cabecera');
+  const bpv = bloquePreventaVenta(cTr, '0km');
+  ok(bpv.indexOf('pvVenta') >= 0, 'el bloque deberia tener el input de PV');
+  ok(bpv.indexOf('obligatorio') >= 0, 'con transferencia la PV tiene que ser obligatoria');
+  ok(bloquePreventaVenta({ id: 6, items: [{}] }, '0km').indexOf('opcional') >= 0,
+    'sin transferencia la PV es opcional');
+
   return fallos;
 })()
 `
