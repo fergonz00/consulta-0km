@@ -511,8 +511,16 @@ let repartoMap = {};
 // Map modelo -> {tu0km, espasa}, los dos c/FyF (a Espasa se lo suma el cron de
 // portal-precios al escribir la tabla). Vacio si la consulta falla.
 let competenciaMap = {};
+// Alicuota del costo de cobrar por TRANSFERENCIA bancaria (0,6% de entrada + 0,6%
+// de salida + SIRCREB del mes). La carga Fer en el panel de precios con el dato
+// que le pasa Valeria a principio de mes. Ver cargarCostosFinancieros().
+let costoTransfer = { total: 0, sircreb: 0, debCred: 0, periodo: null, periodoActual: null, desactualizado: false, sinDatos: true };
 let myConsultas = [];
 let adminConsultas = [];
+// Reaperturas por consulta: clave `${tipo}:${consulta_id}` -> filas mas nueva primero.
+// Una consulta se reabre cuando el cliente, DESPUES de tener respuesta, pide pagar una
+// parte por transferencia: la respuesta vieja queda congelada aca como referencia.
+let reaperturasMap = {};
 let adminTab = 'pendiente';
 
 // Form de nueva consulta (state global)
@@ -749,6 +757,9 @@ async function cargarStock() {
   showLoading('Cargando stock...');
   // La competencia carga en paralelo con stock pero no bloquea (si falla, se ignora).
   cargarCompetencia();
+  // Idem la alicuota del costo de transferencia: si falla, las consultas con pago
+  // por transferencia avisan que no se pudo calcular en vez de mentir un numero.
+  cargarCostosFinancieros();
   try {
     // Unica fuente: Oversoft EN VIVO via Edge Function (incluye unidades "a recibir" y
     // el reparto). Si falla, no hay respaldo: preferimos no mostrar nada antes que
@@ -846,6 +857,92 @@ async function cargarCompetencia() {
   } catch(e) {
     console.warn('[Competencia] error al cargar (no critico):', e.message || e);
   }
+}
+
+// ============ COSTO DE COBRAR POR TRANSFERENCIA ============
+// El cliente tiene que pagar en la cuenta recaudadora de VW (SICE) con deposito en
+// efectivo, o con cheque a la orden que el concesionario endosa a esa cuenta: asi la
+// plata nunca pasa por nuestro banco y no paga nada. Cuando pide transferir hay un
+// intermediario mas y la plata entra y sale: 0,6% + 0,6% de impuesto a los debitos y
+// creditos, mas el SIRCREB de IIBB, que cambia todos los meses.
+//
+// La tabla `costos_financieros_mes` tiene una fila por mes. Si el mes en curso todavia
+// no se cargo, se usa la ultima fila anterior y se marca `desactualizado`: preferimos
+// seguir calculando con el numero del mes pasado ANTES que dejar de calcular, siempre
+// que el cartel se vea en pantalla.
+
+// Primer dia del mes actual en horario argentino (YYYY-MM-01).
+function periodoActualAR() {
+  const ar = new Date(Date.now() - 3 * 3600 * 1000);
+  return `${ar.getUTCFullYear()}-${String(ar.getUTCMonth() + 1).padStart(2, '0')}-01`;
+}
+
+function periodoLabel(p) {
+  const MESES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  if (!p) return '—';
+  const [a, m] = String(p).split('-');
+  const i = Number(m) - 1;
+  if (!a || i < 0 || i > 11) return String(p);
+  return `${MESES[i]} ${a.slice(2)}`;
+}
+
+async function cargarCostosFinancieros() {
+  const periodoActual = periodoActualAR();
+  try {
+    const filas = await sbFetch(
+      `costos_financieros_mes?select=periodo,sircreb_pct,deb_cred_pct&periodo=lte.${periodoActual}&order=periodo.desc&limit=1`
+    );
+    const f = (filas || [])[0];
+    if (!f) {
+      costoTransfer = { total: 0.012, sircreb: 0, debCred: 0.012, periodo: null,
+        periodoActual, desactualizado: true, sinDatos: true };
+      console.warn('[CostoTransf] no hay ninguna alicuota cargada.');
+      return;
+    }
+    const periodo = String(f.periodo).slice(0, 10);
+    const sircreb = Number(f.sircreb_pct) || 0;
+    const debCred = Number(f.deb_cred_pct) || 0;
+    costoTransfer = { total: sircreb + debCred, sircreb, debCred, periodo, periodoActual,
+      desactualizado: periodo !== periodoActual, sinDatos: false };
+    console.log(`[CostoTransf] ${periodoLabel(periodo)} = ${(costoTransfer.total*100).toFixed(2)}%` +
+      (costoTransfer.desactualizado ? ' (DESACTUALIZADO)' : ''));
+  } catch(e) {
+    console.warn('[CostoTransf] error al cargar (no critico):', e.message || e);
+  }
+}
+
+/** Alicuota total a aplicar hoy sobre el monto transferido (fraccion). */
+function alicuotaTransferencia() {
+  return Number(costoTransfer.total) || 0;
+}
+
+/** Costo en pesos de cobrar `monto` por transferencia. */
+function costoTransferencia(monto) {
+  const m = Number(monto) || 0;
+  if (m <= 0) return 0;
+  return m * alicuotaTransferencia();
+}
+
+/** Desglose para mostrar: "0,60% + 0,60% + 0,30% SIRCREB = 1,50%". */
+function textoAlicuota() {
+  const mitad = (Number(costoTransfer.debCred) || 0) / 2;
+  return `${fmtPct(mitad)} de entrada + ${fmtPct(mitad)} de salida + ${fmtPct(costoTransfer.sircreb)} de SIRCREB = ` +
+    `<strong>${fmtPct(alicuotaTransferencia())}</strong>`;
+}
+
+/** Cartel cuando la alicuota del mes todavia no se cargo. '' si esta al dia. */
+function avisoAlicuota() {
+  if (costoTransfer.sinDatos) {
+    return `<div style="background:#fee2e2; border:1px solid #fecaca; color:#991b1b; border-radius:8px; padding:8px 10px; font-size:12px; margin-top:8px">
+      ⚠ No hay ninguna alícuota cargada. Se está calculando solo con el 1,20% de débitos y créditos, <strong>sin SIRCREB</strong>. Cargalo en el panel de precios.
+    </div>`;
+  }
+  if (costoTransfer.desactualizado) {
+    return `<div style="background:#fef3c7; border:1px solid #fde68a; color:#92400e; border-radius:8px; padding:8px 10px; font-size:12px; margin-top:8px">
+      ⚠ SIRCREB <strong>desactualizado</strong>: se está usando el de ${periodoLabel(costoTransfer.periodo)} porque todavía no se cargó el de ${periodoLabel(costoTransfer.periodoActual)}.
+    </div>`;
+  }
+  return '';
 }
 
 
@@ -1207,6 +1304,10 @@ async function showNuevaConsulta() {
     finEntidad: null, finEntidadOtro: '',
     finMonto: null,
     vsOtro: null, conceNombre: '', concePrecio: null,
+    // 'no' | 'si' — si el cliente pide pagar una parte por transferencia bancaria.
+    // El monto exacto va por unidad (u.transferenciaMonto), porque cada unidad pedida
+    // termina siendo una consulta separada y si no se contaria dos veces.
+    pagaTransferencia: null,
     observaciones: ''
   };
   wizardStack = [];
@@ -1265,7 +1366,11 @@ function getNextStep(step) {
   // DE USADOS" mas abajo.
   if (step === 'u-gerente-vendedor') return 'u-unidad';
   if (step === 'u-unidad') return 'u-precio';
-  if (step === 'u-precio') return 'u-tipo-cliente';
+  if (step === 'u-precio') return 'u-transferencia';
+  if (step === 'u-transferencia') {
+    return formUsado.pagaTransferencia === 'si' ? 'u-transferencia-monto' : 'u-tipo-cliente';
+  }
+  if (step === 'u-transferencia-monto') return 'u-tipo-cliente';
   if (step === 'u-tipo-cliente') return 'u-cliente';
   if (step === 'u-cliente') return 'u-observaciones';
   if (step === 'u-observaciones') return 'u-resumen';
@@ -1287,7 +1392,11 @@ function getNextStep(step) {
   }
   if (step === 'color-sd') return 'precios';
   if (step === 'colores') return 'precios';
-  if (step === 'precios') return 'tipo-cliente';
+  if (step === 'precios') return 'transferencia';
+  if (step === 'transferencia') {
+    return formData.pagaTransferencia === 'si' ? 'transferencia-monto' : 'tipo-cliente';
+  }
+  if (step === 'transferencia-monto') return 'tipo-cliente';
   if (step === 'tipo-cliente') {
     return formData.tipoCliente === 'reventa' ? 'reventa-nombre' : 'cliente-nombre';
   }
@@ -1320,12 +1429,17 @@ function getNextStep(step) {
 }
 
 function totalSteps() {
-  // Usados: unidad, precio, tipo de cliente, cliente, observaciones, resumen
-  // (+ vendedor si gerente)
-  if (wizardTipo === 'usado') return currentMode === 'gerente' ? 7 : 6;
-  // Pasos fijos: origen, cantidad, modelos, color(es), precios, tipo-cliente, nombre,
-  // ubicación, financia, vs-otro, observaciones, resumen
-  let n = 12;
+  // Usados: unidad, precio, transferencia, tipo de cliente, cliente, observaciones,
+  // resumen (+ el monto si paga por transferencia, + vendedor si gerente)
+  if (wizardTipo === 'usado') {
+    let n = currentMode === 'gerente' ? 8 : 7;
+    if (formUsado && formUsado.pagaTransferencia === 'si') n += 1;
+    return n;
+  }
+  // Pasos fijos: origen, cantidad, modelos, color(es), precios, transferencia,
+  // tipo-cliente, nombre, ubicación, financia, vs-otro, observaciones, resumen
+  let n = 13; // 12 de siempre + la pregunta de pago por transferencia
+  if (formData.pagaTransferencia === 'si') n += 1; // monto por transferencia
   if (formData.origen === 'reparto' || formData.origen === 'sin_disponibilidad') n += 1; // segunda pregunta
   if (currentMode === 'gerente') n += 1; // elegir vendedor
   if (formData.tipoCliente === 'particular') n += 2; // fuente, usado
@@ -1854,6 +1968,61 @@ STEP_RENDERERS['precios'] = () => {
   };
 };
 
+// ----- Pago por transferencia -----
+// Lo normal es que el cliente deposite en la cuenta recaudadora de VW (SICE) o pague
+// con cheque a la orden que endosamos a esa cuenta: ahi la plata no pasa por nuestro
+// banco. Cuando pide transferir hay un intermediario mas y se pagan impuestos, asi que
+// el numero exacto tiene que quedar anotado en la consulta.
+STEP_RENDERERS['transferencia'] = () => ({
+  body: `
+    <h2>¿Una parte se paga por transferencia?</h2>
+    <p class="step-hint">El cliente tiene que pagar con depósito en la cuenta de VW (SICE) o con cheque a la orden. Si pide transferir una parte a la cuenta del concesionario, decilo acá: <strong>tiene un costo de impuestos</strong> que hay que contemplar antes de dar el precio.</p>
+    <div class="opt-list">
+      <div class="opt ${formData.pagaTransferencia === 'no' ? 'selected' : ''}" onclick="selectPagaTransferencia('no')">
+        <span class="opt-icon">🏦</span> No, paga todo por SICE o cheque
+      </div>
+      <div class="opt ${formData.pagaTransferencia === 'si' ? 'selected' : ''}" onclick="selectPagaTransferencia('si')">
+        <span class="opt-icon">💸</span> Sí, una parte por transferencia
+      </div>
+    </div>
+  `,
+  footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
+});
+
+// ----- Monto por transferencia (uno por unidad) -----
+STEP_RENDERERS['transferencia-monto'] = () => {
+  const allOk = formData.unidades.some(u => u.transferenciaMonto && u.transferenciaMonto > 0);
+  return {
+    body: `
+      <h2>¿Cuánto por transferencia?</h2>
+      <p class="step-hint">Anotá el monto <strong>exacto</strong> que el cliente quiere transferir. Es sobre esa plata que se paga el impuesto, así que de ese número depende hasta dónde se puede llegar con el precio.</p>
+      ${formData.unidades.map((u, idx) => `
+        <div class="resumen-card" style="margin-bottom:14px">
+          <h5>Unidad ${idx+1}: ${escapeHtml(u.modelo || '—')}</h5>
+          ${u.precioPedido ? `<p class="muted">Precio pedido: <strong>${fmtMoney(u.precioPedido)}</strong></p>` : ''}
+          <div class="field" style="margin-top:10px">
+            <input id="transfMonto${idx}" type="text" inputmode="numeric" placeholder="$0 — dejalo vacío si esta unidad no lleva transferencia"
+              value="${u.transferenciaMonto != null ? '$' + Math.round(u.transferenciaMonto).toLocaleString('es-AR') : ''}"
+              oninput="onTransferenciaMontoInput(${idx}, this)"
+              style="font-size:20px; font-weight:600; padding:14px; letter-spacing:0.5px">
+          </div>
+          <div id="transfHint${idx}" class="field-hint" style="font-size:13px; margin-top:8px"></div>
+        </div>
+      `).join('')}
+      ${avisoAlicuota()}
+    `,
+    footer: `
+      <button class="btn-back" onclick="wizardBack()">Atrás</button>
+      <button class="btn-next" id="btnNext" ${allOk ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+    `,
+    onMount: () => {
+      formData.unidades.forEach((_, idx) => updateTransferenciaHint(idx));
+      const el = document.getElementById('transfMonto0');
+      if (el) el.focus();
+    }
+  };
+};
+
 // ----- Tipo cliente -----
 STEP_RENDERERS['tipo-cliente'] = () => ({
   body: `
@@ -2119,6 +2288,10 @@ STEP_RENDERERS['resumen'] = () => {
         ${coloresRow}
         ${filaPrecio}
         ${(a && a.dto_extra_pedido != null) ? `<div class="precio-row"><span>Dto extra pedido:</span><strong>${fmtPct(a.dto_extra_pedido)}</strong></div>` : ''}
+        ${u.transferenciaMonto > 0 ? `
+          <div class="precio-row"><span>Por transferencia:</span><strong>${fmtMoney(u.transferenciaMonto)}</strong></div>
+          <div class="precio-row"><span>Costo de cobrarlo así:</span><strong style="color:var(--red)">${fmtMoney(costoTransferencia(u.transferenciaMonto))}</strong></div>
+        ` : ''}
       </div>
     `;
   }).join('');
@@ -2174,7 +2347,7 @@ function selectGerenteVendedor(id, usuario, nombre) {
 }
 function selectCantidad(n) {
   while (formData.unidades.length > n) formData.unidades.pop();
-  while (formData.unidades.length < n) formData.unidades.push({ modelo: null, chasisSeleccionados: [], colorPedido: null, precioPedido: null, esReparto: false });
+  while (formData.unidades.length < n) formData.unidades.push({ modelo: null, chasisSeleccionados: [], colorPedido: null, precioPedido: null, esReparto: false, transferenciaMonto: null });
   nextStep();
 }
 function setUnidadModelo(idx, modelo) {
@@ -2244,6 +2417,41 @@ function updateDtoExtra(idx) {
   const color = a.dto_extra_pedido > 0 ? 'var(--red)' : (a.dto_extra_pedido < 0 ? 'var(--green)' : 'var(--vw-grey-4)');
   div.innerHTML = `Dto extra pedido: <strong style="color:${color}">${fmtPct(a.dto_extra_pedido)}</strong> · Oferta vigente: ${fmtMoney(a.oferta_vigente_min)}`;
 }
+function selectPagaTransferencia(v) {
+  formData.pagaTransferencia = v;
+  // Si vuelve atras y dice que no, se limpian los montos: no puede quedar un monto
+  // cargado en una consulta que dice que se paga todo por SICE.
+  if (v === 'no') formData.unidades.forEach(u => { u.transferenciaMonto = null; });
+  nextStep();
+}
+
+function onTransferenciaMontoInput(idx, el) {
+  const raw = el.value.replace(/[^\d]/g, '');
+  formData.unidades[idx].transferenciaMonto = raw ? parseInt(raw, 10) : null;
+  el.value = raw ? '$' + parseInt(raw, 10).toLocaleString('es-AR') : '';
+  updateTransferenciaHint(idx);
+  const btn = document.getElementById('btnNext');
+  if (btn) btn.disabled = !formData.unidades.some(u => u.transferenciaMonto && u.transferenciaMonto > 0);
+}
+
+// Lo que ve el VENDEDOR: el monto y cuanto cuesta en pesos. Nada de ganancia — eso
+// sigue siendo del admin. Saber el costo alcanza para que entienda por que el precio
+// con transferencia no puede ser el mismo, y para que empuje el pago por SICE.
+function updateTransferenciaHint(idx) {
+  const div = document.getElementById('transfHint' + idx);
+  if (!div) return;
+  const u = formData.unidades[idx];
+  const monto = Number(u && u.transferenciaMonto) || 0;
+  if (monto <= 0) { div.innerHTML = '<span style="color:var(--vw-grey-3)">Sin transferencia en esta unidad.</span>'; return; }
+  if (u.precioPedido && monto > u.precioPedido) {
+    div.innerHTML = `<span style="color:var(--red)">Ese monto es mayor que el precio pedido (${fmtMoney(u.precioPedido)}). Revisalo.</span>`;
+    return;
+  }
+  const costo = costoTransferencia(monto);
+  div.innerHTML = `Costo de cobrarlo así: <strong style="color:var(--red)">${fmtMoney(costo)}</strong> ` +
+    `<span class="muted">(${fmtPct(alicuotaTransferencia())} sobre ${fmtMoney(monto)})</span>`;
+}
+
 function selectTipoCliente(t) { formData.tipoCliente = t; nextStep(); }
 function selectFuenteDato(v) { formData.fuenteDato = v; nextStep(); }
 function selectTieneUsado(b) { formData.tieneUsado = b; nextStep(); }
@@ -2282,7 +2490,10 @@ function updateNextEnabled() {
 }
 
 // ============ Análisis ============
-function calcularAnalisisUnidad(u) {
+// Analisis "puro" de la unidad: oferta vigente, dto extra sobre el precio de lista y
+// ganancia resultante, SIN contar como se paga. El costo de cobrar por transferencia
+// se aplica arriba, en calcularAnalisisUnidad().
+function _analisisUnidadBase(u) {
   if (!u || !u.modelo || u.precioPedido == null || isNaN(u.precioPedido)) return null;
   // "Sin disponibilidad": el modelo puede no tener NINGUNA unidad en stockData (hoy 20
   // de los 48 del catalogo). El analisis se hace igual contra el precio publicado del
@@ -2357,6 +2568,44 @@ function calcularAnalisisUnidad(u) {
   };
 }
 
+/**
+ * Analisis de la unidad con el costo de la forma de pago adentro.
+ *
+ * Si una parte se cobra por transferencia bancaria, esa plata entra y sale de nuestra
+ * cuenta y deja en el camino la alicuota del mes (0,6 + 0,6 + SIRCREB). Es plata que no
+ * cobramos: equivale a haber vendido mas barato. Por eso NO se toca `dto_extra_pedido`
+ * (que sigue siendo el descuento de precio puro, comparable contra consultas viejas) y
+ * se agrega el costo como un descuento aparte:
+ *
+ *   dto_transferencia = costo / precio_lista
+ *   dto_extra_total   = dto_extra_pedido + dto_transferencia
+ *   gcia_resultante   = gcia_vigente_min - dto_extra_total   <-- la que decide
+ *
+ * `precio_efectivo` es lo mismo visto en pesos: lo que realmente entra despues de los
+ * impuestos. Con oferta 31.000.000, pedido 30.000.000 y 10.000.000 por transferencia al
+ * 1,5%, el costo es 150.000 y es como vender a 29.850.000.
+ */
+function calcularAnalisisUnidad(u) {
+  const a = _analisisUnidadBase(u);
+  if (!a) return null;
+  const monto = Number(u && u.transferenciaMonto) || 0;
+  a.transferencia_monto = monto > 0 ? monto : null;
+  a.transferencia_alicuota = monto > 0 ? alicuotaTransferencia() : null;
+  a.transferencia_costo = monto > 0 ? costoTransferencia(monto) : 0;
+  a.dto_transferencia = null;
+  a.dto_extra_total = a.dto_extra_pedido;
+  a.precio_efectivo = Number(u.precioPedido) || null;
+  if (monto > 0 && a.precio_lista > 0) {
+    a.dto_transferencia = a.transferencia_costo / a.precio_lista;
+    a.precio_efectivo = (Number(u.precioPedido) || 0) - a.transferencia_costo;
+    if (a.dto_extra_pedido != null) {
+      a.dto_extra_total = a.dto_extra_pedido + a.dto_transferencia;
+      a.gcia_resultante = (a.gcia_vigente_min || 0) - a.dto_extra_total;
+    }
+  }
+  return a;
+}
+
 // Analisis EN VIVO para el admin a partir de un item ya guardado. La gcia guardada en el item
 // la calculo el VENDEDOR, y a los vendedores la Edge les blinda la ganancia (vuelve 0), por eso
 // gcia_vigente_min quedo en 0 y gcia_resultante = -dto_extra. Para el admin recalculamos contra
@@ -2364,7 +2613,11 @@ function calcularAnalisisUnidad(u) {
 function analisisAdminVivo(it) {
   if (!it || it.precio_pedido == null) return null;
   const series = (it.chasis || []).map(ch => ch.serie).filter(Boolean);
-  const base = { modelo: it.modelo, precioPedido: Number(it.precio_pedido) };
+  // El monto por transferencia viaja en el item: el analisis del admin tiene que
+  // salir ya neto del costo de cobrarlo asi. La alicuota que se aplica es la de HOY
+  // (no la guardada al cargar la consulta): si el SIRCREB cambio, manda el nuevo.
+  const base = { modelo: it.modelo, precioPedido: Number(it.precio_pedido),
+    transferenciaMonto: Number(it.transferencia_monto) || 0 };
   // 1) por los chasis pedidos (si siguen en stock).
   let a = calcularAnalisisUnidad({ ...base, esReparto: false, chasisSeleccionados: series });
   // 2) fallback: cualquier chasis del modelo (la gcia es por-modelo) + precio_lista del catalogo.
@@ -2419,7 +2672,14 @@ async function submitConsulta() {
       if (!u.esReparto && u.chasisSeleccionados.length === 0) errs.push(`Unidad ${i+1}: falta color`);
       if (!u.precioPedido) errs.push(`Unidad ${i+1}: falta precio`);
     }
+    // El monto por transferencia no puede ser mayor que lo que se paga por el auto.
+    if (u.transferenciaMonto && u.precioPedido && u.transferenciaMonto > u.precioPedido) {
+      errs.push(`Unidad ${i+1}: la transferencia (${fmtMoney(u.transferenciaMonto)}) supera el precio pedido`);
+    }
   });
+  if (formData.pagaTransferencia === 'si' && !formData.unidades.some(u => u.transferenciaMonto > 0)) {
+    errs.push('Dijiste que una parte va por transferencia pero no cargaste ningún monto');
+  }
   if (errs.length) { alert('Faltan datos:\n\n• ' + errs.join('\n• ')); return; }
 
   // En modo gerente, debe haber un vendedor elegido
@@ -2502,7 +2762,14 @@ async function submitConsulta() {
         // origenes el color va dentro del snapshot de `chasis`.
         color_pedido: sinDisp ? (u.colorPedido || '').trim() : null,
         dto_extra_pedido: a ? a.dto_extra_pedido : null,
+        // Ya viene NETA del costo de la transferencia (ver calcularAnalisisUnidad).
         gcia_resultante: a ? a.gcia_resultante : null,
+        // Parte del precio que el cliente pide pagar por transferencia bancaria en vez
+        // de depositar en SICE. La alicuota se guarda como snapshot para poder releer
+        // la consulta dentro de unos meses; el analisis del admin usa la de hoy.
+        transferencia_monto: u.transferenciaMonto || null,
+        transferencia_alicuota: u.transferenciaMonto ? alicuotaTransferencia() : null,
+        transferencia_costo: u.transferenciaMonto ? Math.round(costoTransferencia(u.transferenciaMonto)) : null,
         // es_reparto = el auto pedido no esta fisicamente: o el modelo entero venia
         // solo por reparto (fallback CSV), o todos los chasis elegidos son de reparto.
         es_reparto: !!u.esReparto ||
@@ -2550,6 +2817,27 @@ async function notifyAdminNuevaConsulta(id) {
 }
 
 // ============ MIS CONSULTAS (vendedor / gerente) ============
+// Historial de reaperturas (0km + usados juntos). Son pocas: se traen las ultimas 500
+// de una y se indexan por consulta, en vez de una consulta por detalle abierto.
+async function cargarReaperturas() {
+  try {
+    const filas = await sbFetch('consultas_reaperturas?select=*&order=created_at.desc&limit=500');
+    const map = {};
+    (filas || []).forEach(r => {
+      const k = `${r.tipo}:${r.consulta_id}`;
+      (map[k] = map[k] || []).push(r);
+    });
+    reaperturasMap = map;
+  } catch(e) {
+    console.warn('[Reaperturas] error al cargar (no critico):', e.message || e);
+  }
+}
+
+/** Reaperturas de una consulta, de la mas nueva a la mas vieja. */
+function reaperturasDe(tipo, consultaId) {
+  return reaperturasMap[`${tipo}:${consultaId}`] || [];
+}
+
 async function cargarMisConsultas() {
   const cont = document.getElementById('misConsultasList');
   cont.innerHTML = '<div class="empty">Cargando...</div>';
@@ -2567,7 +2855,7 @@ async function cargarMisConsultas() {
     } else {
       filtro = `vendedor_id=eq.${currentUser.id}&`;
     }
-    const data = await sbFetch(`consultas_0km?${filtro}order=created_at.desc`);
+    const [data] = await Promise.all([sbFetch(`consultas_0km?${filtro}order=created_at.desc`), cargarReaperturas()]);
     const ids = (data || []).map(c => c.id);
     let items = [];
     if (ids.length > 0) items = await sbFetch(`consultas_0km_items?consulta_id=in.(${ids.join(',')})&order=orden.asc`);
@@ -2705,7 +2993,7 @@ async function cargarConsultasAdmin() {
   const cont = document.getElementById('adminConsultasList');
   cont.innerHTML = '<div class="empty">Cargando...</div>';
   try {
-    const data = await sbFetch('consultas_0km?order=created_at.desc');
+    const [data] = await Promise.all([sbFetch('consultas_0km?order=created_at.desc'), cargarReaperturas()]);
     const ids = (data || []).map(c => c.id);
     let items = [];
     if (ids.length > 0) items = await sbFetch(`consultas_0km_items?consulta_id=in.(${ids.join(',')})&order=orden.asc`);
@@ -2977,6 +3265,240 @@ function bloqueQueHay(c, it) {
       <div style="font-size:12px; margin-bottom:4px"><strong>🚚 En reparto (${q.totalReparto}):</strong></div>
       <div style="margin-bottom:8px">${chips(q.otrosColoresReparto.concat(nExactoRep ? [{ color: color, n: nExactoRep }] : []), 'ninguna unidad en reparto.')}</div>
       ${histTxt ? `<div style="font-size:12px; background:var(--vw-grey-1); border-radius:6px; padding:8px 10px">📅 ${histTxt}</div>` : ''}
+    </div>`;
+}
+
+/**
+ * Bloque "pago por transferencia" del detalle de una consulta.
+ *
+ * Lo ven los dos: el vendedor, el monto y cuanto cuesta en pesos (para que entienda por
+ * que el precio no puede ser el mismo y empuje el pago por SICE); el admin, ademas, a
+ * cuanto descuento extra equivale y con que precio efectivo se queda.
+ *
+ * El costo se recalcula SIEMPRE con la alicuota de hoy. Si la consulta se cargo con otra
+ * (cambio el SIRCREB en el medio), se avisa: el numero que decide es el de hoy.
+ */
+/**
+ * Referencia de lo que ya se habia respondido, cuando la consulta se reabrio porque el
+ * cliente pidio pagar una parte por transferencia.
+ *
+ * Pedido de Fer: al reanalizar de cero quiere ver contra que esta comparando — que precio
+ * le habia pasado antes y que ganancia le quedaba con ESE precio, antes del pedido nuevo.
+ *
+ * La ganancia NO se guarda en la base: se recalcula en vivo con la ganancia de hoy, igual
+ * que el bloque de "ultimos precios autorizados". Guardarla implicaria dejar el margen en
+ * una tabla que se lee con la anon key, y eso rompe el blindaje del costo. Como
+ * contrapartida, si cambio la lista en el medio el numero se mueve — por eso va rotulado
+ * con la fecha de aquella respuesta.
+ */
+function bloqueReaperturas(c, it, tipo, showGcia) {
+  const rs = reaperturasDe(tipo, c.id);
+  if (!rs.length) return '';
+  const ESTADO_LBL = { aceptada: 'Aceptada', rechazada: 'Mejor precio', contraoferta: 'Contraoferta',
+    en_gestion: 'En gestión', pendiente: 'Pendiente' };
+  const filas = rs.map(r => {
+    const precio = Number(r.precio_previo) || 0;
+    let gciaHtml = '';
+    if (showGcia && precio > 0) {
+      let gcia = null;
+      if (tipo === '0km') {
+        const a = analisisAdminVivo({ modelo: it ? it.modelo : null, precio_pedido: precio, chasis: [],
+          transferencia_monto: Number(r.transferencia_monto_previo) || 0 });
+        gcia = a ? a.gcia_resultante : null;
+      } else {
+        gcia = margenUsadoReapertura(c, precio, Number(r.transferencia_monto_previo) || 0);
+      }
+      if (gcia != null) {
+        gciaHtml = ` · te quedaba <strong style="color:${gcia >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPct(gcia)}</strong>`;
+      }
+    }
+    const previa = Number(r.transferencia_monto_previo) || 0;
+    return `<div style="padding:6px 0; border-bottom:1px dashed #fed7aa; font-size:12px">
+      <div>${fmtDate(r.respuesta_previa_at || r.created_at)} · <strong>${ESTADO_LBL[r.estado_previo] || r.estado_previo || '—'}</strong>${precio > 0 ? ` a <strong>${fmtMoney(precio)}</strong>` : ''}${gciaHtml}</div>
+      ${previa > 0 ? `<div class="muted">Esa respuesta ya contemplaba ${fmtMoney(previa)} por transferencia.</div>` : ''}
+      ${(r.observaciones_previas || '').trim() ? `<div class="muted" style="white-space:pre-wrap">"${escapeHtml(r.observaciones_previas)}"</div>` : ''}
+      <div class="muted">Reabierta ${fmtDate(r.created_at)} por ${escapeHtml(r.solicitada_por_nombre || '—')}: pide ${fmtMoney(r.transferencia_monto)} por transferencia.</div>
+    </div>`;
+  }).join('');
+  return `
+    <div class="detalle-section">
+      <h4>🔁 Reabierta — lo que le habías pasado antes</h4>
+      <div style="background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:8px 12px">
+        ${filas}
+        <div class="muted" style="font-size:11px; padding-top:6px">${showGcia ? 'La ganancia está recalculada con la de hoy, al precio de aquella respuesta. ' : ''}El análisis de abajo está rehecho de cero con la transferencia adentro.</div>
+      </div>
+    </div>`;
+}
+
+/** Ganancia sobre costo de un usado a un precio dado, neta del costo de la transferencia. */
+function margenUsadoReapertura(c, precio, transferencia) {
+  const u = getUsadoStock(c.usadoid);
+  if (!usadosCostoOk || !u) return null;
+  const costo = Number(u.costo_toma) || 0;
+  if (!costo) return null;
+  const neto = precio - (transferencia > 0 ? costoTransferencia(transferencia) : 0);
+  const m = margenUsado(neto, costo);
+  return m ? m.sobreCosto : null;
+}
+
+/**
+ * Formulario del vendedor para reabrir una consulta ya respondida porque el cliente
+ * ahora pide pagar una parte por transferencia. Es lo unico que se puede cambiar al
+ * reabrir: para pedir otro precio se carga una consulta nueva.
+ */
+function renderPedirTransferencia(c, tipo) {
+  const esVendedor = currentMode === 'vendedor' || currentMode === 'gerente';
+  if (!esVendedor) return '';
+  if (!['aceptada', 'rechazada', 'contraoferta'].includes(c.estado)) return '';
+  const it = tipo === '0km' ? (c.items || [])[0] : c;
+  const yaTiene = Number(it && it.transferencia_monto) || 0;
+  return `
+    <div class="detalle-section">
+      <h4>💸 El cliente ahora quiere pagar una parte por transferencia</h4>
+      <p class="muted" style="font-size:12px; margin-bottom:8px">
+        ${yaTiene > 0
+          ? `Esta consulta ya se respondió contemplando ${fmtMoney(yaTiene)} por transferencia. Si el monto cambió, cargá el nuevo.`
+          : 'Se respondió dando por hecho que paga todo por SICE o con cheque a la orden.'}
+        Cargá el monto exacto y la consulta vuelve a la gerencia para que la analice de nuevo.
+      </p>
+      <div class="field">
+        <input id="reabrirMonto" type="text" inputmode="numeric" placeholder="$0"
+          oninput="onReabrirMontoInput(this)"
+          style="font-size:18px; font-weight:600; padding:12px">
+      </div>
+      <div id="reabrirHint" class="field-hint" style="font-size:12px; margin-top:6px"></div>
+      <button class="btn-next" style="margin-top:10px" onclick="solicitarTransferencia(${c.id}, '${tipo}')">
+        Pedir de nuevo con transferencia
+      </button>
+    </div>`;
+}
+
+function onReabrirMontoInput(el) {
+  const raw = el.value.replace(/[^\d]/g, '');
+  el.value = raw ? '$' + parseInt(raw, 10).toLocaleString('es-AR') : '';
+  const hint = document.getElementById('reabrirHint');
+  if (!hint) return;
+  const monto = raw ? parseInt(raw, 10) : 0;
+  hint.innerHTML = monto > 0
+    ? `Costo de cobrarlo así: <strong style="color:var(--red)">${fmtMoney(costoTransferencia(monto))}</strong> <span class="muted">(${fmtPct(alicuotaTransferencia())} de alícuota)</span>`
+    : '';
+}
+
+/**
+ * Reabre la consulta: congela la respuesta que habia, guarda el monto nuevo y la manda
+ * de vuelta a pendiente. Los contadores de recordatorio se ponen en cero y `reabierta_at`
+ * hace que el "sin responder" cuente desde ahora y no desde que se cargo originalmente.
+ */
+async function solicitarTransferencia(consultaId, tipo) {
+  const el = document.getElementById('reabrirMonto');
+  const monto = el ? parseInt((el.value || '').replace(/[^\d]/g, ''), 10) : NaN;
+  if (!monto || monto <= 0) { alert('Cargá el monto que va por transferencia.'); return; }
+
+  const lista = tipo === '0km' ? myConsultas : misConsultasUsados;
+  const c = (lista || []).find(x => x.id === consultaId);
+  if (!c) { alert('No se encontró la consulta. Recargá la pantalla.'); return; }
+  const it = tipo === '0km' ? (c.items || [])[0] : c;
+
+  // Precio que se le habia pasado al cliente: si la aceptaron, el que pidio; si no, el
+  // que autorizo la gerencia.
+  const precioPrevio = c.estado === 'aceptada'
+    ? (Number(it && it.precio_pedido) || null)
+    : (Number(c.precio_max_admin) || null);
+  const tope = Number(it && it.precio_pedido) || precioPrevio || 0;
+  if (tope > 0 && monto > tope) {
+    if (!confirm(`El monto por transferencia (${fmtMoney(monto)}) es mayor que el precio del auto (${fmtMoney(tope)}). ¿Seguir igual?`)) return;
+  }
+  if (!confirm(`¿Volver a pedir la consulta contemplando ${fmtMoney(monto)} por transferencia?\n\nVuelve a la gerencia y se analiza de nuevo. La respuesta anterior queda como referencia.`)) return;
+
+  showLoading('Enviando...');
+  try {
+    const tablaCab = tipo === '0km' ? 'consultas_0km' : 'consultas_usados';
+    await sbFetch('consultas_reaperturas', {
+      method: 'POST',
+      body: JSON.stringify({
+        tipo,
+        consulta_id: consultaId,
+        motivo: 'transferencia',
+        solicitada_por_id: currentUser.id,
+        solicitada_por_nombre: currentUser.nombre || currentUser.usuario,
+        estado_previo: c.estado,
+        disponibilidad_previa: c.disponibilidad || null,
+        precio_previo: precioPrevio,
+        observaciones_previas: c.observaciones_admin || null,
+        respuesta_previa_at: c.admin_respuesta_at || null,
+        resultado_venta_previo: c.resultado_venta || null,
+        transferencia_monto_previo: (it && it.transferencia_monto) || null,
+        transferencia_monto: monto,
+        alicuota: alicuotaTransferencia()
+      })
+    });
+
+    const datosTransf = {
+      transferencia_monto: monto,
+      transferencia_alicuota: alicuotaTransferencia(),
+      transferencia_costo: Math.round(costoTransferencia(monto))
+    };
+    if (tipo === '0km' && it && it.id) {
+      await sbFetch(`consultas_0km_items?id=eq.${it.id}`, { method: 'PATCH', body: JSON.stringify(datosTransf) });
+    }
+
+    await sbFetch(`${tablaCab}?id=eq.${consultaId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ...(tipo === 'usado' ? datosTransf : {}),
+        estado: 'pendiente',
+        // La respuesta vieja ya quedo congelada en consultas_reaperturas: se limpia para
+        // que la pantalla no muestre una respuesta que ya no aplica.
+        precio_max_admin: null,
+        observaciones_admin: null,
+        admin_respuesta_at: null,
+        admin_user_id: null,
+        disponibilidad: null,
+        resultado_venta: null,
+        motivo_no_venta: null,
+        resultado_venta_at: null,
+        reabierta_at: new Date().toISOString(),
+        recordatorios_enviados: 0,
+        ultimo_recordatorio_at: null
+      })
+    });
+
+    notifyEvent(tipo === '0km' ? 'consulta_0km_reabierta' : 'consulta_usado_reabierta', consultaId)
+      .catch(e => console.error(e));
+
+    closeModal();
+    if (tipo === '0km') await cargarMisConsultas(); else await cargarMisConsultasUsados();
+    hideLoading();
+    showToast('Consulta reabierta con la transferencia');
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    alert('Error al reabrir: ' + (e.message || e));
+  }
+}
+
+function bloqueTransferencia(it, showGcia, precioRef) {
+  const monto = Number(it && it.transferencia_monto) || 0;
+  if (monto <= 0) return '';
+  const costo = costoTransferencia(monto);
+  const precio = Number(precioRef != null ? precioRef : it.precio_pedido) || 0;
+  const alicHoy = alicuotaTransferencia();
+  const alicVieja = Number(it.transferencia_alicuota) || 0;
+  const cambio = alicVieja > 0 && Math.abs(alicVieja - alicHoy) > 1e-9;
+  const pl = Number(it.precio_lista) || 0;
+  const dtoTr = pl > 0 ? costo / pl : null;
+  return `
+    <div style="background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:10px 12px; margin-top:10px">
+      <div style="font-size:12px; font-weight:700; color:#9a3412; margin-bottom:6px">💸 PAGA UNA PARTE POR TRANSFERENCIA</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:13px">
+        <div><span class="muted">Monto por transferencia:</span> <strong>${fmtMoney(monto)}</strong></div>
+        <div><span class="muted">Costo de impuestos:</span> <strong style="color:var(--red)">${fmtMoney(costo)}</strong></div>
+        ${precio > 0 ? `<div><span class="muted">Entran de verdad:</span> <strong>${fmtMoney(precio - costo)}</strong></div>` : ''}
+        ${showGcia && dtoTr != null ? `<div><span class="muted">Equivale a dto extra:</span> <strong style="color:var(--red)">${fmtPct(dtoTr)}</strong></div>` : ''}
+      </div>
+      <div class="muted" style="font-size:11px; margin-top:6px">${textoAlicuota()} sobre ${fmtMoney(monto)}${showGcia ? ' · la ganancia de arriba ya lo tiene descontado' : ''}</div>
+      ${cambio ? `<div style="font-size:11px; color:#92400e; margin-top:4px">Se cargó con ${fmtPct(alicVieja)}; hoy la alícuota es ${fmtPct(alicHoy)} y es la que se está usando.</div>` : ''}
+      ${avisoAlicuota()}
     </div>`;
 }
 
@@ -3264,13 +3786,15 @@ function abrirDetalle(consultaId, editMode = false) {
           <div><span class="muted">Precio Baratito hoy:</span> <strong>${fmtMoney(refIt.oferta)}</strong></div>
           <div><span class="muted">Precio de lista:</span> <strong>${fmtMoney(refIt.precio_lista)}</strong></div>
           ${showGcia ? `<div><span class="muted">Gcia a ese precio:</span> <strong style="color:${(refIt.gcia||0) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPct(refIt.gcia)}</strong></div>` : ''}
-        </div>`
+        </div>
+        ${bloqueTransferencia(it, showGcia, refIt.oferta)}`
       : `<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; font-size:13px">
           <div><span class="muted">Precio pedido:</span> <strong>${fmtMoney(it.precio_pedido)}</strong></div>
           <div><span class="muted">Oferta vigente:</span> <strong>${fmtMoney(it.oferta_vigente_min)}</strong></div>
           <div><span class="muted">Dto extra pedido:</span> <strong>${fmtPct(it.dto_extra_pedido)}</strong></div>
           ${showGcia ? `<div><span class="muted">Gcia resultante:</span> <strong style="color:${(it.gcia_resultante||0) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPct(it.gcia_resultante)}</strong></div>` : ''}
-        </div>`;
+        </div>
+        ${bloqueTransferencia(it, showGcia)}`;
     // Últimos precios autorizados de ESTE modelo (solo admin). Referencia para decidir:
     // recorre todas las consultas ya resueltas del mismo modelo y toma el precio que se
     // autorizó en cada una — aceptada → precio_pedido; rechazada/contraoferta → precio_max_admin.
@@ -3441,6 +3965,7 @@ function abrirDetalle(consultaId, editMode = false) {
         <div class="kv"><span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${txtEstado(c.estado)}</span></span></div>
         <div class="kv"><span class="k">Origen</span><span class="v">${ORIGEN_LABEL[c.origen] || ORIGEN_LABEL.stock}</span></div>
       </div>
+      ${bloqueReaperturas(c, (c.items || [])[0], '0km', showGcia)}
       <div class="detalle-section">
         <h4>Cliente</h4>
         <div class="kv">
@@ -3490,6 +4015,7 @@ function abrirDetalle(consultaId, editMode = false) {
           ` : ''}
         </div>
       ` : ''}
+      ${renderPedirTransferencia(c, '0km')}
       ${renderResultadoVentaSection(c)}
     </div>
     <div class="modal-footer">${footerHtml}</div>
@@ -3542,8 +4068,19 @@ function onAdminPrecioMaxInput(consultaId, el) {
   const precio_lista = ref.precio_lista;
   const gcia_vigente = ref.gcia;
   const dto = (oferta_vigente - precio) / precio_lista;
-  const gcia = (gcia_vigente || 0) - dto;
-  hint.innerHTML = `Con ${fmtMoney(precio)}: dto extra ${fmtPct(dto)} · <strong style="color:${gcia>=0?'var(--green)':'var(--red)'}">gcia ${fmtPct(gcia)}</strong>`;
+  // Si una parte se cobra por transferencia, el precio que se autoriza NO es lo que
+  // entra: hay que descontarle la alicuota del mes sobre el monto transferido. Sin
+  // esto el hint muestra una ganancia que no existe.
+  const montoTr = Number(it.transferencia_monto) || 0;
+  const costoTr = montoTr > 0 ? costoTransferencia(montoTr) : 0;
+  const dtoTr = costoTr > 0 ? costoTr / precio_lista : 0;
+  const gcia = (gcia_vigente || 0) - dto - dtoTr;
+  const colorG = gcia >= 0 ? 'var(--green)' : 'var(--red)';
+  hint.innerHTML = costoTr > 0
+    ? `Con ${fmtMoney(precio)}: dto extra ${fmtPct(dto)} + ${fmtPct(dtoTr)} de la transferencia ` +
+      `(${fmtMoney(costoTr)}) · entran ${fmtMoney(precio - costoTr)} · ` +
+      `<strong style="color:${colorG}">gcia ${fmtPct(gcia)}</strong>`
+    : `Con ${fmtMoney(precio)}: dto extra ${fmtPct(dto)} · <strong style="color:${colorG}">gcia ${fmtPct(gcia)}</strong>`;
 }
 
 // ---------- Resultado de venta (lo marca el vendedor) ----------
@@ -3948,8 +4485,15 @@ function analisisUsadoHtml(c, precioPedido) {
     </div>`;
   }
 
+  // Si una parte se cobra por transferencia, esa plata deja impuestos al entrar y al
+  // salir: no la cobramos. El margen con el precio pedido se calcula sobre lo que entra
+  // de verdad (pedido - costo de la transferencia); el publicado se compara sin tocar,
+  // porque es el precio de vidriera y no tiene forma de pago asociada.
+  const transferencia = Number(c.transferencia_monto) || 0;
+  const costoTr = transferencia > 0 ? costoTransferencia(transferencia) : 0;
+  const pedidoNeto = pedido - costoTr;
   const mAct = margenUsado(publicado, costo);
-  const mPed = margenUsado(pedido, costo);
+  const mPed = margenUsado(pedidoNeto, costo);
   const fila = (lbl, precio, m) => `
     <div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px; padding:6px 0">
       <span style="font-size:13px; color:var(--vw-grey-4)">${lbl}</span>
@@ -3965,7 +4509,7 @@ function analisisUsadoHtml(c, precioPedido) {
   let conArreglosHtml = '';
   if (arreglos > 0) {
     const costoTotal = costo + arreglos;
-    const mPedArr = margenUsado(pedido, costoTotal);
+    const mPedArr = margenUsado(pedidoNeto, costoTotal);
     conArreglosHtml = `
       <div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--vw-grey-2)">
         <div style="font-size:11px; color:var(--vw-grey-3); margin-bottom:2px">
@@ -3986,7 +4530,12 @@ function analisisUsadoHtml(c, precioPedido) {
         <span>Costo de toma (Oversoft)</span><strong>${fmtMoney(costo)}</strong>
       </div>
       ${fila('Precio publicado hoy', publicado, mAct)}
-      ${fila('Con el precio pedido', pedido, mPed)}
+      ${fila(costoTr > 0 ? 'Con el precio pedido, ya neto' : 'Con el precio pedido', costoTr > 0 ? pedidoNeto : pedido, mPed)}
+      ${costoTr > 0 ? `<div style="font-size:12px; color:#9a3412; padding:4px 0">
+        💸 Pide <strong>${fmtMoney(transferencia)}</strong> por transferencia: se van
+        <strong style="color:var(--red)">${fmtMoney(costoTr)}</strong> en impuestos
+        <span class="muted">(${fmtPct(alicuotaTransferencia())})</span>, así que de ${fmtMoney(pedido)} entran ${fmtMoney(pedidoNeto)}.
+      </div>` : ''}
       ${caida !== null ? `<div style="font-size:12px; color:var(--vw-grey-4); padding-top:6px; border-top:1px solid #bae6fd">
         Resigna <strong style="color:var(--red)">${fmtMoney(caida)}</strong> de ganancia</div>` : ''}
       ${conArreglosHtml}
@@ -4049,6 +4598,10 @@ async function showNuevaConsultaUsado() {
   formUsado = {
     usadoid: null,
     precioPedido: null,
+    // 'no' | 'si' + monto exacto: si el cliente pide pagar una parte por transferencia
+    // bancaria en vez de depositar en la cuenta recaudadora.
+    pagaTransferencia: null,
+    transferenciaMonto: null,
     tipoCliente: null,
     cliNombre: '', cliApellido: '',
     observaciones: ''
@@ -4216,6 +4769,75 @@ function onUsadoPrecioInput(el) {
   if (btn) btn.disabled = !formUsado.precioPedido;
 }
 
+// ----- Paso: pago por transferencia -----
+// Mismo criterio que en 0km: lo normal es que el cliente deposite en la cuenta
+// recaudadora o pague con cheque a la orden. Si transfiere, la plata entra y sale de
+// nuestra cuenta y deja impuestos en el camino, y eso sale de la ganancia del usado.
+STEP_RENDERERS['u-transferencia'] = () => ({
+  body: `
+    <h2>¿Una parte se paga por transferencia?</h2>
+    <p class="step-hint">Si el cliente pide transferir una parte a la cuenta del concesionario, decilo acá: <strong>tiene un costo de impuestos</strong> que hay que contemplar antes de dar el precio.</p>
+    <div class="opt-list">
+      <div class="opt ${formUsado.pagaTransferencia === 'no' ? 'selected' : ''}" onclick="selectPagaTransferenciaUsado('no')">
+        <span class="opt-icon">🏦</span> No, paga sin transferencia
+      </div>
+      <div class="opt ${formUsado.pagaTransferencia === 'si' ? 'selected' : ''}" onclick="selectPagaTransferenciaUsado('si')">
+        <span class="opt-icon">💸</span> Sí, una parte por transferencia
+      </div>
+    </div>
+  `,
+  footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
+});
+
+STEP_RENDERERS['u-transferencia-monto'] = () => ({
+  body: `
+    <h2>¿Cuánto por transferencia?</h2>
+    <p class="step-hint">Anotá el monto <strong>exacto</strong>. Es sobre esa plata que se paga el impuesto.</p>
+    <div class="field">
+      <input id="usadoTransfInput" type="text" inputmode="numeric" placeholder="$0"
+        value="${formUsado.transferenciaMonto ? '$' + Number(formUsado.transferenciaMonto).toLocaleString('es-AR') : ''}"
+        oninput="onUsadoTransferenciaInput(this)"
+        style="width:100%; padding:14px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:20px; font-weight:600; letter-spacing:0.5px">
+      <div id="usadoTransfHint" class="field-hint" style="margin-top:8px"></div>
+    </div>
+    ${avisoAlicuota()}
+  `,
+  footer: `
+    <button class="btn-back" onclick="wizardBack()">Atrás</button>
+    <button class="btn-next" id="btnNext" ${formUsado.transferenciaMonto ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>
+  `,
+  onMount: () => {
+    const el = document.getElementById('usadoTransfInput');
+    if (el) { el.focus(); if (el.value) onUsadoTransferenciaInput(el); }
+  }
+});
+
+function selectPagaTransferenciaUsado(v) {
+  formUsado.pagaTransferencia = v;
+  if (v === 'no') formUsado.transferenciaMonto = null;
+  nextStep();
+}
+
+// Igual que en 0km: el vendedor ve el monto y el costo en pesos, nunca la ganancia.
+function onUsadoTransferenciaInput(el) {
+  const raw = el.value.replace(/[^\d]/g, '');
+  formUsado.transferenciaMonto = raw ? parseInt(raw, 10) : null;
+  el.value = raw ? '$' + parseInt(raw, 10).toLocaleString('es-AR') : '';
+  const hint = document.getElementById('usadoTransfHint');
+  if (hint) {
+    const monto = formUsado.transferenciaMonto || 0;
+    if (monto <= 0) hint.textContent = '';
+    else if (formUsado.precioPedido && monto > formUsado.precioPedido) {
+      hint.innerHTML = `<span style="color:var(--red)">Ese monto es mayor que el precio pedido (${fmtMoney(formUsado.precioPedido)}). Revisalo.</span>`;
+    } else {
+      hint.innerHTML = `Costo de cobrarlo así: <strong style="color:var(--red)">${fmtMoney(costoTransferencia(monto))}</strong> ` +
+        `<span class="muted">(${fmtPct(alicuotaTransferencia())} sobre ${fmtMoney(monto)})</span>`;
+    }
+  }
+  const btn = document.getElementById('btnNext');
+  if (btn) btn.disabled = !formUsado.transferenciaMonto;
+}
+
 // ----- Paso: tipo de cliente (particular / reventa) -----
 // Pedido de Fer el 27/08/2026: antes de decidir el precio quiere saber si el que
 // compra es un particular o un reventa. No es un dato de color: contra un reventa
@@ -4332,6 +4954,9 @@ async function submitConsultaUsado() {
   const u = getUsadoStock(formUsado.usadoid);
   if (!u) { alert('Se perdió la unidad elegida. Volvé atrás y elegila de nuevo.'); return; }
   if (!formUsado.precioPedido) { alert('Falta el precio pedido'); return; }
+  if (formUsado.pagaTransferencia === 'si' && !formUsado.transferenciaMonto) {
+    alert('Dijiste que una parte va por transferencia pero no cargaste el monto'); return;
+  }
   if (!formUsado.tipoCliente) { alert('Falta decir si es venta a particular o a un reventa'); return; }
   if (currentMode === 'gerente' && !gerenteVendedorActivo) { alert('Elegí el vendedor'); return; }
 
@@ -4358,6 +4983,11 @@ async function submitConsultaUsado() {
       // el precio, el pedido sigue siendo legible ("pidio X sobre Y").
       precio_publicado: u.precio_venta || null,
       precio_pedido: formUsado.precioPedido,
+      // Parte que el cliente pide pagar por transferencia. La alicuota queda como
+      // snapshot; el analisis del admin recalcula con la de hoy.
+      transferencia_monto: formUsado.transferenciaMonto || null,
+      transferencia_alicuota: formUsado.transferenciaMonto ? alicuotaTransferencia() : null,
+      transferencia_costo: formUsado.transferenciaMonto ? Math.round(costoTransferencia(formUsado.transferenciaMonto)) : null,
       tipo_cliente: formUsado.tipoCliente,
       cliente_nombre: (formUsado.cliNombre || '').trim() || null,
       cliente_apellido: (formUsado.cliApellido || '').trim() || null,
@@ -4394,7 +5024,8 @@ async function cargarMisConsultasUsados() {
     if (currentMode === 'gerente' && gerenteTab === 'respondidas') filtro = 'estado=neq.pendiente&';
     else if (currentMode === 'gerente') filtro = `cargada_por_id=eq.${currentUser.id}&`;
     else filtro = `vendedor_id=eq.${currentUser.id}&`;
-    misConsultasUsados = await sbFetch(`consultas_usados?${filtro}order=created_at.desc`) || [];
+    const [filas] = await Promise.all([sbFetch(`consultas_usados?${filtro}order=created_at.desc`), cargarReaperturas()]);
+    misConsultasUsados = filas || [];
     if (currentMode === 'gerente' && gerenteTab === 'respondidas') poblarFiltroVendedoresUsados();
     renderVendedorListUsados();
   } catch (e) {
@@ -4472,7 +5103,8 @@ async function cargarConsultasAdminUsados() {
     // (el detalle avisa que no puede calcular).
     await Promise.all([
       sbFetch('consultas_usados?order=created_at.desc').then(d => { adminConsultasUsados = d || []; }),
-      cargarUsadosStock(true).catch(e => console.error('[usados] stock:', e))
+      cargarUsadosStock(true).catch(e => console.error('[usados] stock:', e)),
+      cargarReaperturas()
     ]);
     renderAdminListUsados();
   } catch (e) {
@@ -4528,6 +5160,7 @@ function abrirDetalleUsado(consultaId) {
       <span class="k">Precio pedido</span><span class="v"><strong>${fmtMoney(ped)}</strong>${pub > ped && pub ? ` · −${fmtMoney(pub-ped)} (${(((pub-ped)/pub)*100).toFixed(1)}%)` : ''}</span>
     </div>
     ${avisoPrecioCambio}
+    ${bloqueTransferencia(c, isAdmin)}
     ${isAdmin ? analisisUsadoHtml(c, ped) : ''}
     ${isAdmin ? historialUsadoHtml(c) : ''}
   `;
@@ -4582,6 +5215,7 @@ function abrirDetalleUsado(consultaId) {
           <span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${txtEstado(c.estado)}</span></span>
         </div>
       </div>
+      ${bloqueReaperturas(c, c, 'usado', isAdmin)}
       <div class="detalle-section">
         <h4>Cliente</h4>
         <div class="kv">
@@ -4612,6 +5246,7 @@ function abrirDetalleUsado(consultaId) {
               <div style="white-space:pre-wrap; padding:8px; background:var(--vw-grey-1); border-radius:6px">${escapeHtml(c.observaciones_admin)}</div>
             </div>` : ''}
         </div>` : ''}
+      ${renderPedirTransferencia(c, 'usado')}
       ${renderResultadoVentaUsadoSection(c)}
     </div>
     <div class="modal-footer">${footerHtml}</div>
@@ -4641,9 +5276,16 @@ function onUsadoAdminPrecioInput(consultaId, el) {
   if (!raw || !u || !usadosCostoOk) { hint.textContent = ''; return; }
   const costo = Number(u.costo_toma) || 0;
   if (!costo) { hint.textContent = 'Sin costo de toma en Oversoft: no se puede calcular el margen.'; return; }
-  const m = margenUsado(parseInt(raw, 10), costo);
+  const precio = parseInt(raw, 10);
+  // El precio que se autoriza no es lo que entra si una parte viene por transferencia.
+  const transferencia = Number(c.transferencia_monto) || 0;
+  const costoTr = transferencia > 0 ? costoTransferencia(transferencia) : 0;
+  const m = margenUsado(precio - costoTr, costo);
   if (!m) { hint.textContent = ''; return; }
-  hint.innerHTML = `Con ese precio: <strong style="color:${colorMargen(m)}">${(m.sobreCosto*100).toFixed(1)}%</strong> de margen (${fmtMoney(m.pesos)})`;
+  hint.innerHTML = costoTr > 0
+    ? `Con ese precio entran ${fmtMoney(precio - costoTr)} (se van ${fmtMoney(costoTr)} por la transferencia): ` +
+      `<strong style="color:${colorMargen(m)}">${(m.sobreCosto*100).toFixed(1)}%</strong> de margen (${fmtMoney(m.pesos)})`
+    : `Con ese precio: <strong style="color:${colorMargen(m)}">${(m.sobreCosto*100).toFixed(1)}%</strong> de margen (${fmtMoney(m.pesos)})`;
 }
 
 // ---------- Acciones del admin ----------

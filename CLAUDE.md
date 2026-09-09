@@ -459,3 +459,93 @@ Si la Edge `stock-disponible` falla, antes caía al espejo. Ese camino ya venía
 Quedaron huérfanos y se borraron `parseCSV`, `parseCSVLine`, `parseMoney`, `parsePct`, `cargarStockCSV`, `cargarReparto` y `stockLimMap`.
 
 ⚠️ `repartoMap` queda **siempre vacío** (el reparto viene por `repartoUnidades`). El bloque de `getModelosDisponibles` que lo recorre no se borró, por si alguna vez vuelve a alimentarse.
+
+
+## Pago por TRANSFERENCIA — el costo que se come la ganancia (2026-09-09)
+
+Pedido de Fer: *"a veces los vendedores me dicen 'el cliente necesita pagar por transferencia'. Necesito que anote exacto qué monto pide por transferencia y que eso se contemple en la consulta, porque es una pérdida mayor."*
+
+### La regla de negocio
+
+El cliente **tiene** que pagar en la cuenta recaudadora de VW (**SICE**): depósito en efectivo, o cheque a la orden (endosable) que el concesionario endosa a favor de esa cuenta. Así la plata **nunca pasa por nuestro banco** — un intermediario menos, cero impuestos.
+
+Si en cambio transfiere a la cuenta del concesionario, la plata entra y después sale hacia SICE:
+
+| concepto | alícuota |
+|---|---|
+| Impuesto a los débitos y créditos — entrada | 0,60% |
+| Impuesto a los débitos y créditos — salida | 0,60% |
+| SIRCREB (IIBB) — **cambia todos los meses** | 0,30% en sep-26 |
+| **total** | **1,50%** |
+
+Es plata que no cobramos: **equivale a haber vendido más barato**. Con oferta 31.000.000, el vendedor pide 30.000.000 y avisa que 10.000.000 van por transferencia → el costo es 150.000 → es como vender a **29.850.000**.
+
+### Dónde se carga el SIRCREB
+
+Lo pasa **Valeria Reyna** (gerenta administrativa) a principio de mes y lo carga Fer en el panel de Baratito: **precios.titogonzalez.online/precios → "🏦 SIRCREB del mes"** (`CostosFinancierosAdmin.tsx` + `/api/costos-financieros` + `src/lib/costosFinancieros.ts` en portal-precios).
+
+Tabla `costos_financieros_mes`: una fila por mes (`periodo` = primer día), `sircreb_pct` y `deb_cred_pct` **en fracción** (0,003 y 0,012), igual que el resto de los porcentajes del stack.
+
+**Si el mes en curso no está cargado, se usa la última fila anterior y todo lo que la consume muestra el cartel de desactualizado** — en el panel y adentro de cada consulta. Decisión explícita: seguir calculando con el número del mes pasado antes que dejar de calcular, siempre que el cartel se vea.
+
+RLS: **habilitada** con policy sólo de `SELECT`. La anon key lee (la usa `index.html`), pero **no puede escribir** — verificado, un POST con anon da 401. Se escribe únicamente desde portal-precios con la `service_role`.
+
+**Aviso del día 1**: cron diario de Vercel `/api/cron/sircreb` (12:00 UTC = 9 hs ART) → Edge `notify-sircreb-pendiente` (vive en el repo del **tasador**) → WhatsApp a `fngonzalez`. Insiste cada 2 días hasta que se carga; al cargarse el aviso se corta solo, sin marcar nada. Usa el template ya aprobado `precios_actualizados` (una sola variable) y `costos_financieros_avisos` para no repetir. Env `SIRCREB_DESTINATARIOS` para sumar gente.
+
+### Cómo entra en el análisis
+
+`calcularAnalisisUnidad()` pasó a ser un wrapper: `_analisisUnidadBase()` hace la cuenta de siempre y arriba se aplica el costo de la forma de pago. **`dto_extra_pedido` NO se toca** (sigue siendo el descuento de precio puro, comparable contra las consultas viejas); el costo entra como un descuento aparte:
+
+```
+transferencia_costo = transferencia_monto × alícuota
+dto_transferencia   = transferencia_costo / precio_lista
+dto_extra_total     = dto_extra_pedido + dto_transferencia
+gcia_resultante     = gcia_vigente_min − dto_extra_total      ← la que decide
+precio_efectivo     = precio_pedido − transferencia_costo
+```
+
+Da **exactamente lo mismo** que haber vendido al precio efectivo (verificado en el smoke test). `gcia_resultante` se guarda ya neta.
+
+⚠️ La alícuota que manda es **la de HOY**, no la que se guardó al cargar la consulta. La guardada (`transferencia_alicuota`) es un snapshot para poder releer la consulta dentro de unos meses; si difiere de la de hoy, el bloque lo dice.
+
+### Qué ve cada uno
+
+- **Vendedor**: el monto que cargó y **el costo en pesos**. Nada de ganancia. Decisión de Fer: saber que cobrar 10.000.000 por transferencia cuesta 150.000 alcanza para que entienda por qué el precio no puede ser el mismo y para que empuje el pago por SICE, y no revela ningún margen.
+- **Admin**: además, a cuánto descuento extra equivale, cuánto entra de verdad, y la ganancia ya neta. El hint del input "mejor precio máximo" también descuenta el costo — sin eso mostraba una ganancia que no existe.
+
+### Reapertura de una consulta ya respondida
+
+Si el cliente pide la transferencia **después** de que la consulta se respondió, el vendedor la reabre desde el detalle (`renderPedirTransferencia` → `solicitarTransferencia`). Sólo se puede cambiar eso: para pedir otro precio se carga una consulta nueva.
+
+Al reabrir:
+1. La respuesta anterior se **congela** en `consultas_reaperturas` (estado, precio que se pasó, comentario, fecha, y el monto de transferencia que hubiera). Una tabla para 0km y usados, con `tipo` — los `id` de las dos tablas se pisan.
+2. La consulta vuelve a `pendiente`, se limpian los campos de respuesta, `recordatorios_enviados` va a 0 y se sella `reabierta_at`.
+3. Sale WhatsApp con el evento nuevo `consulta_0km_reabierta` / `consulta_usado_reabierta`, que reusa el template de consulta nueva y mete `🔁 REABIERTA — pide $X por transferencia` adentro de `{{1}}` (mismo truco que el recordatorio de "sin responder").
+
+El admin ve arriba de todo el bloque **"🔁 Reabierta — lo que le habías pasado antes"**: precio anterior, **la ganancia que le quedaba con ese precio** y el comentario que había dejado. Abajo, el análisis rehecho de cero con la transferencia adentro.
+
+⚠️ **La ganancia anterior NO se guarda en la base.** Se recalcula en vivo con la ganancia de hoy, igual que el bloque de "últimos precios autorizados". Guardarla implicaría dejar el margen en una tabla que se lee con la anon key y eso rompe el **costo blindado**. Contrapartida asumida: si cambió la lista en el medio, el número se mueve — por eso va rotulado con la fecha de aquella respuesta.
+
+### `pendiente_desde` — para que el recordatorio no mienta
+
+Una consulta reabierta vuelve a `pendiente` con `created_at` viejo. Sin arreglarlo, el sweeper `notify-sin-responder` disparaba al toque diciendo *"SIN RESPONDER hace 20 días"*.
+
+Se agregó a `consultas_0km` y `consultas_usados` una **columna generada**:
+
+```sql
+pendiente_desde TIMESTAMPTZ GENERATED ALWAYS AS (COALESCE(reabierta_at, created_at)) STORED
+```
+
+`notify-sin-responder` (repo del tasador) filtra, ordena y **agrupa** por esa columna, y `notify-whatsapp-consulta` calcula la antigüedad con `con.pendiente_desde || con.created_at`. Para las consultas que nunca se reabrieron es idéntica a `created_at`, así que nada cambia.
+
+### Usados
+
+Mismo circuito completo: paso en el wizard, costo descontado del margen (`analisisUsadoHtml` calcula sobre `pedido − costo de la transferencia`, incluida la segunda lectura con arreglos), hint del admin y reapertura. El precio **publicado** se compara sin tocar: es precio de vidriera, no tiene forma de pago asociada.
+
+### Nota contable pendiente
+
+Parte de ese 1,5% es **pago a cuenta**, no costo hundido: el SIRCREB se computa contra IIBB y el 33% del impuesto al cheque contra Ganancias. Se implementó el 1,2% + SIRCREB tal cual lo pidió Fer, pero **`deb_cred_pct` quedó editable** en el panel por si alguna vez se quiere cargar el neto.
+
+### Smoke test
+
+`smoke-test.js` (en la raiz del repo; `npm i jsdom` y `node smoke-test.js`) levanta `index.html` en jsdom con los scripts corriendo y verifica ~40 aserciones: la alícuota, la matemática del ejemplo de Fer, la equivalencia contra el precio efectivo, los casos borde que devolvían `null`, el blindaje (el vendedor no ve ganancia en el bloque de reapertura), la máquina de pasos y los carteles de desactualizado. Chequear sólo la sintaxis no alcanza: un `ReferenceError` se lo come un `catch` y deja la pantalla en cero.

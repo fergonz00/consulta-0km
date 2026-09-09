@@ -31,9 +31,11 @@ const EVENTOS_VALIDOS = new Set([
   "consulta_0km_nueva",
   "consulta_0km_respondida",
   "consulta_0km_sin_responder",
+  "consulta_0km_reabierta",
   "consulta_usado_nueva",
   "consulta_usado_respondida",
   "consulta_usado_sin_responder",
+  "consulta_usado_reabierta",
 ]);
 
 // Eventos que leen `consultas_usados` en vez de `consultas_0km` + items.
@@ -41,6 +43,7 @@ const EVENTOS_USADO = new Set([
   "consulta_usado_nueva",
   "consulta_usado_respondida",
   "consulta_usado_sin_responder",
+  "consulta_usado_reabierta",
 ]);
 const esUsado = (evento: string) => EVENTOS_USADO.has(evento);
 
@@ -50,6 +53,10 @@ const esUsado = (evento: string) => EVENTOS_USADO.has(evento);
 const CONFIG_EVENTO: Record<string, string> = {
   "consulta_0km_sin_responder": "consulta_0km_nueva",
   "consulta_usado_sin_responder": "consulta_usado_nueva",
+  // Una consulta reabierta es, para el que la tiene que responder, una consulta
+  // nueva: le llega a la misma gente y por el mismo camino.
+  "consulta_0km_reabierta": "consulta_0km_nueva",
+  "consulta_usado_reabierta": "consulta_usado_nueva",
 };
 
 // Mapeo evento -> nombre del template en Meta. El evento es el identificador
@@ -69,6 +76,10 @@ const EVENT_TO_TEMPLATE: Record<string, string> = {
   "consulta_0km_nueva": "consulta_0km_nueva_v2",
   "consulta_0km_respondida": "consulta_0km_respondida",
   "consulta_0km_sin_responder": "consulta_0km_nueva_v2",
+  // Reabierta por pago con transferencia: reusa el template de consulta nueva y el
+  // motivo va adentro de {{1}}, igual que el recordatorio de "sin responder".
+  "consulta_0km_reabierta": "consulta_0km_nueva_v2",
+  "consulta_usado_reabierta": "consulta_usado_nueva",
   "consulta_usado_nueva": "consulta_usado_nueva",
   "consulta_usado_respondida": "consulta_usado_respondida",
   "consulta_usado_sin_responder": "consulta_usado_sin_responder",
@@ -84,6 +95,7 @@ const TEMPLATE_FALLBACK: Record<string, string> = {
   "consulta_usado_nueva": "consulta_0km_nueva_v2",
   "consulta_usado_respondida": "consulta_0km_respondida",
   "consulta_usado_sin_responder": "consulta_0km_nueva_v2",
+  "consulta_usado_reabierta": "consulta_0km_nueva_v2",
 };
 
 // Codigos de Meta que significan "el problema es el template, no el numero".
@@ -483,13 +495,19 @@ function buildVariables(evento: string, con: any, items: any[], propio = true): 
   // estamos cayendo al template del 0km (fallback mientras Meta aprueba), se
   // antepone "USADO" adentro de {{1}} para que no se lea como una consulta de
   // 0km. Ver `usaTemplatePropio`.
-  if (evento === "consulta_usado_nueva" || evento === "consulta_usado_sin_responder") {
+  if (evento === "consulta_usado_nueva" || evento === "consulta_usado_sin_responder" ||
+      evento === "consulta_usado_reabierta") {
     const vendedor = con.vendedor_nombre || con.vendedor_usuario || "—";
     let quien = propio ? vendedor : `USADO — ${vendedor}`;
+    if (evento === "consulta_usado_reabierta") {
+      // El vendedor la volvio a pedir porque el cliente ahora quiere transferir. Es
+      // otra cuenta: hay que responderla de nuevo, no repetir lo de antes.
+      quien = `${propio ? "" : "USADO "}🔁 REABIERTA — pide ${fmtMoney(Number(con.transferencia_monto) || 0)} por transferencia — ${vendedor}`;
+    }
     if (evento === "consulta_usado_sin_responder") {
       // El recordatorio SIEMPRE lleva la marca de cuanto hace y que numero de
       // aviso es: es lo que hace que escale solo sin contar nada a mano.
-      const marca = `SIN RESPONDER hace ${antiguedad(con.created_at)} (aviso ${Number(con.recordatorios_enviados || 0) + 1})`;
+      const marca = `SIN RESPONDER hace ${antiguedad(con.pendiente_desde || con.created_at)} (aviso ${Number(con.recordatorios_enviados || 0) + 1})`;
       quien = `${propio ? "" : "USADO "}${marca} — ${vendedor}`;
     }
     // El "descuento" de un usado es sobre el precio publicado, no sobre una
@@ -560,9 +578,18 @@ function buildVariables(evento: string, con: any, items: any[], propio = true): 
     const vendedor = con.vendedor_nombre || con.vendedor_usuario || "—";
     const modelos = modelosTxt();
     const dtoStr = dtoOAviso();
-    const marca = `⏰ SIN RESPONDER hace ${antiguedad(con.created_at)}` +
+    const marca = `⏰ SIN RESPONDER hace ${antiguedad(con.pendiente_desde || con.created_at)}` +
       ` (aviso ${Number(con.recordatorios_enviados || 0) + 1})`;
     return [`${marca} — ${vendedor}`, modelos, dtoStr];
+  }
+  if (evento === "consulta_0km_reabierta") {
+    // Reabierta: el vendedor la volvio a pedir porque el cliente quiere pagar una
+    // parte por transferencia. El monto va adelante para que se entienda de una que
+    // no es la misma cuenta que ya se respondio.
+    const vendedor = con.vendedor_nombre || con.vendedor_usuario || "—";
+    const monto = items.reduce((m: number, it: any) => m + (Number(it.transferencia_monto) || 0), 0);
+    const marca = `🔁 REABIERTA — pide ${fmtMoney(monto)} por transferencia`;
+    return [`${marca} — ${vendedor}`, modelosTxt(), dtoOAviso()];
   }
   if (evento === "consulta_0km_nueva") {
     // Template: 3 variables = vendedor, modelo(s), dto extra pedido (peor caso)

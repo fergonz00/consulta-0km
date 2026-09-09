@@ -213,3 +213,95 @@ ALTER TABLE consultas_0km ADD CONSTRAINT consultas_0km_disponibilidad_check
 -- porque una consulta puede ser solo "¿se consigue este auto?" sin pedir un número.
 ALTER TABLE consultas_0km_items ADD COLUMN IF NOT EXISTS color_pedido TEXT;
 ALTER TABLE consultas_0km_items ALTER COLUMN precio_pedido DROP NOT NULL;
+
+
+-- ============================================================================
+-- 2026-09-09: pago por TRANSFERENCIA bancaria
+--
+-- El cliente tiene que pagar en la cuenta recaudadora de VW (SICE) con deposito
+-- en efectivo o con cheque a la orden que el concesionario endosa a esa cuenta:
+-- asi la plata no pasa por nuestro banco. Si transfiere, entra y sale de nuestra
+-- cuenta y deja 0,6% + 0,6% de impuesto a los debitos y creditos mas el SIRCREB
+-- del mes. Es plata que no cobramos: equivale a haber vendido mas barato.
+-- ============================================================================
+
+-- Alicuotas por mes. Las carga Fer en precios.titogonzalez.online/precios con el
+-- dato que le pasa Valeria Reyna a principio de mes. Todo en FRACCION.
+CREATE TABLE IF NOT EXISTS costos_financieros_mes (
+  periodo      DATE PRIMARY KEY,           -- primer dia del mes
+  sircreb_pct  NUMERIC(8,6) NOT NULL DEFAULT 0,      -- 0.003  = 0,30%
+  deb_cred_pct NUMERIC(8,6) NOT NULL DEFAULT 0.012,  -- 0.012  = 1,20%
+  nota         TEXT,
+  updated_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_by   TEXT
+);
+-- RLS ON con policy solo de SELECT: la anon key (index.html) lee, pero no puede
+-- escribir. Se escribe unicamente desde portal-precios con la service_role.
+ALTER TABLE costos_financieros_mes ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS costos_financieros_lectura ON costos_financieros_mes;
+CREATE POLICY costos_financieros_lectura ON costos_financieros_mes FOR SELECT USING (true);
+
+INSERT INTO costos_financieros_mes (periodo, sircreb_pct, deb_cred_pct, updated_by)
+VALUES ('2026-09-01', 0.003, 0.012, 'claude')
+ON CONFLICT (periodo) DO NOTHING;
+
+-- Control del recordatorio de WhatsApp del dia 1 (cron /api/cron/sircreb).
+CREATE TABLE IF NOT EXISTS costos_financieros_avisos (
+  periodo         DATE PRIMARY KEY,
+  avisos          INTEGER NOT NULL DEFAULT 0,
+  ultimo_aviso_at TIMESTAMPTZ,
+  ultimo_error    TEXT
+);
+ALTER TABLE costos_financieros_avisos ENABLE ROW LEVEL SECURITY;
+
+-- Monto que el cliente pide pagar por transferencia. La alicuota va como
+-- snapshot para poder releer la consulta meses despues; el analisis del admin
+-- recalcula SIEMPRE con la de hoy.
+ALTER TABLE consultas_0km_items
+  ADD COLUMN IF NOT EXISTS transferencia_monto    NUMERIC(14,2),
+  ADD COLUMN IF NOT EXISTS transferencia_alicuota NUMERIC(8,6),
+  ADD COLUMN IF NOT EXISTS transferencia_costo    NUMERIC(14,2);
+
+ALTER TABLE consultas_usados
+  ADD COLUMN IF NOT EXISTS transferencia_monto    NUMERIC(14,2),
+  ADD COLUMN IF NOT EXISTS transferencia_alicuota NUMERIC(8,6),
+  ADD COLUMN IF NOT EXISTS transferencia_costo    NUMERIC(14,2);
+
+-- Reapertura: la consulta ya respondida vuelve a pendiente porque el cliente
+-- ahora pide pagar una parte por transferencia. `pendiente_desde` existe para
+-- que el recordatorio de "sin responder" cuente desde la reapertura y no desde
+-- la carga original (si no, dispara al toque diciendo "hace 20 dias").
+ALTER TABLE consultas_0km    ADD COLUMN IF NOT EXISTS reabierta_at TIMESTAMPTZ;
+ALTER TABLE consultas_usados ADD COLUMN IF NOT EXISTS reabierta_at TIMESTAMPTZ;
+ALTER TABLE consultas_0km    ADD COLUMN IF NOT EXISTS pendiente_desde TIMESTAMPTZ
+  GENERATED ALWAYS AS (COALESCE(reabierta_at, created_at)) STORED;
+ALTER TABLE consultas_usados ADD COLUMN IF NOT EXISTS pendiente_desde TIMESTAMPTZ
+  GENERATED ALWAYS AS (COALESCE(reabierta_at, created_at)) STORED;
+CREATE INDEX IF NOT EXISTS idx_consultas_0km_pendiente_desde    ON consultas_0km(pendiente_desde);
+CREATE INDEX IF NOT EXISTS idx_consultas_usados_pendiente_desde ON consultas_usados(pendiente_desde);
+
+-- Historial de reaperturas: congela la respuesta que habia antes del pedido
+-- nuevo. Una sola tabla para 0km y usados (los id de las dos se pisan, de ahi
+-- `tipo`). NO guarda ganancia: se recalcula en vivo del lado del admin para no
+-- exponer el margen en una tabla que se lee con la anon key.
+CREATE TABLE IF NOT EXISTS consultas_reaperturas (
+  id                         BIGSERIAL PRIMARY KEY,
+  created_at                 TIMESTAMPTZ DEFAULT NOW(),
+  tipo                       TEXT NOT NULL CHECK (tipo IN ('0km','usado')),
+  consulta_id                BIGINT NOT NULL,
+  motivo                     TEXT NOT NULL DEFAULT 'transferencia',
+  solicitada_por_id          UUID,
+  solicitada_por_nombre      TEXT,
+  estado_previo              TEXT,
+  disponibilidad_previa      TEXT,
+  precio_previo              NUMERIC(14,2),
+  observaciones_previas      TEXT,
+  respuesta_previa_at        TIMESTAMPTZ,
+  resultado_venta_previo     TEXT,
+  transferencia_monto_previo NUMERIC(14,2),
+  transferencia_monto        NUMERIC(14,2),
+  alicuota                   NUMERIC(8,6),
+  nota                       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_consultas_reaperturas_consulta ON consultas_reaperturas(tipo, consulta_id);
+ALTER TABLE consultas_reaperturas DISABLE ROW LEVEL SECURITY;
