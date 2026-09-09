@@ -3477,6 +3477,209 @@ async function solicitarTransferencia(consultaId, tipo) {
   }
 }
 
+// ---------- Numero de preventa al marcar la venta ----------
+/**
+ * La PV es el NEXO entre la consulta y la venta real. Sin ella, el monto que se
+ * autorizo por transferencia se queda en la consulta y la solapa Ventas sigue
+ * mostrando la ganancia sin descontar el costo de haberlo cobrado asi.
+ *
+ * Por eso es OBLIGATORIA cuando la consulta lleva transferencia y opcional (pero
+ * ofrecida) cuando no: en el segundo caso no hay ningun numero que perder.
+ */
+
+// Ademas del vendedor que hizo la consulta, estos tres pueden anotar la PV de
+// CUALQUIER consulta: son los que terminan de cerrar las ventas y muchas veces la
+// preventa la carga uno de ellos y no el vendedor. Pedido de Fer el 09-09-2026.
+// No les habilita marcar "vendida / no vendida" (eso sigue siendo del vendedor):
+// anotar la PV ya implica que se vendio, asi que si no estaba marcada, la marca.
+const PV_CARGADORES = ['fngonzalez', 'dlopez', 'mlubrano'];
+function puedeAnotarPvDeOtros() {
+  return !!(currentUser && PV_CARGADORES.includes(String(currentUser.usuario || '').toLowerCase()));
+}
+
+/** Busca la consulta en la lista que corresponda al modo activo. */
+function consultaPorId(consultaId, tipo) {
+  const listas = tipo === '0km'
+    ? [myConsultas, adminConsultas]
+    : [misConsultasUsados, adminConsultasUsados];
+  for (const l of listas) {
+    const c = (l || []).find(x => x.id === consultaId);
+    if (c) return c;
+  }
+  return null;
+}
+
+/** Monto por transferencia de una consulta: en 0km vive en el item, en usados en la cabecera. */
+function transferenciaDe(c, tipo) {
+  const it = tipo === '0km' ? ((c && c.items) || [])[0] : c;
+  return Number(it && it.transferencia_monto) || 0;
+}
+
+function bloquePreventaVenta(c, tipo) {
+  const transf = transferenciaDe(c, tipo);
+  return `
+    <div style="margin-top:12px; padding:10px 12px; background:${transf > 0 ? '#fff7ed' : 'var(--vw-grey-1)'}; border:1px solid ${transf > 0 ? '#fed7aa' : 'var(--vw-grey-2)'}; border-radius:8px">
+      <label style="display:block; font-size:12px; color:var(--vw-grey-4); margin-bottom:4px">
+        N° de preventa ${transf > 0 ? '<strong style="color:#9a3412">(obligatorio)</strong>' : '<span class="muted">(opcional)</span>'}
+      </label>
+      <input id="pvVenta" type="text" placeholder="Ej: 8114/1" autocomplete="off"
+        oninput="onPreventaInput()"
+        style="width:100%; max-width:220px; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:16px; font-weight:600">
+      <div id="pvVentaHint" style="font-size:12px; margin-top:6px; min-height:16px"></div>
+      <div class="muted" style="font-size:11px; margin-top:2px">
+        ${transf > 0
+          ? `Esta consulta se autorizó con <strong>${fmtMoney(transf)}</strong> por transferencia. Con la preventa cargada, ese costo se descuenta solo de la ganancia de la venta.`
+          : 'Sirve para cruzar la consulta con la venta real. Si no la tenés a mano, podés dejarla vacía.'}
+      </div>
+    </div>`;
+}
+
+function onPreventaInput() {
+  const hint = document.getElementById('pvVentaHint');
+  if (hint) hint.innerHTML = '';
+}
+
+/**
+ * Valida la PV contra Oversoft (Edge `validar-preventa`). Devuelve el numero
+ * normalizado si esta OK, null si hay que corregirlo, y '' si se dejo vacia
+ * estando permitido.
+ */
+async function resolverPreventa(c, tipo) {
+  const el = document.getElementById('pvVenta');
+  const hint = document.getElementById('pvVentaHint');
+  const txt = el ? (el.value || '').trim() : '';
+  const transf = transferenciaDe(c, tipo);
+
+  if (!txt) {
+    if (transf > 0) {
+      if (hint) hint.innerHTML = '<span style="color:var(--red)">Cargá la preventa: es lo que hace que el costo de la transferencia llegue a la ganancia.</span>';
+      if (el) el.focus();
+      return null;
+    }
+    return '';
+  }
+
+  if (hint) hint.innerHTML = '<span class="muted">Verificando la preventa…</span>';
+  let r;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/validar-preventa`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json'
+      },
+      // Se valida contra el vendedor DE LA CONSULTA, no contra quien esta tipeando:
+      // cuando la carga Fer, Daniel o Matias, la preventa sigue siendo del vendedor
+      // que hizo la consulta.
+      body: JSON.stringify({
+        preventa: txt,
+        usuario: c.vendedor_usuario || currentUser.usuario,
+        tipo,
+        consulta_id: c.id
+      })
+    });
+    r = await res.json();
+  } catch (e) {
+    // La validacion no puede ser un muro: si la Edge no responde, se guarda igual
+    // el numero tal cual lo tipeo y queda para revisar.
+    console.warn('[PV] no se pudo validar:', e);
+    return txt.replace(/^PV\s*/i, '').trim();
+  }
+
+  if (!r || r.ok !== true) {
+    if (hint) hint.innerHTML = `<span style="color:var(--red)">${escapeHtml((r && r.mensaje) || 'No se pudo verificar la preventa.')}</span>`;
+    if (el) el.focus();
+    return null;
+  }
+  if (hint) {
+    hint.innerHTML = `<span style="color:${r.revisar ? '#92400e' : 'var(--green)'}">${escapeHtml(r.mensaje || '')}</span>`;
+  }
+  return r.preventa_normalizada || txt;
+}
+
+/**
+ * Anotar la PV de una consulta que ya se vendio (o que se vendio y todavia nadie
+ * marco). Es lo unico que Fer, Daniel y Matias pueden tocar de una consulta ajena.
+ *
+ * Sin esto la PV solo se podia cargar en el mismo momento en que el vendedor
+ * marcaba la venta: si se le pasaba, el monto por transferencia no llegaba nunca a
+ * la ganancia de Ventas y no habia forma de arreglarlo desde la pantalla.
+ */
+function bloqueAnotarPv(c, tipo) {
+  const esPropia = !!(currentUser && c.vendedor_id === currentUser.id);
+  if (!puedeAnotarPvDeOtros() && !esPropia) return '';
+  if (['pendiente', 'en_gestion'].includes(c.estado)) return '';
+  if (c.resultado_venta === 'no_vendida') return '';
+
+  const transf = transferenciaDe(c, tipo);
+  const yaTiene = !!(c.preventa || '').trim();
+  // Con PV cargada solo los tres pueden corregirla: un numero mal tipeado manda el
+  // costo de la transferencia a la venta equivocada y no se nota.
+  if (yaTiene && !puedeAnotarPvDeOtros()) return '';
+  // Si todavia no se marco el resultado y la consulta es propia, el bloque de
+  // "Resultado de venta" ya trae el input: no hace falta duplicarlo.
+  if (!c.resultado_venta && esPropia) return '';
+
+  return `
+    <div class="detalle-section">
+      <h4>${yaTiene ? '✏️ Corregir el N° de preventa' : '🧾 Anotar el N° de preventa'}</h4>
+      <p class="muted" style="font-size:12px; margin-bottom:8px">
+        ${yaTiene
+          ? `Está cargada como <strong>${escapeHtml(c.preventa)}</strong>. Si es la equivocada, cargá la correcta.`
+          : (transf > 0
+            ? `Esta consulta se autorizó con <strong>${fmtMoney(transf)}</strong> por transferencia. Con la preventa cargada, ese costo se descuenta solo de la ganancia de la venta.`
+            : 'Sirve para cruzar la consulta con la venta real.')}
+        ${c.resultado_venta !== 'vendida' ? ' Al guardarla queda marcada como <strong>vendida</strong>.' : ''}
+      </p>
+      <div class="field">
+        <input id="pvVenta" type="text" placeholder="Ej: 8114/1" autocomplete="off"
+          value="${escapeHtml(c.preventa || '')}"
+          oninput="onPreventaInput()"
+          style="width:100%; max-width:220px; padding:10px; border:2px solid var(--vw-grey-2); border-radius:8px; font-size:16px; font-weight:600">
+      </div>
+      <div id="pvVentaHint" style="font-size:12px; margin-top:6px; min-height:16px"></div>
+      <button class="btn-next" style="margin-top:10px" onclick="guardarPreventaSuelta(${c.id}, '${tipo}')">
+        Guardar preventa
+      </button>
+    </div>`;
+}
+
+/** Guarda (o corrige) la PV de una consulta ya respondida. */
+async function guardarPreventaSuelta(consultaId, tipo) {
+  const c = consultaPorId(consultaId, tipo);
+  if (!c) { alert('No se encontró la consulta. Recargá la pantalla.'); return; }
+  const pv = await resolverPreventa(c, tipo);
+  if (pv === null) return;
+  if (!pv) { alert('Cargá el número de preventa.'); return; }
+  if (!confirm(`¿Guardar la preventa ${pv} en esta consulta?`)) return;
+
+  showLoading('Guardando...');
+  try {
+    const tabla = tipo === '0km' ? 'consultas_0km' : 'consultas_usados';
+    const cambios = { preventa: pv };
+    // Anotar la PV es decir que se vendio: si nadie lo habia marcado, se marca.
+    if (c.resultado_venta !== 'vendida') {
+      cambios.resultado_venta = 'vendida';
+      cambios.motivo_no_venta = null;
+      cambios.resultado_venta_at = new Date().toISOString();
+    }
+    await sbFetch(`${tabla}?id=eq.${consultaId}`, { method: 'PATCH', body: JSON.stringify(cambios) });
+    closeModal();
+    if (currentMode === 'admin') {
+      await (tipo === '0km' ? cargarConsultasAdmin() : cargarConsultasAdminUsados());
+    } else {
+      await (tipo === '0km' ? cargarMisConsultas() : cargarMisConsultasUsados());
+    }
+    hideLoading();
+    showToast('Preventa guardada');
+  } catch (e) {
+    hideLoading();
+    console.error(e);
+    alert('Error al guardar: ' + (e.message || e));
+  }
+}
+
 /**
  * Aviso que va PEGADO a la contestacion, para el vendedor: si esa parte que iba
  * por transferencia termina entrando por SICE o con e-cheque a la orden, la plata
@@ -4040,6 +4243,7 @@ function abrirDetalle(consultaId, editMode = false) {
       ` : ''}
       ${renderPedirTransferencia(c, '0km')}
       ${renderResultadoVentaSection(c)}
+      ${bloqueAnotarPv(c, '0km')}
     </div>
     <div class="modal-footer">${footerHtml}</div>
   `;
@@ -5283,6 +5487,7 @@ function abrirDetalleUsado(consultaId) {
         </div>` : ''}
       ${renderPedirTransferencia(c, 'usado')}
       ${renderResultadoVentaUsadoSection(c)}
+      ${bloqueAnotarPv(c, 'usado')}
     </div>
     <div class="modal-footer">${footerHtml}</div>
   `;

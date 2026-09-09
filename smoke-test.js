@@ -223,26 +223,76 @@ const TEST = `
   ok(bloquePreventaVenta({ id: 6, items: [{}] }, '0km').indexOf('opcional') >= 0,
     'sin transferencia la PV es opcional');
 
+  // 15) Anotar la PV de una consulta ajena: solo Fer, Daniel y Matias.
+  const cVend = { id: 9, estado: 'aceptada', vendedor_id: 'uuid-otro', vendedor_usuario: 'jcastro',
+    resultado_venta: 'vendida', preventa: null, items: [{ transferencia_monto: 10000000 }] };
+  currentUser = { id: 'uuid-yo', usuario: 'gbuena' };
+  ok(puedeAnotarPvDeOtros() === false, 'un vendedor comun no deberia poder anotar PV ajenas');
+  ok(bloqueAnotarPv(cVend, '0km') === '', 'un vendedor comun no ve el bloque en una consulta ajena');
+  for (const u of ['fngonzalez', 'dlopez', 'mlubrano']) {
+    currentUser = { id: 'uuid-' + u, usuario: u };
+    ok(puedeAnotarPvDeOtros() === true, u + ' deberia poder anotar la PV');
+    ok(bloqueAnotarPv(cVend, '0km').indexOf('guardarPreventaSuelta(9') >= 0, u + ' deberia ver el boton de guardar');
+  }
+  // El dueno de la consulta tambien puede, aunque no este en la lista.
+  currentUser = { id: 'uuid-otro', usuario: 'jcastro' };
+  ok(bloqueAnotarPv(cVend, '0km').indexOf('pvVenta') >= 0, 'el vendedor propio deberia poder anotarla');
+  // Con PV ya cargada, un vendedor comun no la puede corregir; los tres si.
+  const cConPv = Object.assign({}, cVend, { preventa: '8114/1' });
+  ok(bloqueAnotarPv(cConPv, '0km') === '', 'el vendedor propio no deberia poder corregir una PV ya cargada');
+  currentUser = { id: 'uuid-fer', usuario: 'fngonzalez' };
+  ok(bloqueAnotarPv(cConPv, '0km').indexOf('Corregir') >= 0, 'los tres si deberian poder corregirla');
+  // Nunca sobre una consulta sin responder ni sobre una no vendida.
+  ok(bloqueAnotarPv(Object.assign({}, cVend, { estado: 'pendiente' }), '0km') === '', 'pendiente no lleva PV');
+  ok(bloqueAnotarPv(Object.assign({}, cVend, { resultado_venta: 'no_vendida' }), '0km') === '', 'no vendida no lleva PV');
+
+  // 16) La seccion entera de "Resultado de venta" tiene que renderizar. Es la que
+  // se rompio: llamaba a bloquePreventaVenta() cuando esa funcion no existia, y el
+  // detalle de la consulta no abria mas.
+  currentMode = 'vendedor';
+  currentUser = { id: 'uuid-otro', usuario: 'jcastro' };
+  const cAbierta = { id: 9, estado: 'contraoferta', vendedor_id: 'uuid-otro',
+    vendedor_usuario: 'jcastro', items: [{ transferencia_monto: 10000000 }] };
+  let secc0km = null, seccUsado = null;
+  try { secc0km = renderResultadoVentaSection(cAbierta); } catch (e) { fallos.push('renderResultadoVentaSection explota: ' + e.message); }
+  try { seccUsado = renderResultadoVentaUsadoSection({ id: 9, estado: 'contraoferta', vendedor_id: 'uuid-otro', transferencia_monto: 4000000 }); } catch (e) { fallos.push('renderResultadoVentaUsadoSection explota: ' + e.message); }
+  ok(secc0km && secc0km.indexOf('pvVenta') >= 0, '0km: la seccion de resultado deberia pedir la PV');
+  ok(seccUsado && seccUsado.indexOf('pvVenta') >= 0, 'usados: la seccion de resultado deberia pedir la PV');
+
   return fallos;
 })()
 `
 
+// TEST es una async IIFE: devuelve una PROMESA. Resolverlo de forma sincrona
+// (Array.from(promesa) da []) hacia que el test diera verde SIEMPRE - paso de
+// verdad, y por eso no detecto que faltaban funciones enteras en index.html.
 setTimeout(() => {
-  let fallos
+  const morir = (msg, e) => {
+    console.log(msg)
+    if (e) console.log(String((e && e.stack) || (e && e.message) || e))
+    process.exit(1)
+  }
+  let devuelto
   try {
-    fallos = win.eval(TEST)
+    devuelto = win.eval(TEST)
   } catch (e) {
-    console.log('EXPLOTO EL TEST: ' + e.message + '\n' + e.stack)
-    process.exit(1)
+    return morir('EXPLOTO EL TEST', e)
   }
-  fallos = Array.from(fallos)
-  if (errores.length) fallos.push(...errores.map((e) => 'ERROR EN PANTALLA → ' + e))
-
-  if (fallos.length) {
-    console.log('FALLOS (' + fallos.length + '):')
-    fallos.forEach((f) => console.log('  x ' + f))
-    process.exit(1)
+  if (!devuelto || typeof devuelto.then !== 'function') {
+    return morir('EL TEST NO DEVOLVIO UNA PROMESA - el runner no esta corriendo las aserciones')
   }
-  console.log('SMOKE TEST OK')
-  process.exit(0)
+  devuelto.then(
+    (res) => {
+      const fallos = Array.isArray(res) ? Array.from(res) : ['el test no devolvio la lista de fallos']
+      if (errores.length) fallos.push(...errores.map((e) => 'ERROR EN PANTALLA -> ' + e))
+      if (fallos.length) {
+        console.log('FALLOS (' + fallos.length + '):')
+        fallos.forEach((f) => console.log('  x ' + f))
+        process.exit(1)
+      }
+      console.log('SMOKE TEST OK')
+      process.exit(0)
+    },
+    (e) => morir('EXPLOTO EL TEST', e),
+  )
 }, 1500)

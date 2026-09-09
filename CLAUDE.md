@@ -569,6 +569,12 @@ Al marcar la consulta como **vendida**, el vendedor carga el **N° de preventa**
 
 **Validación**: Edge `validar-preventa`. Chequea contra la réplica de Oversoft que la PV exista, no esté anulada, no la esté usando otra consulta, y que sea **del vendedor que dice haberla cerrado**. Vive en una Edge y no en el front porque la key de Oversoft no puede viajar al navegador — este repo es público. Usa el **mismo mapa que el CRM** (`pv_vendedores_map`, usuario → vendedorid) para que los dos validadores digan lo mismo sobre la misma PV; un vendedor puede tener varios vendedorid (Loisi 6 y 141, Castro 5 y 140) y vale cualquiera. Sin mapeo (Fer, un gerente) **no bloquea**: deja pasar marcado para revisar. Si la Edge no responde, tampoco bloquea: guarda el número tal cual.
 
+**Quién puede anotarla**: el vendedor que hizo la consulta, y además **Fer (`fngonzalez`), Daniel López (`dlopez`) y Matías Lubrano (`mlubrano`)** sobre CUALQUIER consulta (`PV_CARGADORES`) — son los que terminan de cerrar las ventas y muchas veces la preventa la carga uno de ellos. No les habilita marcar "vendida / no vendida": anotar la PV ya implica que se vendió, así que si no estaba marcada, la marca sola. Los tres llegan a cualquier consulta con lo que ya tenían (Fer y Matías tienen rol `admin`, Daniel entra como gerente y ve el tab "Respondidas"), así que no hizo falta tocar permisos.
+
+Una PV ya cargada **solo la pueden corregir esos tres**: un número mal tipeado manda el costo de la transferencia a la venta equivocada y no se nota.
+
+⚠️ La PV se valida contra el vendedor **de la consulta**, no contra quien está tipeando. Si no, cargarla Fer o Matías daría siempre `otro_vendedor`.
+
 Verificado contra producción: formato inválido → rechaza · PV inexistente → rechaza · PV de otro vendedor → *"figura a nombre de Buena Gisela"* · PV propia → verifica · `fngonzalez` → `sin_mapeo` con `revisar` · acepta `8123/1` y `PV 08123/1`.
 
 ⚠️ El `cliente` que devuelve Oversoft es el **documento** (`17012849`), no el nombre: por eso no se muestra en el mensaje.
