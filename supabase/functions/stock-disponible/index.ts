@@ -344,12 +344,12 @@ Deno.serve(async (req: Request) => {
     }
 
     // Ajuste de gcia al pasar de la oferta del modelo a la de un chasis con precio
-    // especial. La gcia es LINEAL en la ventaNeta (costo/incentivos son fijos; IIBB,
-    // comisión y cheque son proporcionales a vn), así que partimos de la gcia que ya
+    // especial. La gcia es LINEAL en la ventaNeta (costo/incentivos son fijos; IIBB y
+    // comisión son proporcionales a vn), así que partimos de la gcia que ya
     // calculó el motor para el modelo (gcia_actual) y le sumamos solo el delta. Queda
-    // consistente con el modelo sin importar la tasa exacta de cheque del motor, y no
+    // consistente con el modelo sin importar las tasas exactas del motor, y no
     // depende de Apps Script. FYF se cancela en la resta de ofertas.
-    const _GCIA_TAXRATE = 0.0135 / 1.21 + 0.014 / 1.21 + 0.006; // porción lineal en vn (cheque 0,6%)
+    const _GCIA_TAXRATE = 0.0135 / 1.21 + 0.014 / 1.21; // porción lineal en vn (IIBB + comisión)
     function gciaEnOferta(gciaModelo: number, lista: number, ofertaModelo: number, ofertaEsp: number): number {
       if (!(lista > 0)) return gciaModelo;
       return gciaModelo + ((ofertaEsp - ofertaModelo) * (1 - _GCIA_TAXRATE)) / lista;
