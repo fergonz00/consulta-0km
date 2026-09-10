@@ -49,9 +49,9 @@ function json(body: unknown, status = 200) {
 }
 
 // GET helper para PostgREST (Oversoft o wjfgl) con manejo de error.
-// Dias habiles que puede estar una unidad "a recibir" antes de que sea una demora.
-// Mismo umbral que la Edge notify-unidad-demorada (tasador-tga).
-const DIAS_DEMORA = 12;
+// Dias habiles que lleva la unidad cargada sin entrar fisicamente. Desde el
+// 10/09/2026 ya no decide si se muestra (eso depende de la nota de Fer), pero
+// viaja en el aviso para que la pantalla pueda decir hace cuanto que espera.
 
 const hoyAR = () => new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
 const _dow = (iso: string) => new Date(iso.slice(0, 10) + "T12:00:00Z").getUTCDay();
@@ -297,11 +297,11 @@ Deno.serve(async (req: Request) => {
       const diasHabiles = alta ? habilesEntre(alta, hoyAR(), feriados) : 0;
       const problema = String(d.problema || "").trim() || null;
       const fechaEstimada = d.fecha_estimada ? String(d.fecha_estimada).slice(0, 10) : null;
-      // Silenciada sin nota = ya se chequeo con VW y no hay nada que contarle al
-      // vendedor. Con nota si se muestra: la nota manda sobre el silencio.
-      if (d.silenciada_at && !problema && !fechaEstimada) continue;
-      // Solo lo que es novedad: hay algo anotado, o ya paso el plazo sin respuesta.
-      if (!problema && !fechaEstimada && diasHabiles < DIAS_DEMORA) continue;
+      // Sin nota el vendedor no ve nada, este silenciada o no. Cambio de Fer el
+      // 10/09/2026: el aviso automatico de "+12 dias habiles y VW no contesto"
+      // quedo solo para el WhatsApp de Fer y Daniel y para el panel /precios.
+      // Mismo criterio que portal-precios/src/lib/demoras.ts.
+      if (!problema && !fechaEstimada) continue;
       demoraBySerie[serie] = { serie, problema, fechaEstimada, diasHabiles };
     }
 
