@@ -315,3 +315,13 @@ ALTER TABLE consultas_0km    ADD COLUMN IF NOT EXISTS preventa TEXT;
 ALTER TABLE consultas_usados ADD COLUMN IF NOT EXISTS preventa TEXT;
 CREATE INDEX IF NOT EXISTS idx_consultas_0km_preventa    ON consultas_0km(preventa)    WHERE preventa IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_consultas_usados_preventa ON consultas_usados(preventa) WHERE preventa IS NOT NULL;
+
+-- 2026-09-10: origen "venta_hecha". La unidad YA se vendio y ya tiene preventa; la
+-- novedad es que el cliente pide pagar una parte por transferencia. No se pide un
+-- precio: ya esta cerrado y sale de Oversoft (precioventa + FyF; `precioventa` NO
+-- incluye el flete y formulario — verificado contra el contable de varias PVs).
+ALTER TABLE consultas_0km DROP CONSTRAINT IF EXISTS consultas_0km_origen_check;
+ALTER TABLE consultas_0km ADD CONSTRAINT consultas_0km_origen_check
+  CHECK (origen IN ('stock','reparto','sin_disponibilidad','venta_hecha'));
+ALTER TABLE consultas_0km ADD COLUMN IF NOT EXISTS venta_fecha DATE;
+ALTER TABLE consultas_0km ADD COLUMN IF NOT EXISTS venta_precio_sin_fyf NUMERIC(14,2);

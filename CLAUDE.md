@@ -602,3 +602,53 @@ Pedido de Fer: que el vendedor lo tenga a mano para negociar **la forma de pago*
 > 💡 **Si esa parte la termina pagando por SICE o con e-cheque a la orden**, se le pueden sumar **$150.000** más de descuento: es exactamente lo que nos ahorramos de impuestos.
 
 Lo ven vendedor y admin (`notaVolverASice`). No aparece mientras está pendiente o en gestión: todavía no hay nada que ofrecer.
+
+
+## Origen "venta ya hecha" — la transferencia aparece DESPUÉS de vender (2026-09-10)
+
+Pedido de Fer: *"hay casos que no tienen consulta de antes y luego, ya con la unidad vendida y la preventa hecha, hacen la consulta de lo que tiene que ir por transferencia"*.
+
+Cuarto origen del wizard: **🧾 Ya la vendí y ahora quiere transferir**. Acá no se pide una mejora de precio — el precio ya está cerrado. Lo único que se consulta es **si se autoriza que una parte se cobre por transferencia**, y Fer lo acepta, lo rechaza o contraoferta como cualquier otra.
+
+### El precio sale de Oversoft, CON flete y formulario
+
+`preventas.precioventa` es el precio del **auto solo**. Verificado el 10-09-2026 contra el contable de varias PVs: `totalPlan − precioventa` da **exactamente 1.110.000** (PV 08141/1, 08140/1, 08770/3). Todo el resto de la pantalla (ofertas, consultas) va con FyF, así que el número que se muestra y se guarda como `precio_pedido` es **`precioventa + 1.110.000`** — que además es el que Fer necesita para analizar a cuánto se vendió. Los precios reales quedan redondos, que es la mejor confirmación: 68.300.000, 62.200.000, 42.000.000.
+
+El crudo queda en `consultas_0km.venta_precio_sin_fyf` para poder auditar de dónde salió.
+
+### De dónde sale la lista de ventas
+
+La Edge **`stock-disponible`** acepta `misPreventas: true` y devuelve `preventasVendidas`: las preventas del vendedor de los últimos **120 días** (`PREVENTAS_DIAS`), no anuladas, `tipopv=O`, ya resueltas al **modelo canónico** con color, precio con y sin FyF, la oferta publicada de hoy y si esa PV ya tiene consulta.
+
+Vive ahí y no en una Edge nueva porque resolver el código de Oversoft al nombre del modelo son ~200 líneas de mapas (catálogo Oversoft → descripción por chasis → código-base → lista de precios VW) que esa función ya construye. Duplicarlas era garantía de que se desincronizaran.
+
+El vendedor sólo ve **las suyas**: se filtra por los `vendedorid` de `pv_vendedores_map`. Quien no tiene mapeo (Fer, un gerente) ve las últimas de todos — es lo útil para cargar por otro, y no expone nada que no vea ya.
+
+⚠️ El costo es una llamada completa a `stock-disponible` (rearma todo el stock) sólo para listar preventas. Se paga una vez, cuando el vendedor entra a ese origen, con "Buscando tus ventas…" en pantalla. Si algún día molesta, la salida es partir el armado de mapas en una función aparte.
+
+### Qué se guarda distinto
+
+- `origen = 'venta_hecha'` (constraint ampliada).
+- `preventa`, `venta_fecha`, `venta_precio_sin_fyf` en la cabecera.
+- **`resultado_venta = 'vendida'` desde el minuto cero**: la venta ya está hecha. Así el cruce con la solapa Ventas funciona sin que nadie tenga que marcar nada después.
+- El item guarda el chasis de la preventa (`fuente_oferta: 'venta'`), no una selección de stock.
+- El análisis se calcula contra el **catálogo del modelo** (como en "sin disponibilidad"): la unidad ya se vendió, así que no está en `stockData`.
+
+Pasos: origen → elegir la venta → monto por transferencia → tipo de cliente → observaciones → resumen. **No** se pregunta cliente, ubicación ni financiación: ya están en la preventa. El tipo de cliente sí, porque frente a un reventa Fer decide distinto.
+
+### Rechazar acá significa otra cosa
+
+En una consulta normal el estado habla del **precio**; en una `venta_hecha` habla de la **forma de pago**. Por eso los botones cambian ("Autorizo la transferencia" / "No autorizo") y, sobre todo:
+
+> `lib/ventas.ts` **no descuenta el costo** cuando `origen = 'venta_hecha'` y `estado = 'rechazada'`. Si Fer no autorizó, el cliente paga por SICE y ese costo no existe.
+
+En una consulta normal el costo se descuenta igual pase lo que pase con el precio: si la venta se hizo con transferencia, el banco cobró lo suyo sin importar la respuesta.
+
+⚠️ Si Fer **contraoferta un monto distinto** ("te autorizo 5, no 10"), el monto guardado sigue siendo el que pidió el vendedor (criterio de Fer: *"el que pidió el vendedor, tal cual"*). Para que Ventas descuente el monto correcto, el vendedor tiene que **reabrir** la consulta con el número nuevo.
+
+El WhatsApp de consulta nueva lleva la marca `🧾 YA VENDIDA (PV 8140/1) — pide $X por transferencia` adentro de `{{1}}`, para que no se lea como un pedido de descuento más.
+
+### Verificado
+
+- La Edge devolvió **37 preventas** reales de `jcastro`, todas con modelo resuelto, color y precio; las que ya tenían consulta vinieron marcadas.
+- Smoke test: el paso muestra el precio **con** FyF y no el crudo, elegir la venta arma la unidad con el modelo canónico, la máquina de pasos saltea cliente/ubicación, el análisis da el mismo costo que una consulta normal a ese precio, y **el detalle completo del admin abre** — tanto para una `venta_hecha` (con "Vendida en:" y "Autorizo la transferencia") como para una consulta normal (que sigue diciendo "Precio pedido:" y "Aceptar mejora").

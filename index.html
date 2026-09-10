@@ -1132,12 +1132,22 @@ function txtEstadoReparto(c) {
 //                         color ya está en el salón, pedirlo por reparto no aporta).
 //   sin_disponibilidad -> lo que no está ni en stock ni en reparto. El vendedor elige
 //                         modelo y color a mano; gerencia consulta la disponibilidad.
-const ORIGENES = ['stock', 'reparto', 'sin_disponibilidad'];
+//   venta_hecha        -> la unidad YA se vendio y ya tiene preventa. No se pide un
+//                         precio: el precio ya esta cerrado y sale de Oversoft. Lo
+//                         unico que se consulta es si se autoriza que una parte se
+//                         cobre por transferencia.
+const ORIGENES = ['stock', 'reparto', 'sin_disponibilidad', 'venta_hecha'];
 const ORIGEN_LABEL = {
   stock: '🏬 Auto de stock',
   reparto: '🚚 Auto en el reparto',
-  sin_disponibilidad: '🔎 Auto sin disponibilidad'
+  sin_disponibilidad: '🔎 Auto sin disponibilidad',
+  venta_hecha: '🧾 Venta ya hecha — transferencia'
 };
+
+// Ventas ya hechas del vendedor (Edge stock-disponible con misPreventas). Se cargan
+// solo cuando entra a ese origen: son otra consulta a Oversoft.
+let preventasVendidas = [];
+let preventasVendidasCargadas = false;
 
 // Normaliza un nombre de color para comparar entre fuentes. Oversoft y reparto_vw
 // escriben distinto el mismo color: "Gris Volcan"/"Gris Volcán", "Blanco Puro"/"Blanco
@@ -1308,6 +1318,8 @@ async function showNuevaConsulta() {
     // El monto exacto va por unidad (u.transferenciaMonto), porque cada unidad pedida
     // termina siendo una consulta separada y si no se contaria dos veces.
     pagaTransferencia: null,
+    // Venta ya hecha: la preventa elegida, tal como la devolvio Oversoft.
+    pvVendida: null,
     observaciones: ''
   };
   wizardStack = [];
@@ -1379,8 +1391,12 @@ function getNextStep(step) {
   if (step === 'origen') {
     if (formData.origen === 'reparto') return 'reparto-tipo';
     if (formData.origen === 'sin_disponibilidad') return 'sd-tipo';
+    // Venta ya hecha: no hay nada que elegir del stock ni precio que pedir. Se elige
+    // la preventa, se dice cuanto va por transferencia y listo.
+    if (formData.origen === 'venta_hecha') return 'pv-vendida';
     return 'cantidad-unidades';
   }
+  if (step === 'pv-vendida') return 'transferencia-monto';
   if (step === 'reparto-tipo' || step === 'sd-tipo') return 'cantidad-unidades';
   if (step === 'cantidad-unidades') return 'modelos';
   if (step === 'modelos') {
@@ -1398,6 +1414,9 @@ function getNextStep(step) {
   }
   if (step === 'transferencia-monto') return 'tipo-cliente';
   if (step === 'tipo-cliente') {
+    // Venta ya hecha: el cliente, la ubicacion y la financiacion ya estan en la
+    // preventa. Lo unico que falta preguntar es si hay algo que aclarar.
+    if (formData.origen === 'venta_hecha') return 'observaciones';
     return formData.tipoCliente === 'reventa' ? 'reventa-nombre' : 'cliente-nombre';
   }
   if (step === 'cliente-nombre') return 'ubicacion';
@@ -1438,6 +1457,9 @@ function totalSteps() {
   }
   // Pasos fijos: origen, cantidad, modelos, color(es), precios, transferencia,
   // tipo-cliente, nombre, ubicación, financia, vs-otro, observaciones, resumen
+  // Venta ya hecha: origen, elegir la venta, monto por transferencia, observaciones,
+  // resumen (+ vendedor si lo carga un gerente).
+  if (formData.origen === 'venta_hecha') return currentMode === 'gerente' ? 7 : 6;
   let n = 13; // 12 de siempre + la pregunta de pago por transferencia
   if (formData.pagaTransferencia === 'si') n += 1; // monto por transferencia
   if (formData.origen === 'reparto' || formData.origen === 'sin_disponibilidad') n += 1; // segunda pregunta
@@ -1565,6 +1587,13 @@ STEP_RENDERERS['origen'] = () => {
             <div class="muted" style="font-size:12px; margin-top:2px">No lo tenemos ni en stock ni en el reparto. Elegís modelo y color, y gerencia consulta disponibilidad.</div>
           </div>
         </div>
+        <div class="opt ${sel('venta_hecha')}" onclick="selectOrigen('venta_hecha')">
+          <span class="opt-icon">🧾</span>
+          <div>
+            <div><strong>Ya la vendí y ahora quiere transferir</strong></div>
+            <div class="muted" style="font-size:12px; margin-top:2px">La preventa ya está hecha y el precio cerrado. Elegís la venta y decís cuánto quiere pagar por transferencia, para que gerencia lo autorice.</div>
+          </div>
+        </div>
       </div>
     `,
     footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
@@ -1576,6 +1605,7 @@ function selectOrigen(o) {
   // Cambiar de origen invalida los modelos/colores ya elegidos: el listado es otro.
   if (formData.origen && formData.origen !== o) {
     formData.unidades.forEach(u => { u.modelo = null; u.chasisSeleccionados = []; u.colorPedido = null; u.esReparto = false; u.precioPedido = null; });
+    formData.pvVendida = null;
   }
   formData.origen = o;
   formData.subtipo = null; // cada origen tiene su propia segunda pregunta
@@ -1968,6 +1998,90 @@ STEP_RENDERERS['precios'] = () => {
   };
 };
 
+// ----- Elegir una venta YA HECHA -----
+// El vendedor no elige un modelo: elige una preventa suya de los ultimos 120 dias.
+// El precio no se pide, sale de Oversoft — y va CON flete y formulario, porque es el
+// numero comparable contra la oferta publicada y es el que Fer necesita analizar.
+STEP_RENDERERS['pv-vendida'] = () => {
+  const filas = (preventasVendidas || []);
+  const body = !preventasVendidasCargadas
+    ? '<p class="muted">Buscando tus ventas…</p>'
+    : (filas.length === 0
+      ? `<div class="empty"><p>No encontré ventas tuyas de los últimos 120 días.</p>
+         <p class="muted" style="font-size:12px">Si la preventa se cargó recién, esperá unos minutos a que sincronice el sistema.</p></div>`
+      : filas.map(pv => {
+        const sel = formData.pvVendida && formData.pvVendida.preventa === pv.preventa;
+        const sinModelo = !pv.modelo;
+        const yaTiene = !!pv.consulta_id;
+        return `
+          <div class="opt ${sel ? 'selected' : ''}" onclick="selectPvVendida('${pv.preventa}')"
+            style="${sinModelo ? 'opacity:.55' : ''}">
+            <div style="flex:1">
+              <div><strong>${escapeHtml(pv.modelo || 'Modelo sin resolver')}</strong>
+                ${yaTiene ? ' <span class="tag-badge" style="background:#fde68a; color:#92400e">YA CONSULTADA</span>' : ''}</div>
+              <div class="muted" style="font-size:12px; margin-top:2px">
+                PV ${escapeHtml(pv.preventa)} · ${fmtFechaCorta(new Date(pv.fecha + 'T00:00:00'))}
+                ${pv.color ? ' · ' + escapeHtml(pv.color) : ''}
+              </div>
+              <div style="font-size:13px; margin-top:4px">
+                Vendida en <strong>${fmtMoney(pv.precio_con_fyf)}</strong>
+                <span class="muted" style="font-size:11px">(con flete y formulario)</span>
+              </div>
+            </div>
+          </div>`;
+      }).join(''));
+  return {
+    body: `
+      <h2>¿Cuál de tus ventas?</h2>
+      <p class="step-hint">Elegí la preventa. El precio sale del sistema, no hace falta cargarlo: es el precio de venta <strong>más flete y formulario</strong>.</p>
+      <div class="opt-list">${body}</div>
+    `,
+    footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`,
+    onMount: () => { if (!preventasVendidasCargadas) cargarPreventasVendidas(); }
+  };
+};
+
+async function cargarPreventasVendidas() {
+  try {
+    const vend = (currentMode === 'gerente' && gerenteVendedorActivo) ? gerenteVendedorActivo : currentUser;
+    const res = await fetch(STOCK_EDGE_URL, {
+      method: 'POST',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usuario: vend.usuario, clave: currentUser.clave || '', misPreventas: true })
+    });
+    const data = await res.json();
+    preventasVendidas = (data && data.preventasVendidas) || [];
+  } catch (e) {
+    console.error('[preventasVendidas]', e);
+    preventasVendidas = [];
+  }
+  preventasVendidasCargadas = true;
+  if (currentStep === 'pv-vendida') renderStep();
+}
+
+function selectPvVendida(numero) {
+  const pv = (preventasVendidas || []).find(x => x.preventa === numero);
+  if (!pv) return;
+  if (!pv.modelo) {
+    alert('No pude identificar el modelo de esa unidad en el catálogo, así que no puedo analizar el precio. Avisale a gerencia.');
+    return;
+  }
+  if (pv.consulta_id && !confirm(`Esa preventa ya tiene la consulta #${pv.consulta_id}. ¿Cargar otra igual?`)) return;
+  formData.pvVendida = pv;
+  // Una sola unidad, con el precio YA cerrado: el resto del wizard (analisis,
+  // transferencia, resumen) trabaja igual que siempre sobre formData.unidades.
+  formData.unidades = [{
+    modelo: pv.modelo,
+    chasisSeleccionados: [],
+    colorPedido: pv.color || null,
+    precioPedido: pv.precio_con_fyf,
+    esReparto: false,
+    transferenciaMonto: null
+  }];
+  formData.pagaTransferencia = 'si';
+  nextStep();
+}
+
 // ----- Pago por transferencia -----
 // Lo normal es que el cliente deposite en la cuenta recaudadora de VW (SICE) o pague
 // con cheque a la orden que endosamos a esa cuenta: ahi la plata no pasa por nuestro
@@ -2258,6 +2372,48 @@ STEP_RENDERERS['resumen'] = () => {
   const f = formData;
   const cliente = f.tipoCliente === 'particular' ? `${f.cliNombre} ${f.cliApellido}` : f.reventaNombre;
   const sinDisp = f.origen === 'sin_disponibilidad';
+  // Venta ya hecha: el resumen es otro. No hay cliente que revisar ni precio que
+  // pedir — lo que se manda a autorizar es la forma de pago.
+  if (f.origen === 'venta_hecha') {
+    const u = f.unidades[0] || {};
+    const pv = f.pvVendida || {};
+    const a = calcularAnalisisUnidad({ ...u, sinDisponibilidad: true });
+    const costo = costoTransferencia(u.transferenciaMonto);
+    return {
+      body: `
+        <h2>Revisá el pedido</h2>
+        <p class="step-hint">Esto le llega a gerencia para que autorice (o no) que una parte se cobre por transferencia.</p>
+        <div class="detalle-section">
+          <h4>La venta</h4>
+          <div class="kv">
+            <span class="k">Preventa</span><span class="v"><strong>${escapeHtml(pv.preventa || '')}</strong></span>
+            <span class="k">Fecha</span><span class="v">${escapeHtml(pv.fecha || '')}</span>
+            <span class="k">Unidad</span><span class="v">${escapeHtml(u.modelo || '')}${pv.color ? ' · ' + escapeHtml(pv.color) : ''}</span>
+            <span class="k">Vendida en</span><span class="v"><strong>${fmtMoney(u.precioPedido)}</strong> <span class="muted" style="font-size:11px">(con FyF)</span></span>
+            <span class="k">Cliente</span><span class="v">${f.tipoCliente === 'reventa' ? 'Reventa' : 'Particular'}</span>
+          </div>
+        </div>
+        <div class="detalle-section">
+          <h4>Lo que se pide</h4>
+          <div class="kv">
+            <span class="k">Por transferencia</span><span class="v"><strong>${fmtMoney(u.transferenciaMonto)}</strong></span>
+            <span class="k">Costo de impuestos</span><span class="v"><strong style="color:var(--red)">${fmtMoney(costo)}</strong> <span class="muted" style="font-size:11px">(${fmtPct(alicuotaTransferencia())})</span></span>
+            <span class="k">Entrarían</span><span class="v">${fmtMoney((u.precioPedido || 0) - costo)}</span>
+          </div>
+          ${avisoAlicuota()}
+        </div>
+        ${(f.observaciones || '').trim() ? `
+          <div class="detalle-section">
+            <h4>Observaciones</h4>
+            <div style="white-space:pre-wrap; padding:8px 0">${escapeHtml(f.observaciones)}</div>
+          </div>` : ''}
+      `,
+      footer: `
+        <button class="btn-back" onclick="wizardBack()">Atrás</button>
+        <button class="btn-submit" onclick="submitConsulta()">Enviar pedido</button>
+      `
+    };
+  }
   const unidadesHtml = f.unidades.map((u, idx) => {
     const a = calcularAnalisisUnidad({ ...u, sinDisponibilidad: sinDisp });
     const chasisSel = u.chasisSeleccionados.map(s => stockData.find(r => r.serie === s)).filter(Boolean);
@@ -2661,10 +2817,19 @@ function refAdminUnidad(it) {
 async function submitConsulta() {
   const f = formData;
   const sinDisp = f.origen === 'sin_disponibilidad';
+  // Venta ya hecha: no hay chasis que elegir ni precio que pedir — los dos salen de
+  // la preventa. Lo unico obligatorio es el monto que va por transferencia.
+  const ventaHecha = f.origen === 'venta_hecha';
   const errs = [];
+  if (ventaHecha) {
+    if (!f.pvVendida) errs.push('Falta elegir la venta');
+    if (!f.unidades[0] || !f.unidades[0].transferenciaMonto) errs.push('Falta el monto que va por transferencia');
+  }
   f.unidades.forEach((u, i) => {
     if (!u.modelo) errs.push(`Unidad ${i+1}: falta modelo`);
-    if (sinDisp) {
+    if (ventaHecha) {
+      // nada mas que validar: modelo y precio vienen del sistema.
+    } else if (sinDisp) {
       // Sin disponibilidad: el color es obligatorio (es lo que se va a preguntar al
       // zonal) y el precio NO (puede ser solo "¿se consigue?").
       if (!(u.colorPedido || '').trim()) errs.push(`Unidad ${i+1}: falta el color a consultar`);
@@ -2703,7 +2868,7 @@ async function submitConsulta() {
     const consultaIds = [];
     for (let i = 0; i < N; i++) {
       const u = f.unidades[i];
-      const a = calcularAnalisisUnidad({ ...u, sinDisponibilidad: sinDisp });
+      const a = calcularAnalisisUnidad({ ...u, sinDisponibilidad: sinDisp || ventaHecha });
       // % financiacion calculado sobre el precio_pedido de ESTA unidad (antes era
       // siempre el de la unidad 1 — ahora cada consulta es independiente).
       let finPct = null;
@@ -2738,7 +2903,17 @@ async function submitConsulta() {
         // De que bolsa salio el auto. Define que ve el admin y como se responde:
         // stock/reparto -> precio; sin_disponibilidad -> primero "¿se consigue?".
         origen: f.origen || 'stock',
-        estado: 'pendiente'
+        estado: 'pendiente',
+        // Venta ya hecha: la preventa y el precio de venta quedan en la cabecera, y
+        // la consulta nace ya marcada como vendida — porque lo esta. Asi el cruce con
+        // la solapa Ventas funciona sin que nadie tenga que marcar nada despues.
+        ...(ventaHecha && f.pvVendida ? {
+          preventa: f.pvVendida.preventa,
+          venta_fecha: f.pvVendida.fecha || null,
+          venta_precio_sin_fyf: f.pvVendida.precio_sin_fyf || null,
+          resultado_venta: 'vendida',
+          resultado_venta_at: new Date().toISOString()
+        } : {})
       };
       const inserted = await sbFetch('consultas_0km', { method: 'POST', body: JSON.stringify(cabecera) });
       const consultaId = inserted[0].id;
@@ -2752,7 +2927,11 @@ async function submitConsulta() {
         orden: 1,
         modelo: u.modelo,
         version: u.modelo,
-        chasis: a ? a.chasisSnapshot : [],
+        // Venta ya hecha: el chasis sale de la preventa, no de una seleccion.
+        chasis: ventaHecha && f.pvVendida && f.pvVendida.serie
+          ? [{ serie: f.pvVendida.serie, color: f.pvVendida.color || null,
+               oferta_vigente: f.pvVendida.oferta_baratito || null, fuente_oferta: 'venta' }]
+          : (a ? a.chasisSnapshot : []),
         precio_lista: a ? a.precio_lista : null,
         oferta_vigente_min: a ? a.oferta_vigente_min : null,
         gcia_vigente_min: a ? a.gcia_vigente_min : null,
@@ -2760,7 +2939,7 @@ async function submitConsulta() {
         precio_pedido: u.precioPedido || null,
         // Color pedido a mano. Solo se llena en "sin disponibilidad": en los otros
         // origenes el color va dentro del snapshot de `chasis`.
-        color_pedido: sinDisp ? (u.colorPedido || '').trim() : null,
+        color_pedido: (sinDisp || ventaHecha) ? (u.colorPedido || '').trim() || null : null,
         dto_extra_pedido: a ? a.dto_extra_pedido : null,
         // Ya viene NETA del costo de la transferencia (ver calcularAnalisisUnidad).
         gcia_resultante: a ? a.gcia_resultante : null,
@@ -2924,6 +3103,7 @@ function renderVendedorList() {
 // stock no lleva badge (es lo normal), reparto ámbar, sin disponibilidad violeta.
 function badgeOrigen(c, it) {
   const est = (txt, bg, fg) => ` <span style="background:${bg}; color:${fg}; padding:1px 5px; border-radius:6px; font-size:9px; font-weight:700; margin-left:4px">${txt}</span>`;
+  if (c && c.origen === 'venta_hecha') return est('YA VENDIDA · TRANSFERENCIA', '#fed7aa', '#9a3412');
   if (c && c.origen === 'sin_disponibilidad') return est('SIN DISPONIBILIDAD', '#e0e7ff', '#3730a3');
   if ((c && c.origen === 'reparto') || (it && it.es_reparto)) return est('REPARTO', '#fbbf24', '#78350f');
   return '';
@@ -4014,9 +4194,9 @@ function abrirDetalle(consultaId, editMode = false) {
         </div>
         ${bloqueTransferencia(it, showGcia, refIt.oferta)}`
       : `<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; font-size:13px">
-          <div><span class="muted">Precio pedido:</span> <strong>${fmtMoney(it.precio_pedido)}</strong></div>
+          <div><span class="muted">${c.origen === 'venta_hecha' ? 'Vendida en:' : 'Precio pedido:'}</span> <strong>${fmtMoney(it.precio_pedido)}</strong></div>
           <div><span class="muted">Oferta vigente:</span> <strong>${fmtMoney(it.oferta_vigente_min)}</strong></div>
-          <div><span class="muted">Dto extra pedido:</span> <strong>${fmtPct(it.dto_extra_pedido)}</strong></div>
+          <div><span class="muted">${c.origen === 'venta_hecha' ? 'Dto extra de la venta:' : 'Dto extra pedido:'}</span> <strong>${fmtPct(it.dto_extra_pedido)}</strong></div>
           ${showGcia ? `<div><span class="muted">Gcia resultante:</span> <strong style="color:${(it.gcia_resultante||0) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPct(it.gcia_resultante)}</strong></div>` : ''}
         </div>
         ${bloqueTransferencia(it, showGcia)}`;
@@ -4166,9 +4346,9 @@ function abrirDetalle(consultaId, editMode = false) {
               <button class="btn-danger" onclick="responderDisponibilidad(${c.id}, false)">✗ No se consigue</button>
               <button class="btn-success" onclick="responderDisponibilidad(${c.id}, true)">✓ Se consigue</button>
             ` : `
-              <button class="btn-danger" onclick="rechazarMejora(${c.id})">No acepto</button>
+              <button class="btn-danger" onclick="rechazarMejora(${c.id})">${c.origen === 'venta_hecha' ? 'No autorizo' : 'No acepto'}</button>
               <button onclick="contraofertarMejora(${c.id})" style="background:#3730a3; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-weight:600; cursor:pointer">Contraofertar</button>
-              <button class="btn-success" onclick="aceptarMejora(${c.id})">Aceptar mejora</button>
+              <button class="btn-success" onclick="aceptarMejora(${c.id})">${c.origen === 'venta_hecha' ? 'Autorizo la transferencia' : 'Aceptar mejora'}</button>
             `}
           </div>
         </div>
@@ -4190,6 +4370,22 @@ function abrirDetalle(consultaId, editMode = false) {
         <div class="kv"><span class="k">Estado</span><span class="v"><span class="estado ${c.estado}">${txtEstado(c.estado)}</span></span></div>
         <div class="kv"><span class="k">Origen</span><span class="v">${ORIGEN_LABEL[c.origen] || ORIGEN_LABEL.stock}</span></div>
       </div>
+      ${c.origen === 'venta_hecha' ? `
+        <div class="detalle-section">
+          <h4>🧾 La venta ya está hecha</h4>
+          <div style="background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:10px 12px">
+            <div class="kv">
+              <span class="k">Preventa</span><span class="v"><strong>${escapeHtml(c.preventa || '—')}</strong></span>
+              <span class="k">Fecha de venta</span><span class="v">${c.venta_fecha ? escapeHtml(c.venta_fecha) : '—'}</span>
+              <span class="k">Precio de venta</span><span class="v"><strong>${fmtMoney((c.items || [])[0] ? (c.items || [])[0].precio_pedido : null)}</strong> <span class="muted" style="font-size:11px">(con FyF)</span></span>
+              ${c.venta_precio_sin_fyf ? `<span class="k">Sin FyF (Oversoft)</span><span class="v" style="color:var(--vw-grey-3)">${fmtMoney(c.venta_precio_sin_fyf)}</span>` : ''}
+            </div>
+            <div class="muted" style="font-size:11px; margin-top:6px">
+              El precio ya está cerrado: no se está pidiendo una mejora. Lo que hay que autorizar (o no) es que
+              una parte se cobre por transferencia.
+            </div>
+          </div>
+        </div>` : ''}
       ${bloqueReaperturas(c, (c.items || [])[0], '0km', showGcia)}
       <div class="detalle-section">
         <h4>Cliente</h4>
@@ -4491,7 +4687,9 @@ async function responderDisponibilidad(consultaId, seConsigue) {
 }
 
 async function aceptarMejora(consultaId) {
-  if (!confirm('¿Aceptar la mejora pedida?')) return;
+  const _c = (adminConsultas || []).find(x => x.id === consultaId);
+  const _vh = !!(_c && _c.origen === 'venta_hecha');
+  if (!confirm(_vh ? '¿Autorizar que cobre esa parte por transferencia?' : '¿Aceptar la mejora pedida?')) return;
   showLoading('Guardando...');
   try {
     const obs = getAdminObs();
@@ -4513,9 +4711,17 @@ async function aceptarMejora(consultaId) {
   } catch(e) { hideLoading(); console.error(e); alert('Error: ' + (e.message || e)); }
 }
 async function rechazarMejora(consultaId) {
+  const _c = (adminConsultas || []).find(x => x.id === consultaId);
+  const _vh = !!(_c && _c.origen === 'venta_hecha');
   const precio = getAdminPrecioMax();
-  if (!precio) { alert('Cargá el mejor precio máximo'); return; }
-  if (!confirm(`¿Rechazar la mejora y ofrecer ${fmtMoney(precio)} como mejor precio?`)) return;
+  // En una venta ya hecha no hay precio que ofrecer: se rechaza la forma de pago, y
+  // eso ademas hace que la solapa Ventas NO le descuente el costo a esa venta.
+  if (_vh) {
+    if (!confirm('¿Responder que NO se autoriza el pago por transferencia?\n\nEl cliente tiene que pagar por SICE o con cheque a la orden.')) return;
+  } else {
+    if (!precio) { alert('Cargá el mejor precio máximo'); return; }
+    if (!confirm(`¿Rechazar la mejora y ofrecer ${fmtMoney(precio)} como mejor precio?`)) return;
+  }
   showLoading('Guardando...');
   try {
     const obs = getAdminObs();

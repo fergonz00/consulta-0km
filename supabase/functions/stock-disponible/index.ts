@@ -135,6 +135,19 @@ const REPARTO_COLORES_BASE: Record<string, string> = {
   "U1U1": "Azul Pacifico", "X3X3": "Gris Indy",
 };
 
+// Flete y formulario. `preventas.precioventa` viene SIN esto; todo lo demas de la
+// pantalla (ofertas, consultas) va CON FyF, asi que hay que sumarlo para comparar.
+const FYF = 1110000;
+// Ventana de preventas que se le ofrecen al vendedor para consultar por transferencia.
+const PREVENTAS_DIAS = 120;
+
+/** "PV 08114/1" -> "8114/1" (misma normalizacion que gestion-next). */
+function normPv(referencia: string): string {
+  const x = String(referencia || "").toUpperCase().replace("PV", "").trim();
+  const p = x.split("/");
+  return (p[0].replace(/^0+/, "") || "0") + (p[1] ? "/" + p[1].trim() : "");
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
 
@@ -149,11 +162,18 @@ Deno.serve(async (req: Request) => {
   // Credenciales opcionales (POST) para desbloquear la gcia. Validadas contra
   // tasador_usuarios; solo cuentas con rol admin reciben ganancia.
   let includeGcia = false;
+  // Usuario logueado + pedido de "mis preventas vendidas". Se hoistean porque el
+  // bloque que arma esa lista corre mucho mas abajo, ya con los mapas de modelo
+  // resueltos (que es lo unico que hace falta para nombrar la unidad vendida).
+  let usuarioReq = "";
+  let pedirPreventas = false;
   if (req.method === "POST") {
     let body: any = {};
     try { body = await req.json(); } catch { body = {}; }
     const usuario = String(body?.usuario || "").trim().toLowerCase();
     const clave = String(body?.clave || "");
+    usuarioReq = usuario;
+    pedirPreventas = body?.misPreventas === true;
     if (usuario && clave) {
       try {
         if (GCIA_USUARIOS.has(usuario)) {
@@ -640,6 +660,93 @@ Deno.serve(async (req: Request) => {
         return row;
       });
 
+    // ================= PREVENTAS YA VENDIDAS =================
+    // Para el circuito "la unidad ya se vendio y recien ahora el cliente pide pagar
+    // una parte por transferencia". El vendedor no elige un modelo del stock: elige
+    // una venta SUYA ya hecha, y el precio no se pide — sale de Oversoft.
+    //
+    // OJO con el precio: `preventas.precioventa` es el precio del AUTO, SIN flete y
+    // formulario. Verificado el 10-09-2026 contra el contable de varias PVs, donde
+    // totalPlan - precioventa da exactamente 1.110.000. Como todo lo demas de esta
+    // pantalla (ofertas, consultas) va CON FyF, se devuelven los dos numeros y el
+    // comparable es `precio_con_fyf`.
+    let preventasVendidas: any[] | undefined;
+    if (pedirPreventas) {
+      try {
+        // Vendedorid(s) del usuario. Un vendedor puede tener varios (el normal y el
+        // de Autoahorro). Sin mapeo (Fer, un gerente) no se filtra: se devuelven las
+        // ultimas de todos, que es lo util para quien carga por otro.
+        const mapeos = await rest(
+          W, SUPA_KEY,
+          `/pv_vendedores_map?select=vendedorid&usuario=ilike.${encodeURIComponent(usuarioReq)}`,
+        ).catch(() => []);
+        const vendedorIds = (mapeos || []).map((m: any) => Number(m.vendedorid)).filter(Boolean);
+
+        const desde = new Date(Date.now() - PREVENTAS_DIAS * 86400000).toISOString().slice(0, 10);
+        const filtroVend = vendedorIds.length
+          ? `&vendedorid=in.(${vendedorIds.join(",")})`
+          : "";
+        const pvs = await rest(
+          OV_URL!, OV_KEY!,
+          "/preventas?select=numero,fecha,vendedorid,unidadid,modelo,precioventa" +
+          "&anulada=not.is.true&tipopv=eq.O" +
+          `&fecha=gte.${desde}${filtroVend}&order=fecha.desc&limit=200`,
+        );
+
+        // Serie y color de la unidad de cada PV (el codigo de modelo solo no alcanza
+        // para desambiguar los trims que comparten codigo-base).
+        const uids = [...new Set((pvs || []).map((x: any) => x.unidadid).filter(Boolean))];
+        const uniPv: Record<string, any> = {};
+        for (let i = 0; i < uids.length; i += 100) {
+          const lote = await rest(
+            OV_URL!, OV_KEY!,
+            `/unidades?select=unidadid,serie,color&unidadid=in.(${uids.slice(i, i + 100).join(",")})`,
+          ).catch(() => []);
+          for (const u of lote || []) uniPv[String(u.unidadid)] = u;
+        }
+
+        // Consultas que ya existen para esas PVs: para no pedir dos veces lo mismo.
+        const nums = (pvs || []).map((x: any) => normPv(String(x.numero || ""))).filter(Boolean);
+        const yaCon: Record<string, any> = {};
+        if (nums.length) {
+          const lista = nums.map((n: string) => `"${n}"`).join(",");
+          const cons = await rest(
+            W, SUPA_KEY,
+            `/consultas_0km?select=id,preventa,estado,origen&preventa=in.(${encodeURIComponent(lista)})`,
+          ).catch(() => []);
+          for (const c of cons || []) if (c.preventa) yaCon[String(c.preventa)] = c;
+        }
+
+        preventasVendidas = (pvs || []).map((x: any) => {
+          const u = uniPv[String(x.unidadid)] || {};
+          const serie = String(u.serie || "").trim();
+          const nc = resolveNc(String(x.modelo || "").trim(), serie);
+          const price = nc ? priceByNc[nc] : null;
+          const sinFyf = Number(x.precioventa) || 0;
+          const norm = normPv(String(x.numero || ""));
+          const ya = yaCon[norm] || null;
+          return {
+            preventa: norm,
+            numeroOv: String(x.numero || "").trim(),
+            fecha: String(x.fecha || "").slice(0, 10),
+            serie,
+            color: colorById[String(u.color)] || null,
+            nombreCorto: nc,
+            modelo: price ? (price.modelo || nc) : null,
+            precio_sin_fyf: sinFyf,
+            precio_con_fyf: sinFyf > 0 ? sinFyf + FYF : 0,
+            precio_lista: price ? Number(price.lista) || 0 : 0,
+            oferta_baratito: price ? Number(price.precioOferta) || 0 : 0,
+            consulta_id: ya ? ya.id : null,
+            consulta_estado: ya ? ya.estado : null,
+          };
+        }).filter((r: any) => r.preventa && r.precio_sin_fyf > 0);
+      } catch (e) {
+        preventasVendidas = [];
+        console.error("[preventasVendidas]", String(e));
+      }
+    }
+
     return json({
       ok: true,
       updatedAt: payload.updatedAt || null,
@@ -657,6 +764,7 @@ Deno.serve(async (req: Request) => {
       paleta,
       ...(rotacion ? { rotacion } : {}),
       ...(reparto ? { reparto } : {}),
+      ...(preventasVendidas ? { preventasVendidas } : {}),
     });
   } catch (e) {
     return json({ ok: false, error: String(e?.message || e) }, 500);

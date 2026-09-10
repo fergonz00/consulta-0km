@@ -594,6 +594,15 @@ function buildVariables(evento: string, con: any, items: any[], propio = true): 
   if (evento === "consulta_0km_nueva") {
     // Template: 3 variables = vendedor, modelo(s), dto extra pedido (peor caso)
     const vendedor = con.vendedor_nombre || con.vendedor_usuario || "—";
+    // Venta YA HECHA: no se esta pidiendo una mejora de precio, se esta pidiendo
+    // permiso para cobrar una parte por transferencia. Va marcado adentro de {{1}}
+    // para que no se lea como una consulta de precio mas.
+    if (String(con.origen || "") === "venta_hecha") {
+      const monto = items.reduce((m: number, it: any) => m + (Number(it.transferencia_monto) || 0), 0);
+      const pv = String(con.preventa || "").trim();
+      const marca = `🧾 YA VENDIDA${pv ? ` (PV ${pv})` : ""} — pide ${fmtMoney(monto)} por transferencia`;
+      return [`${marca} — ${vendedor}`, modelosTxt(), dtoOAviso()];
+    }
     return [vendedor, modelosTxt(), dtoOAviso()];
   }
   if (evento === "consulta_0km_respondida") {

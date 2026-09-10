@@ -41,6 +41,8 @@ const dom = new JSDOM(HTML, {
   beforeParse(win) {
     win.alert = (m) => errores.push('alert(): ' + m)
     win.confirm = () => true
+    // jsdom no implementa scrollTo y el wizard lo llama al cambiar de paso.
+    win.scrollTo = () => {}
     win.fetch = (url) => {
       const u = String(url)
       if (u.includes('costos_financieros_mes')) return jsonResp(ALICUOTA)
@@ -258,6 +260,99 @@ const TEST = `
   try { seccUsado = renderResultadoVentaUsadoSection({ id: 9, estado: 'contraoferta', vendedor_id: 'uuid-otro', transferencia_monto: 4000000 }); } catch (e) { fallos.push('renderResultadoVentaUsadoSection explota: ' + e.message); }
   ok(secc0km && secc0km.indexOf('pvVenta') >= 0, '0km: la seccion de resultado deberia pedir la PV');
   ok(seccUsado && seccUsado.indexOf('pvVenta') >= 0, 'usados: la seccion de resultado deberia pedir la PV');
+
+  // 17) Venta YA HECHA: el precio no se pide, sale de Oversoft + FyF, y el analisis
+  //     tiene que dar lo mismo que una consulta normal a ese precio.
+  costoTransfer = { total: 0.015, sircreb: 0.003, debCred: 0.012, periodo: '2026-09-01',
+    periodoActual: '2026-09-01', desactualizado: false, sinDatos: false };
+  currentMode = 'vendedor';
+  currentUser = { id: 'uuid-yo', usuario: 'jcastro' };
+  formData = { origen: 'venta_hecha', unidades: [], pvVendida: null, pagaTransferencia: null, tipoCliente: null };
+  preventasVendidas = [{
+    preventa: '8140/1', fecha: '2026-09-09', serie: 'CH1', color: 'Gris Volcan',
+    nombreCorto: 'Nivus Comfortline', modelo: 'VW Nivus Comfortline MY26',
+    precio_sin_fyf: 29060000, precio_con_fyf: 30170000,
+    precio_lista: 34000000, oferta_baratito: 31000000, consulta_id: null,
+  }];
+  preventasVendidasCargadas = true;
+  const pasoPv = STEP_RENDERERS['pv-vendida']();
+  ok(pasoPv.body.indexOf('8140/1') >= 0, 'el paso deberia listar la preventa');
+  ok(pasoPv.body.indexOf('$30.170.000') >= 0, 'deberia mostrar el precio CON flete y formulario');
+  ok(pasoPv.body.indexOf('$29.060.000') === -1, 'NO deberia mostrar el precio sin FyF como precio de venta');
+
+  selectPvVendida('8140/1');
+  ok(formData.unidades.length === 1, 'elegir la venta deberia armar una unidad');
+  ok(formData.unidades[0].precioPedido === 30170000, 'el precio de la unidad es el de venta con FyF');
+  ok(formData.unidades[0].modelo === 'VW Nivus Comfortline MY26', 'deberia quedar el modelo canonico');
+  ok(formData.pagaTransferencia === 'si', 'en una venta hecha la transferencia se da por hecha');
+
+  // Los pasos: elegir venta -> monto -> tipo de cliente -> observaciones -> resumen.
+  ok(getNextStep('origen') === 'pv-vendida', 'venta hecha arranca eligiendo la preventa');
+  ok(getNextStep('pv-vendida') === 'transferencia-monto', 'de la preventa va al monto');
+  ok(getNextStep('transferencia-monto') === 'tipo-cliente', 'del monto va al tipo de cliente');
+  ok(getNextStep('tipo-cliente') === 'observaciones', 'venta hecha no pide nombre ni ubicacion');
+
+  // El analisis: vendida a 30.170.000 con 10.000.000 por transferencia.
+  formData.unidades[0].transferenciaMonto = 10000000;
+  const aVenta = calcularAnalisisUnidad({ ...formData.unidades[0], sinDisponibilidad: true });
+  ok(!!aVenta, 'la venta hecha deberia analizarse contra el catalogo del modelo');
+  casi(aVenta.transferencia_costo, 150000, 'costo de la transferencia en la venta hecha');
+  casi(aVenta.precio_efectivo, 30020000, 'precio efectivo de la venta hecha');
+
+  const resumenVh = STEP_RENDERERS['resumen']();
+  ok(resumenVh.body.indexOf('$30.170.000') >= 0, 'el resumen deberia mostrar el precio de venta');
+  ok(resumenVh.body.indexOf('$150.000') >= 0, 'el resumen deberia mostrar el costo');
+  ok(resumenVh.footer.indexOf('Enviar pedido') >= 0, 'el resumen de venta hecha tiene su propio boton');
+
+  // 18) INTEGRACION: el detalle completo tiene que abrir. Es el camino que se rompio
+  //     la vez pasada (un ReferenceError adentro del template dejaba el modal sin
+  //     abrir y no lo agarraba ninguna asercion de funciones sueltas).
+  currentMode = 'admin';
+  currentUser = { id: 'uuid-fer', usuario: 'fngonzalez' };
+  stockData = [{
+    serie: 'CH1', modelo: 'VW Nivus Comfortline MY26', color: 'Gris Volcan', libre: true,
+    oferta_vigente: 31000000, gcia_vigente: 0.09, precio_lista: 34000000,
+    fuente_oferta: 'baratito', fecha_factura: null,
+  }];
+  const detalleAbre = (c, etiqueta) => {
+    adminConsultas = [c];
+    try {
+      abrirDetalle(c.id);
+    } catch (e) {
+      fallos.push('abrirDetalle explota en ' + etiqueta + ': ' + e.message);
+      return '';
+    }
+    const cont = document.getElementById('modalContent');
+    return cont ? cont.innerHTML : '';
+  };
+
+  const htmlVh = detalleAbre({
+    id: 900, origen: 'venta_hecha', estado: 'pendiente', tipo_cliente: 'reventa',
+    vendedor_nombre: 'Jose Castro', vendedor_usuario: 'jcastro', vendedor_id: 'uuid-jc',
+    created_at: '2026-09-10T12:00:00Z', preventa: '8140/1', venta_fecha: '2026-09-09',
+    venta_precio_sin_fyf: 29060000, reventa_nombre: '', financia: false,
+    items: [{ id: 1, modelo: 'VW Nivus Comfortline MY26', precio_pedido: 30170000,
+      precio_lista: 34000000, oferta_vigente_min: 31000000, gcia_vigente_min: 0.09,
+      chasis: [{ serie: 'CH1', color: 'Gris Volcan' }], transferencia_monto: 10000000,
+      transferencia_alicuota: 0.015 }],
+  }, 'venta ya hecha');
+  ok(htmlVh.indexOf('8140/1') >= 0, 'el detalle deberia mostrar la preventa');
+  ok(htmlVh.indexOf('$30.170.000') >= 0, 'el detalle deberia mostrar el precio de venta con FyF');
+  ok(htmlVh.indexOf('Vendida en:') >= 0, 'en una venta hecha el precio no se llama "precio pedido"');
+  ok(htmlVh.indexOf('Autorizo la transferencia') >= 0, 'el boton deberia hablar de autorizar, no de aceptar una mejora');
+  ok(htmlVh.indexOf('$150.000') >= 0, 'el detalle deberia mostrar el costo de la transferencia');
+
+  // Y una consulta normal tiene que seguir abriendo igual que siempre.
+  const htmlNorm = detalleAbre({
+    id: 901, origen: 'stock', estado: 'pendiente', tipo_cliente: 'particular',
+    cliente_nombre: 'Ana', cliente_apellido: 'Perez', vendedor_nombre: 'Jose Castro',
+    vendedor_usuario: 'jcastro', vendedor_id: 'uuid-jc', created_at: '2026-09-10T12:00:00Z',
+    items: [{ id: 2, modelo: 'VW Nivus Comfortline MY26', precio_pedido: 30000000,
+      precio_lista: 34000000, oferta_vigente_min: 31000000, gcia_vigente_min: 0.09,
+      chasis: [{ serie: 'CH1', color: 'Gris Volcan' }] }],
+  }, 'consulta normal');
+  ok(htmlNorm.indexOf('Precio pedido:') >= 0, 'la consulta normal sigue diciendo "precio pedido"');
+  ok(htmlNorm.indexOf('Aceptar mejora') >= 0, 'la consulta normal sigue ofreciendo aceptar la mejora');
 
   return fallos;
 })()
