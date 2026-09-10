@@ -1148,6 +1148,8 @@ const ORIGEN_LABEL = {
 // solo cuando entra a ese origen: son otra consulta a Oversoft.
 let preventasVendidas = [];
 let preventasVendidasCargadas = false;
+// Motivo cuando la lista viene vacia (usuario sin vincular, sesion no validada).
+let preventasAviso = null;
 
 // Normaliza un nombre de color para comparar entre fuentes. Oversoft y reparto_vw
 // escriben distinto el mismo color: "Gris Volcan"/"Gris Volcán", "Blanco Puro"/"Blanco
@@ -2007,8 +2009,8 @@ STEP_RENDERERS['pv-vendida'] = () => {
   const body = !preventasVendidasCargadas
     ? '<p class="muted">Buscando tus ventas…</p>'
     : (filas.length === 0
-      ? `<div class="empty"><p>No encontré ventas tuyas de los últimos 120 días.</p>
-         <p class="muted" style="font-size:12px">Si la preventa se cargó recién, esperá unos minutos a que sincronice el sistema.</p></div>`
+      ? `<div class="empty"><p>${preventasAviso ? escapeHtml(preventasAviso) : 'No encontré ventas tuyas de los últimos 120 días.'}</p>
+         ${preventasAviso ? '' : '<p class="muted" style="font-size:12px">Si la preventa se cargó recién, esperá unos minutos a que sincronice el sistema.</p>'}</div>`
       : filas.map(pv => {
         const sel = formData.pvVendida && formData.pvVendida.preventa === pv.preventa;
         const sinModelo = !pv.modelo;
@@ -2043,17 +2045,24 @@ STEP_RENDERERS['pv-vendida'] = () => {
 
 async function cargarPreventasVendidas() {
   try {
-    const vend = (currentMode === 'gerente' && gerenteVendedorActivo) ? gerenteVendedorActivo : currentUser;
+    const objetivo = (currentMode === 'gerente' && gerenteVendedorActivo) ? gerenteVendedorActivo.usuario : null;
     const res = await fetch(STOCK_EDGE_URL, {
       method: 'POST',
       headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ usuario: vend.usuario, clave: currentUser.clave || '', misPreventas: true })
+      body: JSON.stringify({
+        usuario: currentUser.usuario,
+        clave: currentUser.clave || '',
+        misPreventas: true,
+        ...(objetivo ? { comoVendedor: objetivo } : {})
+      })
     });
     const data = await res.json();
     preventasVendidas = (data && data.preventasVendidas) || [];
+    preventasAviso = (data && data.preventasAviso) || null;
   } catch (e) {
     console.error('[preventasVendidas]', e);
     preventasVendidas = [];
+    preventasAviso = 'No se pudo consultar el sistema. Probá de nuevo en un momento.';
   }
   preventasVendidasCargadas = true;
   if (currentStep === 'pv-vendida') renderStep();

@@ -167,13 +167,35 @@ Deno.serve(async (req: Request) => {
   // resueltos (que es lo unico que hace falta para nombrar la unidad vendida).
   let usuarioReq = "";
   let pedirPreventas = false;
+  // Vendedor cuyas ventas se piden (solo un gerente/admin puede pedir las de otro) y
+  // roles del usuario AUTENTICADO. Sin autenticar no se devuelve ni una venta: el
+  // precio de venta de un vendedor no es dato publico y la anon key de este front
+  // esta en un repo publico.
+  let comoVendedorReq = "";
+  let autenticado = false;
+  let rolesReq: string[] = [];
   if (req.method === "POST") {
     let body: any = {};
     try { body = await req.json(); } catch { body = {}; }
     const usuario = String(body?.usuario || "").trim().toLowerCase();
     const clave = String(body?.clave || "");
     usuarioReq = usuario;
+    comoVendedorReq = String(body?.comoVendedor || "").trim().toLowerCase();
     pedirPreventas = body?.misPreventas === true;
+    if (pedirPreventas && usuario && clave) {
+      try {
+        const u = await rest(
+          W, SUPA_KEY,
+          `/tasador_usuarios?usuario=eq.${encodeURIComponent(usuario)}&clave=eq.${encodeURIComponent(clave)}&activo=eq.true&select=usuario,rol,roles`,
+        );
+        if (u.length > 0) {
+          autenticado = true;
+          const r = u[0];
+          rolesReq = [String(r.rol || ""), ...(Array.isArray(r.roles) ? r.roles.map(String) : [])]
+            .map((x) => x.trim().toLowerCase()).filter(Boolean);
+        }
+      } catch (_) { autenticado = false; }
+    }
     if (usuario && clave) {
       try {
         if (GCIA_USUARIOS.has(usuario)) {
@@ -671,16 +693,38 @@ Deno.serve(async (req: Request) => {
     // pantalla (ofertas, consultas) va CON FyF, se devuelven los dos numeros y el
     // comparable es `precio_con_fyf`.
     let preventasVendidas: any[] | undefined;
-    if (pedirPreventas) {
+    let preventasAviso: string | undefined;
+    if (pedirPreventas && !autenticado) {
+      // Ni la lista vacia sale sin credenciales validas: que el que prueba con la
+      // anon key no pueda ni enumerar usuarios.
+      preventasVendidas = [];
+      preventasAviso = "No se pudo verificar tu usuario. Cerrá sesión y volvé a entrar.";
+    } else if (pedirPreventas) {
       try {
-        // Vendedorid(s) del usuario. Un vendedor puede tener varios (el normal y el
-        // de Autoahorro). Sin mapeo (Fer, un gerente) no se filtra: se devuelven las
-        // ultimas de todos, que es lo util para quien carga por otro.
+        // Cada vendedor ve SOLO lo suyo. Un gerente o un admin puede ver todas, y
+        // puede pedir las de un vendedor puntual con `comoVendedor` (es como carga
+        // una consulta por otro). Un vendedor comun que pida las de otro recibe las
+        // suyas igual: el objetivo se ignora si no tiene mando.
+        const esMando = rolesReq.includes("gerente") || rolesReq.includes("admin");
+        const objetivo = (esMando && comoVendedorReq) ? comoVendedorReq : usuarioReq;
+
+        // Vendedorid(s) del vendedor objetivo. Uno puede tener varios (el normal y el
+        // de Autoahorro: Loisi es 6 y 141, Castro 5 y 140): valen todos.
         const mapeos = await rest(
           W, SUPA_KEY,
-          `/pv_vendedores_map?select=vendedorid&usuario=ilike.${encodeURIComponent(usuarioReq)}`,
+          `/pv_vendedores_map?select=vendedorid&usuario=ilike.${encodeURIComponent(objetivo)}`,
         ).catch(() => []);
         const vendedorIds = (mapeos || []).map((m: any) => Number(m.vendedorid)).filter(Boolean);
+
+        // Sin mapeo: un gerente/admin ve todas (es lo util para cargar por otro), pero
+        // un vendedor NO ve nada. Media docena de vendedores activos no estan mapeados
+        // todavia, y antes de este chequeo veian las ventas de todo el salon.
+        if (!vendedorIds.length && !esMando) {
+          preventasVendidas = [];
+          preventasAviso = "Tu usuario todavía no está vinculado a un vendedor del sistema, " +
+            "así que no puedo mostrarte tus ventas. Avisale a gerencia.";
+          throw new Error("__sin_mapeo__");
+        }
 
         const desde = new Date(Date.now() - PREVENTAS_DIAS * 86400000).toISOString().slice(0, 10);
         const filtroVend = vendedorIds.length
@@ -742,8 +786,10 @@ Deno.serve(async (req: Request) => {
           };
         }).filter((r: any) => r.preventa && r.precio_sin_fyf > 0);
       } catch (e) {
-        preventasVendidas = [];
-        console.error("[preventasVendidas]", String(e));
+        if (String((e as any)?.message) !== "__sin_mapeo__") {
+          preventasVendidas = [];
+          console.error("[preventasVendidas]", String(e));
+        }
       }
     }
 
@@ -765,6 +811,7 @@ Deno.serve(async (req: Request) => {
       ...(rotacion ? { rotacion } : {}),
       ...(reparto ? { reparto } : {}),
       ...(preventasVendidas ? { preventasVendidas } : {}),
+      ...(preventasAviso ? { preventasAviso } : {}),
     });
   } catch (e) {
     return json({ ok: false, error: String(e?.message || e) }, 500);

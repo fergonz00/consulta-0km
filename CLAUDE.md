@@ -652,3 +652,29 @@ El WhatsApp de consulta nueva lleva la marca `🧾 YA VENDIDA (PV 8140/1) — pi
 
 - La Edge devolvió **37 preventas** reales de `jcastro`, todas con modelo resuelto, color y precio; las que ya tenían consulta vinieron marcadas.
 - Smoke test: el paso muestra el precio **con** FyF y no el crudo, elegir la venta arma la unidad con el modelo canónico, la máquina de pasos saltea cliente/ubicación, el análisis da el mismo costo que una consulta normal a ese precio, y **el detalle completo del admin abre** — tanto para una `venta_hecha` (con "Vendida en:" y "Autorizo la transferencia") como para una consulta normal (que sigue diciendo "Precio pedido:" y "Aceptar mejora").
+
+
+### Quién ve qué ventas (auditado y corregido el 10-09-2026)
+
+La primera versión de `misPreventas` tenía **dos agujeros**, los dos míos:
+
+1. **No pedía contraseña.** Bastaba `{"misPreventas":true,"usuario":"gbuena"}` con la anon key —que está en este repo, que es **público**— para traer las 30 ventas de Gisela con precio y todo.
+2. **Sin mapeo devolvía las de todos.** El filtro salía de `pv_vendedores_map`; un vendedor que no estuviera ahí (media docena de usuarios activos) veía las 199 ventas del salón.
+
+Corregido: el bloque de preventas **exige `usuario` + `clave` válidos** contra `tasador_usuarios` (activo) antes de devolver nada — ni siquiera una lista vacía, para que no se puedan enumerar usuarios. Después:
+
+| quién | qué ve |
+|---|---|
+| vendedor mapeado | **solo lo suyo** (sus `vendedorid`; uno puede tener varios: Loisi 6 y 141, Castro 5 y 140) |
+| vendedor sin mapeo | **nada**, con el cartel "tu usuario no está vinculado a un vendedor del sistema" |
+| rol `gerente` o `admin` | **todas**, y puede pedir las de un vendedor puntual con `comoVendedor` (igual que cuando carga una consulta por otro) |
+
+El front se autentica **siempre como el usuario logueado**; el vendedor objetivo viaja aparte en `comoVendedor` y la Edge decide si tiene mando. Antes mandaba el usuario del vendedor elegido con la clave del gerente, que ahora directamente no valida.
+
+Verificado contra producción: sin clave → 0 · clave incorrecta → 0 · Gisela → sus 30 · Castro → sus 37 · Daniel (gerente) → las 199 · Daniel pidiendo las de Gisela → esas 30 · Antonella (vendedora sin mapeo) → 0 con el aviso.
+
+**Nadie que venda de verdad queda afuera**: los 9 `vendedorid` con ventas en los últimos 120 días están todos en `pv_vendedores_map`.
+
+⚠️ **`gerente` o `admin`** hoy son: Daniel López (gerente) y Fer, Matías Lubrano, Catalina y Fernando M. González (admin). Si alguno de esos no debería ver las ventas de todos, se saca del rol o se acota la condición acá.
+
+⚠️ **El resto de la pantalla filtra en el front, no en la base.** `consultas_0km`, `consultas_0km_items`, `consultas_usados` y `consultas_reaperturas` tienen **RLS deshabilitada** (patrón heredado del tasador) y la anon key es pública: un vendedor curioso puede leer todas las consultas por REST. La lista de ventas ya no, porque pasa por la Edge con credenciales. Cerrar el resto es prender RLS con políticas por vendedor, y es un trabajo aparte.
