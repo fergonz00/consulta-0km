@@ -207,6 +207,18 @@ Una unidad "a recibir" cuenta como stock y el vendedor la puede consultar y vend
 
 **Rojo vs. ámbar** (`demoraGrave`): ámbar mientras haya una fecha estimada por delante; rojo cuando no hay fecha o cuando la que había ya venció.
 
+## Unidades TRABADAS — facturadas que todavía no se pueden vender (2026-09-11)
+
+VW factura un auto **antes** de habilitar su venta (un lanzamiento que todavía no salió, papeles, una unidad de exposición). Entra al stock como cualquier otra, así que el vendedor la ofrece y promete una entrega que no se puede hacer. Caso que lo originó: la **Amarok Unlimited V6 `VA000129`** (VIN `8AWJW62H0VA000129`), facturada el 10/09/2026 y todavía sin OK de VW.
+
+**Quién la traba:** Fer, por chasis, en el panel **`/precios`** del portal (sección 🚫 *Trabadas*), con el motivo que va a leer el vendedor. Ahí mismo está el botón **Habilitar venta** que la suelta. Tabla `unidades_bloqueo_venta` (wjfgl): `serie, motivo, liberada_at`. Se puede trabar una unidad que **todavía no entró a Oversoft** — el caso real: llegó la factura antes que el auto.
+
+**Cómo llega el dato:** `stock-disponible` lee `unidades_bloqueo_venta` (`liberada_at is null`) y le cuelga `bloqueo = {serie, motivo}` **tanto a las unidades de stock como a las de reparto** (la unidad puede estar trabada desde antes de existir en Oversoft). Va para todos, igual que la demora.
+
+**Dónde se ve en el front:** badge rojo **NO SE PUEDE VENDER** en `badgeChasis` (gana sobre A RECIBIR / EN REPARTO), sub-línea con el motivo en el selector de chasis, y `cartelBloqueo()` en el detalle de la consulta, cruzado **en vivo** contra `stockData` (igual que la demora).
+
+**Adentro sí, afuera no:** la unidad trabada **sigue contando** en el stock del vendedor (que la vea es el punto), pero el portal la **descuenta** del stock que publica afuera — baratito.com.ar (`/api/public/ofertas`), el feed de ElCeroKm y la tienda de ML (`src/lib/bloqueos.ts`, `descontarBloqueadas`). Si era la única unidad del modelo, afuera el modelo queda "sin stock".
+
 **`habilesEntre()` de la Edge es GEMELO del de `notify-unidad-demorada`** (lun-vie sin feriados, tabla `feriados_ar`). Si se toca uno, tocar el otro: el umbral de 7 días hábiles tiene que dar igual en los dos lados o el badge y el WhatsApp se contradicen. Misma relación que `normColor()` / `_normColor()`.
 
 ## Convenciones heredadas del tasador

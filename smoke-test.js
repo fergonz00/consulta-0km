@@ -354,6 +354,39 @@ const TEST = `
   ok(htmlNorm.indexOf('Precio pedido:') >= 0, 'la consulta normal sigue diciendo "precio pedido"');
   ok(htmlNorm.indexOf('Aceptar mejora') >= 0, 'la consulta normal sigue ofreciendo aceptar la mejora');
 
+  // 19) UNIDAD TRABADA: VW la facturo pero todavia no habilito la venta. Cuenta en
+  //     el stock, asi que el cartel es lo unico que evita que el vendedor la ofrezca.
+  const blq = { serie: 'CH1', motivo: 'VW todavia no habilito la venta de la Unlimited' };
+  ok(badgeChasis({ serie: 'CH1', bloqueo: blq }).indexOf('NO SE PUEDE VENDER') >= 0,
+    'el chasis trabado deberia cantar el badge');
+  ok(badgeChasis({ serie: 'CH1', aRecibir: true, bloqueo: blq }).indexOf('NO SE PUEDE VENDER') >= 0,
+    'trabada Y a recibir deberia mostrar los dos badges');
+  ok(badgeChasis({ serie: 'CH1', enReparto: true, bloqueo: blq }).indexOf('NO SE PUEDE VENDER') >= 0,
+    'trabada en reparto tambien');
+  ok(badgeChasis({ serie: 'CH1' }).indexOf('NO SE PUEDE VENDER') === -1,
+    'una unidad normal NO deberia decir que no se puede vender');
+  ok(cartelBloqueo(blq).indexOf('no habilito la venta') >= 0, 'el cartel deberia mostrar el motivo');
+  ok(cartelBloqueo({ serie: 'CH1', motivo: '' }).indexOf('todav') >= 0, 'sin motivo tiene que haber texto igual');
+  ok(cartelBloqueo(null) === '', 'sin bloqueo no va cartel');
+
+  // El detalle de una consulta cruza el bloqueo EN VIVO contra el stock: si la
+  // unidad se trabo despues de mandada la consulta, el admin tiene que verlo.
+  stockData = [{
+    serie: 'CH1', modelo: 'VW Nivus Comfortline MY26', color: 'Gris Volcan', libre: true,
+    oferta_vigente: 31000000, gcia_vigente: 0.09, precio_lista: 34000000,
+    fuente_oferta: 'baratito', fecha_factura: null, bloqueo: blq,
+  }];
+  const htmlTrab = detalleAbre({
+    id: 902, origen: 'stock', estado: 'pendiente', tipo_cliente: 'particular',
+    cliente_nombre: 'Ana', cliente_apellido: 'Perez', vendedor_nombre: 'Jose Castro',
+    vendedor_usuario: 'jcastro', vendedor_id: 'uuid-jc', created_at: '2026-09-10T12:00:00Z',
+    items: [{ id: 3, modelo: 'VW Nivus Comfortline MY26', precio_pedido: 30000000,
+      precio_lista: 34000000, oferta_vigente_min: 31000000, gcia_vigente_min: 0.09,
+      chasis: [{ serie: 'CH1', color: 'Gris Volcan' }] }],
+  }, 'consulta de una unidad trabada');
+  ok(htmlTrab.indexOf('NO SE PUEDE VENDER TODAV') >= 0, 'el detalle deberia cantar que la unidad esta trabada');
+  ok(htmlTrab.indexOf('no habilito la venta') >= 0, 'el detalle deberia mostrar el motivo');
+
   return fallos;
 })()
 `

@@ -800,6 +800,9 @@ async function cargarStockOversoft() {
       // Unidad a recibir que no llega: {problema, fechaEstimada, diasHabiles}. La
       // carga Fer en el panel /precios con la respuesta de VW. null = sin novedad.
       demora: u.demora || null,
+      // Trabada: VW la facturo pero todavia no habilito la venta. {serie, motivo}.
+      // La traba y la suelta Fer en el panel /precios. null = se puede vender.
+      bloqueo: u.bloqueo || null,
       oferta_baratito: Number(u.oferta_baratito) || 0,
       gcia_actual: Number(u.gcia_actual) || 0,
       precio_lista: Number(u.precio_lista) || 0,
@@ -819,6 +822,7 @@ async function cargarStockOversoft() {
     serie: u.serie, modelo: (u.modelo || '').trim(), nombreCorto: u.nombreCorto || null,
     color: (u.color || '').trim(), libre: true, aRecibir: false,
     enReparto: true, estadoReparto: u.estadoReparto || 'a_pedir',
+    bloqueo: u.bloqueo || null,
     oferta_baratito: Number(u.oferta_baratito) || 0,
     gcia_actual: Number(u.gcia_actual) || 0,
     precio_lista: Number(u.precio_lista) || 0,
@@ -1073,14 +1077,19 @@ function getChasisLibresPorModelo(modelo) {
 // (asignado por VW, todavia no cargado en Oversoft). Devuelve '' para stock fisico.
 function badgeChasis(c) {
   if (!c) return '';
-  if (c.enReparto) return ' <span class="badge" style="background:#c7d2fe; color:#312e81">EN REPARTO</span>';
+  // Trabada: gana sobre cualquier otro estado. Que este en stock o en reparto es
+  // secundario si no se puede vender.
+  const trabada = c.bloqueo
+    ? ' <span class="badge" style="background:#dc2626; color:#fff">NO SE PUEDE VENDER</span>'
+    : '';
+  if (c.enReparto) return ' <span class="badge" style="background:#c7d2fe; color:#312e81">EN REPARTO</span>' + trabada;
   if (c.aRecibir) {
     // Una unidad a recibir demorada NO se puede prometer como una normal: el badge
     // tiene que cantarlo solo, sin que haya que abrir el detalle.
     const b = ' <span class="badge" style="background:#fbbf24; color:#78350f">A RECIBIR</span>';
-    return c.demora ? b + ' <span class="badge" style="background:#fecaca; color:#7f1d1d">NO LLEGÓ</span>' : b;
+    return (c.demora ? b + ' <span class="badge" style="background:#fecaca; color:#7f1d1d">NO LLEGÓ</span>' : b) + trabada;
   }
-  return '';
+  return trabada;
 }
 // ============ DEMORAS DE UNIDADES A RECIBIR ============
 // Lo que Fer anota en el panel /precios despues de consultarle a VW, para que el
@@ -1117,6 +1126,24 @@ function cartelDemora(d) {
     '<div style="font-size:11px; font-weight:700; color:' + tx + '">🚚 Esta unidad todavía no llegó</div>' +
     '<div style="font-size:11px; color:#3f3f46; margin-top:2px">' + escapeHtml(textoDemora(d)) + '</div>' +
     '<div style="font-size:10px; color:#71717a; margin-top:2px">Confirmá el plazo antes de comprometer una fecha de entrega.</div>' +
+    '</div>';
+}
+// ============ UNIDADES TRABADAS (VW no habilito la venta) ============
+// VW factura el auto antes de habilitar su venta (un lanzamiento que todavia no
+// salio, papeles, una unidad de exposicion). Cuenta en el stock igual que
+// cualquier otra, asi que si no se canta el vendedor la vende. Se traba y se
+// libera por chasis en el panel /precios del portal.
+function textoBloqueo(b) {
+  if (!b) return '';
+  return String(b.motivo || '').trim() || 'VW todavía no autorizó la venta de esta unidad';
+}
+// Cartel para el detalle de un chasis trabado.
+function cartelBloqueo(b) {
+  if (!b) return '';
+  return '<div style="background:#fef2f2; border:2px solid #dc2626; border-radius:8px; padding:6px 8px; margin-top:6px">' +
+    '<div style="font-size:11px; font-weight:700; color:#991b1b">🚫 ESTA UNIDAD NO SE PUEDE VENDER TODAVÍA</div>' +
+    '<div style="font-size:11px; color:#3f3f46; margin-top:2px">' + escapeHtml(textoBloqueo(b)) + '</div>' +
+    '<div style="font-size:10px; color:#71717a; margin-top:2px">Figura en el stock pero VW todavía no autorizó la entrega. No la comprometas con un cliente.</div>' +
     '</div>';
 }
 // Texto corto del estado de una unidad de reparto.
@@ -1905,6 +1932,7 @@ STEP_RENDERERS['colores'] = () => {
                       <div class="title">${escapeHtml(c.color || '—')}${badgeChasis(c)}</div>
                       <div class="sub">${escapeHtml(c.serie)}${c.enReparto ? ' · ' + txtEstadoReparto(c) + ' · color que no hay en stock' : (fechaTxt ? (c.aRecibir ? ' · Pedido ' : ' · Fact ') + fechaTxt : '')}</div>
                       ${c.demora ? `<div class="sub" style="color:${demoraGrave(c.demora) ? '#991b1b' : '#92400e'}; font-weight:600">🚚 ${escapeHtml(textoDemora(c.demora))}</div>` : ''}
+                      ${c.bloqueo ? `<div class="sub" style="color:#991b1b; font-weight:700">🚫 ${escapeHtml(textoBloqueo(c.bloqueo))}</div>` : ''}
                     </div>
                     <div class="right">
                       ${fmtMoney(c.oferta_vigente)}
@@ -3968,6 +3996,8 @@ function abrirDetalle(consultaId, editMode = false) {
       // prometa una entrega de una unidad que sigue trabada en la terminal.
       const liveCh = (stockData || []).find(r => r.serie === ch.serie) || {};
       const dem = liveCh.demora || null;
+      // Idem con el bloqueo: puede haberse trabado (o habilitado) despues.
+      const blq = liveCh.bloqueo || null;
       // El precio especial por chasis tambien es dato de HOY: puede haberse cargado
       // (o sacado) despues de que el vendedor mando la consulta.
       const espCh = liveCh.fuente_oferta === 'unidad' && liveCh.oferta_vigente > 0;
@@ -3977,6 +4007,7 @@ function abrirDetalle(consultaId, editMode = false) {
         ${ch.fecha_factura ? `· <span class="muted">Fact ${escapeHtml(ch.fecha_factura)}</span>` : ''}
         · ${fmtMoney(ch.oferta_vigente)}${ch.fuente_oferta === 'stock_limitado' ? ' <span class="tag-badge lim">LIM</span>' : ''}
         ${espCh ? ' <span class="tag-badge" style="background:#dcfce7; color:#166534">OFERTA ESPECIAL</span>' : ''}
+        ${cartelBloqueo(blq)}
         ${cartelDemora(dem)}
       </div>`;
     }).join('');
@@ -4012,9 +4043,11 @@ function abrirDetalle(consultaId, editMode = false) {
           ${r.enReparto ? ' <span class="tag-badge" style="background:#c7d2fe; color:#312e81">EN REPARTO</span>' : ''}
           ${r.aRecibir ? ' <span class="tag-badge" style="background:#fbbf24; color:#78350f">A RECIBIR</span>' : ''}
           ${r.demora ? ' <span class="tag-badge" style="background:#fecaca; color:#7f1d1d">NO LLEGÓ</span>' : ''}
+          ${r.bloqueo ? ' <span class="tag-badge" style="background:#dc2626; color:#fff">NO SE PUEDE VENDER</span>' : ''}
           ${pedido ? ' <span style="color:var(--orange); font-weight:700; font-size:11px">PEDIDO</span>' : ''}
           ${esp ? `<div style="font-size:11px; color:#166534; font-weight:700; margin-top:2px">💲 Oferta especial: ${fmtMoney(r.oferta_vigente)}${deltaEsp != null ? ` <span style="font-weight:400">(${deltaEsp < 0 ? '−' : '+'}${fmtMoney(Math.abs(deltaEsp))} vs ${fmtMoney(r.oferta_baratito)} del modelo)</span>` : ''}${r.gcia_vigente ? ` <span style="font-weight:400">· gcia ${fmtPct(r.gcia_vigente)}</span>` : ''}</div>` : ''}
           ${r.demora ? `<div style="font-size:11px; color:${demoraGrave(r.demora) ? '#991b1b' : '#92400e'}">🚚 ${escapeHtml(textoDemora(r.demora))}</div>` : ''}
+          ${r.bloqueo ? `<div style="font-size:11px; color:#991b1b; font-weight:700">🚫 ${escapeHtml(textoBloqueo(r.bloqueo))}</div>` : ''}
         </div>`;
       }).join('') || '<div class="muted" style="font-size:12px; padding:6px 0">Sin stock libre actual.</div>';
       stockHtml = `

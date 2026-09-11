@@ -281,11 +281,27 @@ Deno.serve(async (req: Request) => {
       "/unidades_demora?select=serie,fecha_oversoft,problema,fecha_estimada,silenciada_at&recibida_at=is.null&limit=2000",
     ).catch(() => [] as any[]);
     const feriadosP = rest(W, SUPA_KEY, "/feriados_ar?select=fecha&limit=2000").catch(() => [] as any[]);
+    // Unidades TRABADAS: VW ya las facturo pero todavia no se pueden vender para
+    // entregar (lanzamiento sin habilitar, papeles, exposicion). Las carga y las
+    // libera Fer en el panel /precios del portal. Cuentan en el stock -> el
+    // vendedor las ve, pero con el cartel rojo. Ver portal-precios/src/lib/bloqueos.ts.
+    const bloqueosP = rest(
+      W, SUPA_KEY,
+      "/unidades_bloqueo_venta?select=serie,motivo&liberada_at=is.null&limit=500",
+    ).catch(() => [] as any[]);
 
     const [unidades, modelos, colores, cat, snapArr, especiales, listaPrecios, repDesc, compras, hist,
-           comprasColor, portalRep, demoras, feriadosRows] =
+           comprasColor, portalRep, demoras, feriadosRows, bloqueosRows] =
       await Promise.all([unidadesP, modelosP, coloresP, catP, snapP, espP, listaP, repDescP, comprasP, histP,
-                         comprasColorP, portalRepP, demorasP, feriadosP]);
+                         comprasColorP, portalRepP, demorasP, feriadosP, bloqueosP]);
+
+    // Bloqueo por chasis, listo para colgarle a la unidad (este o en reparto).
+    const bloqueoBySerie: Record<string, any> = {};
+    for (const b of bloqueosRows || []) {
+      const serie = String(b.serie || "").trim().toUpperCase();
+      if (!serie) continue;
+      bloqueoBySerie[serie] = { serie, motivo: String(b.motivo || "").trim() };
+    }
 
     // Demora por chasis, lista para colgarle a la unidad.
     const feriados = new Set<string>((feriadosRows || []).map((f: any) => String(f.fecha).slice(0, 10)));
@@ -447,6 +463,9 @@ Deno.serve(async (req: Request) => {
       // incluidos): es justamente el dato que necesitan antes de prometer fecha.
       const dem = demoraBySerie[String(u.serie || "").trim().toUpperCase()];
       if (dem) row.demora = dem;
+      // Trabada: esta en el stock pero VW todavia no habilito la venta.
+      const blq = bloqueoBySerie[String(u.serie || "").trim().toUpperCase()];
+      if (blq) row.bloqueo = blq;
       // gcia solo para admin (ver bloque de credenciales arriba).
       if (includeGcia) { row.gcia_actual = gcia_actual; row.gcia_vigente = gcia_vigente; }
       out.push(row);
@@ -599,6 +618,11 @@ Deno.serve(async (req: Request) => {
               oferta_vigente: oferta_vigenteR,
               fuente_oferta: tieneEspR ? "unidad" : "baratito",
             };
+            // Trabada: la unidad puede estar trabada desde antes de entrar a
+            // Oversoft (llega la factura antes que el auto), asi que el cartel
+            // tiene que salir ya en el reparto.
+            const blqR = bloqueoBySerie[String(serie).trim().toUpperCase()];
+            if (blqR) rowR.bloqueo = blqR;
             if (includeGcia) {
               rowR.gcia_actual = gcia_actual;
               rowR.gcia_vigente = tieneEspR
