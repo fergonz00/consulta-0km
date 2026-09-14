@@ -4148,60 +4148,61 @@ function abrirDetalle(consultaId, editMode = false) {
             </div>
             ${filasComp}` : '';
 
+      // Mercado Libre, CON flete y formularios como ElCeroKm: la API trae el contado
+      // sin FyF y aca se le suma FYF, asi se compara directo con la oferta de Baratito
+      // y con el precio pedido. El puesto no cambia (a todos se les suma lo mismo).
       let mlHtml = '';
       if (ml && ml.rivales && ml.rivales.length) {
-        const nuestro = Number(ml.nuestro_sin_fyf) > 0 ? Number(ml.nuestro_sin_fyf) : null;
-        const pedSin = ped ? ped - FYF : null;
-        const total = ml.rivales.length + 1;
-        const mejor = ml.rivales[0];
+        const oferta = Number(ml.nuestro_sin_fyf) > 0 ? Number(ml.nuestro_sin_fyf) + FYF : null;
+        const rivales = ml.rivales.map(r => ({ ...r, precio: r.precio_sin_fyf + FYF }));
+        const total = rivales.length + 1;
+        const mejor = rivales[0];
         // Un puesto por concesionario: los que publican más barato quedan adelante.
-        const puestoDe = (precio) => 1 + ml.rivales.filter(r => r.precio_sin_fyf < precio).length;
+        const puestoDe = (precio) => 1 + rivales.filter(r => r.precio < precio).length;
         const colorPuesto = (p) => p === 1 ? 'var(--green)' : p <= 3 ? '#b45309' : 'var(--red)';
         const lineaPuesto = (label, precio) => {
           const p = puestoDe(precio);
-          const d = precio - mejor.precio_sin_fyf;
           return `
-            <div style="font-size:12px; padding:3px 6px">
-              ${label} <strong>${fmtMoney(precio)}</strong> →
-              <strong style="color:${colorPuesto(p)}">${p}° de ${total}</strong>
-              <span class="muted" style="font-size:11px">${d > 0 ? `(${fmtMoney(d)} arriba del más barato)` : '(el más barato)'}</span>
+            <div style="display:grid; grid-template-columns:1fr auto; gap:10px; padding:6px 6px; border-bottom:1px dashed var(--vw-grey-2); font-size:12px; align-items:center">
+              <span><strong>${label}</strong> <span class="muted">${fmtMoney(precio)}</span></span>
+              <strong style="color:${colorPuesto(p)}; white-space:nowrap">${p}° de ${total} en ML</strong>
             </div>`;
         };
-        const fyfTxt = (r) => r.incluye_fyf === false ? 'sin FyF' : r.incluye_fyf === true ? 'traía FyF, restado' : 'no aclara FyF';
-        // Lista completa ordenada por precio, con nuestra oferta y el pedido intercalados.
-        const ref = pedSin || nuestro;
-        const filas = ml.rivales.map(r => ({ tipo: 'rival', precio: r.precio_sin_fyf, r }));
-        if (nuestro) filas.push({ tipo: 'nuestro', precio: nuestro });
-        if (pedSin) filas.push({ tipo: 'pedido', precio: pedSin });
-        filas.sort((a, b) => a.precio - b.precio || (a.tipo === 'rival' ? -1 : 1));
-        const detalle = filas.map(f => {
-          const bg = f.tipo === 'nuestro' ? '#dbeafe' : f.tipo === 'pedido' ? '#ffedd5' : 'transparent';
-          const nombre = f.tipo === 'rival'
-            ? `<a href="${escapeHtml(f.r.url)}" target="_blank" rel="noopener">${escapeHtml(f.r.vendedor)}</a> <span class="muted" style="font-size:11px">${fyfTxt(f.r)}</span>`
-            : `<strong>${f.tipo === 'nuestro' ? 'Nuestra oferta' : 'Precio pedido'}</strong>`;
-          const dif = f.tipo === 'rival' && ref ? ref - f.precio : null;
-          const difTxt = dif === null ? '' : dif > 0 ? `+${fmtMoney(dif)}` : dif < 0 ? `−${fmtMoney(-dif)}` : 'igual';
-          const difColor = dif === null || dif === 0 ? 'inherit' : dif > 0 ? 'var(--red)' : 'var(--green)';
-          return `
-            <div style="display:grid; grid-template-columns:1fr auto auto; gap:10px; padding:4px 6px; font-size:12px; background:${bg}; border-bottom:1px dashed var(--vw-grey-2); align-items:center">
-              <span>${nombre}</span>
-              <span style="text-align:right; white-space:nowrap">${fmtMoney(f.precio)}</span>
-              <span style="text-align:right; white-space:nowrap; min-width:90px; color:${difColor}">${difTxt}</span>
+        // Misma fila que ElCeroKm: precio del concesionario, diferencia en pesos y en %.
+        const ref = ped || oferta;
+        const filaML = (r) => {
+          const nombre = `<a href="${escapeHtml(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.vendedor)}</a>`
+            + (r.incluye_fyf === true ? '' : ` <span class="muted" style="font-size:11px">(${r.incluye_fyf === false ? 'contado' : 'contado, no aclara FyF'} + FyF)</span>`);
+          if (!ref) {
+            return `
+            <div style="display:grid; grid-template-columns:1fr auto; gap:10px; padding:6px 6px; border-bottom:1px dashed var(--vw-grey-2); font-size:12px">
+              <span>${nombre}</span><span class="muted">${fmtMoney(r.precio)}</span>
             </div>`;
-        }).join('');
+          }
+          const diff = (ref - r.precio) / r.precio;
+          const color = diff > 0 ? 'var(--red)' : 'var(--green)';
+          const pctTxt = (Math.abs(diff) * 100).toFixed(2) + '%';
+          const dolar = ref - r.precio;
+          return `
+            <div style="display:grid; grid-template-columns:1fr auto auto; gap:10px; padding:6px 6px; border-bottom:1px dashed var(--vw-grey-2); font-size:12px; align-items:center">
+              <span>${nombre} <span class="muted">${fmtMoney(r.precio)}</span></span>
+              <span class="muted" style="font-size:11px">(${dolar >= 0 ? '+' : '−'}${fmtMoney(Math.abs(dolar))})</span>
+              <span style="color:${color}; font-weight:600; text-align:right; white-space:nowrap">${diff > 0 ? `${pctTxt} más caro` : `${pctTxt} más barato`}</span>
+            </div>`;
+        };
         mlHtml = `
-          <div style="margin-top:8px">
-            <div style="font-size:12px; font-weight:700; margin-bottom:2px">🛒 Mercado Libre
-              <span class="muted" style="font-weight:400; font-size:11px">(contado de concesionarios oficiales VW, sin flete y formularios)</span>
+          <div style="margin-top:10px">
+            <div style="font-size:12px; font-weight:700; margin-bottom:4px">🛒 Mercado Libre
+              <span class="muted" style="font-weight:400; font-size:11px">(contado de concesionarios oficiales VW, con flete y formularios${ped ? `, contra el precio pedido ${fmtMoney(ped)}` : oferta ? ', contra nuestra oferta' : ''})</span>
             </div>
-            ${nuestro ? lineaPuesto('Nuestra oferta', nuestro) : ''}
-            ${pedSin ? lineaPuesto('Precio pedido', pedSin) : ''}
-            <div class="muted" style="font-size:11px; padding:0 6px">Más barato: ${escapeHtml(mejor.vendedor)} ${fmtMoney(mejor.precio_sin_fyf)}</div>
-            <details style="margin-top:4px">
-              <summary style="cursor:pointer; font-size:12px">Ver los ${ml.rivales.length} precios de ML contra los nuestros</summary>
-              <div class="muted" style="font-size:11px; padding:4px 6px">Última columna: ${pedSin ? 'precio pedido' : 'nuestra oferta'} menos el precio del concesionario (rojo = quedamos más caros).</div>
-              ${detalle}
-            </details>
+            ${oferta ? lineaPuesto('Nuestra oferta (Baratito)', oferta) : ''}
+            ${ped ? lineaPuesto('Precio pedido', ped) : ''}
+            ${filaML(mejor)}
+            ${rivales.length > 1 ? `
+            <details style="margin-top:2px">
+              <summary style="cursor:pointer; font-size:12px; padding:4px 6px">Ver los ${rivales.length} concesionarios de ML</summary>
+              ${rivales.slice(1).map(filaML).join('')}
+            </details>` : ''}
           </div>`;
       }
 
