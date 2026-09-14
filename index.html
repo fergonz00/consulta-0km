@@ -511,6 +511,11 @@ let repartoMap = {};
 // Map modelo -> {tu0km, espasa}, los dos c/FyF (a Espasa se lo suma el cron de
 // portal-precios al escribir la tabla). Vacio si la consulta falla.
 let competenciaMap = {};
+// Competencia en Mercado Libre por modelo, de la API publica del portal de precios:
+// precio de CONTADO de los concesionarios oficiales VW, SIN flete y formularios
+// (anticipos, cuotas y precios corporativos ya vienen descartados). Vacio si falla.
+let competenciaML = {};
+const COMPETENCIA_API = 'https://precios.titogonzalez.online/api/public/competencia';
 // Alicuota del costo de cobrar por TRANSFERENCIA bancaria (0,6% de entrada + 0,6%
 // de salida + SIRCREB del mes). La carga Fer en el panel de precios con el dato
 // que le pasa Valeria a principio de mes. Ver cargarCostosFinancieros().
@@ -860,6 +865,17 @@ async function cargarCompetencia() {
     console.log(`[Competencia] ${Object.keys(map).length} modelos cargados.`);
   } catch(e) {
     console.warn('[Competencia] error al cargar (no critico):', e.message || e);
+  }
+  try {
+    const r = await fetch(COMPETENCIA_API, { cache: 'no-store' });
+    const js = await r.json();
+    if (!js.ok) throw new Error(js.error || ('HTTP ' + r.status));
+    const map = {};
+    (js.modelos || []).forEach(m => { if (m.modelo && m.ml) map[m.modelo] = m.ml; });
+    competenciaML = map;
+    console.log(`[Competencia ML] ${Object.keys(map).length} modelos cargados.`);
+  } catch(e) {
+    console.warn('[Competencia ML] error al cargar (no critico):', e.message || e);
   }
 }
 
@@ -4091,13 +4107,25 @@ function abrirDetalle(consultaId, editMode = false) {
           </div>`;
       }
     }
-    // Comparativa vs competencia (tu0km y espasaonline) — solo admin, solo si el modelo aparece en el sheet.
+    // Comparativa vs competencia — solo admin.
+    //  - ElCeroKm / Espasa vienen CON flete y formularios: se comparan con el precio pedido tal cual.
+    //  - Mercado Libre viene SIN flete y formularios (API del portal de precios): a nuestra oferta
+    //    y al precio pedido se les resta FYF antes de ubicarlos en el ranking.
     let competenciaHtml = '';
-    if (showGcia && competenciaMap[it.modelo]) {
-      const comp = competenciaMap[it.modelo];
-      const ped = it.precio_pedido;
+    if (showGcia && (competenciaMap[it.modelo] || competenciaML[it.modelo])) {
+      const comp = competenciaMap[it.modelo] || {};
+      const ml = competenciaML[it.modelo];
+      // Number(null) es 0: una consulta sin precio no se compara contra nada.
+      const ped = it.precio_pedido != null && Number(it.precio_pedido) > 0 ? Number(it.precio_pedido) : null;
       const filaComp = (label, precio) => {
         if (!precio || isNaN(precio)) return '';
+        if (!ped) {
+          return `
+          <div style="display:grid; grid-template-columns:1fr auto; gap:10px; padding:6px 6px; border-bottom:1px dashed var(--vw-grey-2); font-size:12px">
+            <span><strong>${escapeHtml(label)}</strong></span>
+            <span class="muted">${fmtMoney(precio)}</span>
+          </div>`;
+        }
         const diff = (ped - precio) / precio;
         const isHigher = diff > 0;
         const color = isHigher ? 'var(--red)' : 'var(--green)';
@@ -4114,14 +4142,75 @@ function abrirDetalle(consultaId, editMode = false) {
         `;
       };
       const filasComp = [filaComp('ElCeroKm', comp.tu0km), filaComp('EspasaOnline', comp.espasa)].filter(Boolean).join('');
-      if (filasComp) {
+      const okmHtml = filasComp ? `
+            <div style="font-size:12px; font-weight:700; margin:2px 0 4px">🏷 ElCeroKm / Espasa
+              <span class="muted" style="font-weight:400; font-size:11px">(con flete y formularios${ped ? `, contra el precio pedido ${fmtMoney(ped)}` : ''})</span>
+            </div>
+            ${filasComp}` : '';
+
+      let mlHtml = '';
+      if (ml && ml.rivales && ml.rivales.length) {
+        const nuestro = Number(ml.nuestro_sin_fyf) > 0 ? Number(ml.nuestro_sin_fyf) : null;
+        const pedSin = ped ? ped - FYF : null;
+        const total = ml.rivales.length + 1;
+        const mejor = ml.rivales[0];
+        // Un puesto por concesionario: los que publican más barato quedan adelante.
+        const puestoDe = (precio) => 1 + ml.rivales.filter(r => r.precio_sin_fyf < precio).length;
+        const colorPuesto = (p) => p === 1 ? 'var(--green)' : p <= 3 ? '#b45309' : 'var(--red)';
+        const lineaPuesto = (label, precio) => {
+          const p = puestoDe(precio);
+          const d = precio - mejor.precio_sin_fyf;
+          return `
+            <div style="font-size:12px; padding:3px 6px">
+              ${label} <strong>${fmtMoney(precio)}</strong> →
+              <strong style="color:${colorPuesto(p)}">${p}° de ${total}</strong>
+              <span class="muted" style="font-size:11px">${d > 0 ? `(${fmtMoney(d)} arriba del más barato)` : '(el más barato)'}</span>
+            </div>`;
+        };
+        const fyfTxt = (r) => r.incluye_fyf === false ? 'sin FyF' : r.incluye_fyf === true ? 'traía FyF, restado' : 'no aclara FyF';
+        // Lista completa ordenada por precio, con nuestra oferta y el pedido intercalados.
+        const ref = pedSin || nuestro;
+        const filas = ml.rivales.map(r => ({ tipo: 'rival', precio: r.precio_sin_fyf, r }));
+        if (nuestro) filas.push({ tipo: 'nuestro', precio: nuestro });
+        if (pedSin) filas.push({ tipo: 'pedido', precio: pedSin });
+        filas.sort((a, b) => a.precio - b.precio || (a.tipo === 'rival' ? -1 : 1));
+        const detalle = filas.map(f => {
+          const bg = f.tipo === 'nuestro' ? '#dbeafe' : f.tipo === 'pedido' ? '#ffedd5' : 'transparent';
+          const nombre = f.tipo === 'rival'
+            ? `<a href="${escapeHtml(f.r.url)}" target="_blank" rel="noopener">${escapeHtml(f.r.vendedor)}</a> <span class="muted" style="font-size:11px">${fyfTxt(f.r)}</span>`
+            : `<strong>${f.tipo === 'nuestro' ? 'Nuestra oferta' : 'Precio pedido'}</strong>`;
+          const dif = f.tipo === 'rival' && ref ? ref - f.precio : null;
+          const difTxt = dif === null ? '' : dif > 0 ? `+${fmtMoney(dif)}` : dif < 0 ? `−${fmtMoney(-dif)}` : 'igual';
+          const difColor = dif === null || dif === 0 ? 'inherit' : dif > 0 ? 'var(--red)' : 'var(--green)';
+          return `
+            <div style="display:grid; grid-template-columns:1fr auto auto; gap:10px; padding:4px 6px; font-size:12px; background:${bg}; border-bottom:1px dashed var(--vw-grey-2); align-items:center">
+              <span>${nombre}</span>
+              <span style="text-align:right; white-space:nowrap">${fmtMoney(f.precio)}</span>
+              <span style="text-align:right; white-space:nowrap; min-width:90px; color:${difColor}">${difTxt}</span>
+            </div>`;
+        }).join('');
+        mlHtml = `
+          <div style="margin-top:8px">
+            <div style="font-size:12px; font-weight:700; margin-bottom:2px">🛒 Mercado Libre
+              <span class="muted" style="font-weight:400; font-size:11px">(contado de concesionarios oficiales VW, sin flete y formularios)</span>
+            </div>
+            ${nuestro ? lineaPuesto('Nuestra oferta', nuestro) : ''}
+            ${pedSin ? lineaPuesto('Precio pedido', pedSin) : ''}
+            <div class="muted" style="font-size:11px; padding:0 6px">Más barato: ${escapeHtml(mejor.vendedor)} ${fmtMoney(mejor.precio_sin_fyf)}</div>
+            <details style="margin-top:4px">
+              <summary style="cursor:pointer; font-size:12px">Ver los ${ml.rivales.length} precios de ML contra los nuestros</summary>
+              <div class="muted" style="font-size:11px; padding:4px 6px">Última columna: ${pedSin ? 'precio pedido' : 'nuestra oferta'} menos el precio del concesionario (rojo = quedamos más caros).</div>
+              ${detalle}
+            </details>
+          </div>`;
+      }
+
+      if (okmHtml || mlHtml) {
         competenciaHtml = `
           <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--vw-grey-2)">
-            <div style="font-size:13px; margin-bottom:6px">
-              <strong>📊 Vs competencia</strong>
-              <span class="muted" style="font-size:11px">(comparado con precio pedido ${fmtMoney(ped)})</span>
-            </div>
-            ${filasComp}
+            <div style="font-size:13px; margin-bottom:6px"><strong>📊 Vs competencia</strong></div>
+            ${okmHtml}
+            ${mlHtml}
           </div>
         `;
       }
