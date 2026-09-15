@@ -528,7 +528,12 @@ function buildVariables(evento: string, con: any, items: any[], propio = true): 
     const vendedor = con.vendedor_nombre || con.vendedor_usuario || "—";
     let estado = con.estado || "respondida";
     if (estado === "aceptada") estado = "Aceptada";
-    else if (estado === "rechazada") estado = "Rechazada";
+    else if (estado === "rechazada") {
+      // Igual que en el 0km: "No acepto" obliga a cargar el mejor precio.
+      estado = con.precio_max_admin
+        ? "No se aceptó el precio pedido. Te pasamos el mejor precio"
+        : "No se aceptó el precio pedido";
+    }
     else if (estado === "contraoferta") estado = "Contraoferta (revisá el comentario en el portal)";
     let monto = "—";
     if (con.estado === "aceptada") {
@@ -613,15 +618,26 @@ function buildVariables(evento: string, con: any, items: any[], propio = true): 
     let estado = con.estado || "respondida";
     // En "sin disponibilidad" aceptada/rechazada significan otra cosa: se consigue o no.
     // El vendedor tiene que leer eso, no "Aceptada".
+    const ventaHecha = String(con.origen || "") === "venta_hecha";
     if (sinDisp) {
       estado = con.disponibilidad === "no_se_consigue" || con.estado === "rechazada"
         ? "NO se consigue"
         : "SÍ se consigue";
     } else if (estado === "aceptada") estado = "Aceptada";
-    else if (estado === "rechazada") estado = "Rechazada";
+    else if (estado === "rechazada") {
+      // El cuerpo del template dice "Estado final: {{3}}. Monto autorizado: {{4}}".
+      // "Rechazada" + un monto se lee como una contradiccion. En el 0km "No acepto"
+      // obliga a cargar un mejor precio: eso es lo que se autoriza (el panel ya lo
+      // rotula "Mejor precio"). En venta_hecha se rechaza la forma de pago, no hay monto.
+      if (ventaHecha) estado = "No se autoriza la transferencia (tiene que pagar por SICE)";
+      else if (con.precio_max_admin) estado = "No se aceptó el precio pedido. Te pasamos el mejor precio";
+      else estado = "No se aceptó el precio pedido";
+    }
     else if (estado === "contraoferta") estado = "Contraoferta (revisá el comentario en el portal)";
     let monto = "—";
-    if (sinDisp) {
+    if (ventaHecha && con.estado === "rechazada") {
+      // No se autorizo nada: aunque el input del admin viniera precargado, no hay monto.
+    } else if (sinDisp) {
       // Puede no haber precio: era una consulta de disponibilidad pura.
       if (con.precio_max_admin) monto = fmtMoney(con.precio_max_admin);
       else if (items[0]?.precio_pedido && con.estado === "aceptada") monto = fmtMoney(items[0].precio_pedido);

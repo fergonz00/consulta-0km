@@ -4863,7 +4863,8 @@ async function rechazarMejora(consultaId) {
         estado: 'rechazada',
         admin_user_id: currentUser.id,
         admin_respuesta_at: new Date().toISOString(),
-        precio_max_admin: precio,
+        // En venta_hecha no se ofrece precio: el input puede venir precargado y no vale.
+        precio_max_admin: _vh ? null : precio,
         observaciones_admin: obs || null
       })
     });

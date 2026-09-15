@@ -108,7 +108,7 @@ Edge Function `notify-whatsapp-consulta` con templates Meta aprobados:
 
 **`consulta_0km_respondida`** (4 vars = modelo, vendedor, estado, monto) — aprobado y funcionando. El estado es "Aceptada", "Rechazada" o "Contraoferta (revisá el comentario en el portal)". El monto es:
 - Aceptada → precio_pedido del primer item.
-- Rechazada → precio_max_admin.
+- Rechazada → precio_max_admin. ⚠️ El estado NO se manda como "Rechazada" (15-09-2026, Fer: *"no tiene sentido que diga el monto autorizado si salió rechazada"*): va "No se aceptó el precio pedido. Te pasamos el mejor precio", porque "No acepto" obliga a cargar el mejor precio y eso es lo autorizado. En `venta_hecha` rechazada va "No se autoriza la transferencia (tiene que pagar por SICE)" con monto "—", y el front ya no guarda `precio_max_admin` ahí.
 - Contraoferta → precio_max_admin si hay; "—" si no.
 
 Destinatarios:
