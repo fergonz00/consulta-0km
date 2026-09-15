@@ -237,9 +237,14 @@ Deno.serve(async (req: Request) => {
   // Dos juegos de variables: el del template propio y el del respaldo (que
   // necesita el marcador "USADO" adentro del texto, porque el cuerpo del
   // template del 0km no lo dice).
-  const vars = buildVariables(evento, con, itemsParaVars, usaTemplatePropio(evento));
+  // Venta ya hecha sin autorizar: el mensaje dice cuanto cuesta si igual transfiere.
+  let alicuotaTransf: number | null = null;
+  if (evento === "consulta_0km_respondida" && con.origen === "venta_hecha" && con.estado === "rechazada") {
+    alicuotaTransf = await alicuotaTransferencia(SUPABASE_URL, SERVICE_KEY);
+  }
+  const vars = buildVariables(evento, con, itemsParaVars, usaTemplatePropio(evento), alicuotaTransf);
   const varsFallback = TEMPLATE_FALLBACK[evento]
-    ? buildVariables(evento, con, itemsParaVars, false)
+    ? buildVariables(evento, con, itemsParaVars, false, alicuotaTransf)
     : vars;
 
   // 4) Enviar a cada destinatario
@@ -450,6 +455,25 @@ async function log(url: string, key: string, row: any) {
   }
 }
 
+// Alicuota total de cobrar por transferencia (deb/cred + SIRCREB), en fraccion. Misma
+// regla que cargarCostosFinancieros() de index.html: el mes en curso (AR) o, si no se
+// cargo, el ultimo anterior.
+async function alicuotaTransferencia(url: string, key: string): Promise<number | null> {
+  try {
+    const ar = new Date(Date.now() - 3 * 3600 * 1000);
+    const periodo = `${ar.getUTCFullYear()}-${String(ar.getUTCMonth() + 1).padStart(2, "0")}-01`;
+    const filas = await sb(url, key,
+      `costos_financieros_mes?select=periodo,sircreb_pct,deb_cred_pct&periodo=lte.${periodo}&order=periodo.desc&limit=1`);
+    const f = (filas || [])[0];
+    if (!f) return null;
+    const total = (Number(f.sircreb_pct) || 0) + (Number(f.deb_cred_pct) || 0);
+    return total > 0 ? total : null;
+  } catch (e) {
+    console.error("alicuota transferencia:", e);
+    return null;
+  }
+}
+
 function fmtMoney(n: any): string {
   const v = Number(n);
   if (!isFinite(v)) return "—";
@@ -487,7 +511,7 @@ function unidadUsado(con: any): string {
 // `propio` = true si el mensaje va con el template propio del evento (cuyo
 // encabezado ya aclara que es un usado); false si va con el del 0km como
 // respaldo, y ahi hay que meter el marcador "USADO" dentro del texto.
-function buildVariables(evento: string, con: any, items: any[], propio = true): string[] {
+function buildVariables(evento: string, con: any, items: any[], propio = true, alicuotaTransf: number | null = null): string[] {
   const id = String(con.id || "");
 
   // ---- USADOS ----
@@ -625,18 +649,19 @@ function buildVariables(evento: string, con: any, items: any[], propio = true): 
         : "SÍ se consigue";
     } else if (estado === "aceptada") estado = "Aceptada";
     else if (estado === "rechazada") {
-      // El cuerpo del template dice "Estado final: {{3}}. Monto autorizado: {{4}}".
-      // "Rechazada" + un monto se lee como una contradiccion. En el 0km "No acepto"
-      // obliga a cargar un mejor precio: eso es lo que se autoriza (el panel ya lo
-      // rotula "Mejor precio"). En venta_hecha se rechaza la forma de pago, no hay monto.
-      if (ventaHecha) estado = "No se autoriza la transferencia (tiene que pagar por SICE)";
-      else if (con.precio_max_admin) estado = "No se aceptó el precio pedido. Te pasamos el mejor precio";
-      else estado = "No se aceptó el precio pedido";
+      // Pedido de Fer (15-09-2026): "No acepto" es solo no acepto, sin monto. Si hay un
+      // precio mas alto para ofrecer, eso es una contraoferta. El template agrega el punto.
+      if (ventaHecha) {
+        const pct = alicuotaTransf != null
+          ? `el ${new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(alicuotaTransf * 100)}%`
+          : "el %";
+        estado = `No se autoriza la transferencia (tiene que pagar por SICE) o debe pagar ${pct} correspondiente en función de la transferencia`;
+      } else estado = "No se aceptó el precio pedido";
     }
     else if (estado === "contraoferta") estado = "Contraoferta (revisá el comentario en el portal)";
     let monto = "—";
-    if (ventaHecha && con.estado === "rechazada") {
-      // No se autorizo nada: aunque el input del admin viniera precargado, no hay monto.
+    if (!sinDisp && con.estado === "rechazada") {
+      // No se autorizo ningun monto (consultas viejas podian traer precio_max_admin).
     } else if (sinDisp) {
       // Puede no haber precio: era una consulta de disponibilidad pura.
       if (con.precio_max_admin) monto = fmtMoney(con.precio_max_admin);
@@ -645,7 +670,7 @@ function buildVariables(evento: string, con: any, items: any[], propio = true): 
       // Aceptada: el monto autorizado es lo que el vendedor pidio (precio_pedido de la primera unidad).
       const pedido = items[0]?.precio_pedido;
       if (pedido) monto = fmtMoney(pedido);
-    } else if ((con.estado === "rechazada" || con.estado === "contraoferta") && con.precio_max_admin) {
+    } else if (con.estado === "contraoferta" && con.precio_max_admin) {
       monto = fmtMoney(con.precio_max_admin);
     }
     return [modelos, vendedor, estado, monto];

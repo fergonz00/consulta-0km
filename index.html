@@ -4851,8 +4851,8 @@ async function rechazarMejora(consultaId) {
   if (_vh) {
     if (!confirm('¿Responder que NO se autoriza el pago por transferencia?\n\nEl cliente tiene que pagar por SICE o con cheque a la orden.')) return;
   } else {
-    if (!precio) { alert('Cargá el mejor precio máximo'); return; }
-    if (!confirm(`¿Rechazar la mejora y ofrecer ${fmtMoney(precio)} como mejor precio?`)) return;
+    // "No acepto" es solo no acepto: si hay un precio para ofrecer, es una contraoferta.
+    if (!confirm('¿Responder que NO se acepta el precio pedido?\n\nSin monto. Si querés ofrecer otro precio, usá Contraofertar.')) return;
   }
   showLoading('Guardando...');
   try {
@@ -4863,8 +4863,8 @@ async function rechazarMejora(consultaId) {
         estado: 'rechazada',
         admin_user_id: currentUser.id,
         admin_respuesta_at: new Date().toISOString(),
-        // En venta_hecha no se ofrece precio: el input puede venir precargado y no vale.
-        precio_max_admin: _vh ? null : precio,
+        // "No acepto" no lleva monto (el input puede venir precargado y no vale).
+        precio_max_admin: null,
         observaciones_admin: obs || null
       })
     });
