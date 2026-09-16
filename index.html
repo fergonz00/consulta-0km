@@ -751,7 +751,8 @@ function entrarComo(modo) {
   document.getElementById('userInfo').textContent = (currentUser.nombre || currentUser.usuario) + tag;
   // Botón "Usuarios" cuando el modo activo es admin Y puede gestionar usuarios o
   // al menos resetear claves (fngonzalez full, mlubrano solo reset).
-  document.getElementById('btnUsuarios').classList.toggle('hidden', !(modo === 'admin' && _puedeResetClaves()));
+  // Gestion de usuarios UNIFICADA en el portal: aca queda oculta siempre.
+  document.getElementById('btnUsuarios').classList.add('hidden');
   // Botón "Selección múltiple" (para borrar varias consultas) solo superadmin
   const btnSel = document.getElementById('btnSelMultiple');
   if (btnSel) btnSel.classList.toggle('hidden', !(modo === 'admin' && _esSuperadmin()));
