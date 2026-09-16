@@ -73,8 +73,8 @@ const normPat = (s: unknown) => String(s ?? "").toUpperCase().replace(/[^A-Z0-9]
  * clave del usuario, asi que {usuario, clave} dejo de llegar y esta Edge
  * respondia SIEMPRE sin ganancia: la pantalla de usados quedo sin costo
  * de toma ni margen. El token firmado es
- * ahora la forma de probar quien pide. La clave se sigue aceptando para
- * sesiones viejas restauradas de localStorage.
+ * ahora la UNICA forma de probar quien pide: desde el 16-sep-2026 `tasador_usuarios`
+ * tampoco tiene `clave` ni `password_hash` (unificados en app_credenciales).
  */
 async function sesionFirmadaOk(
   W: string, KEY: string, usuario: string, exp: unknown, sig: string,
@@ -124,20 +124,10 @@ Deno.serve(async (req: Request) => {
     let body: any = {};
     try { body = await req.json(); } catch { body = {}; }
     const usuario = String(body?.usuario || "").trim().toLowerCase();
-    const clave = String(body?.clave || "");
+    // La sesion firmada es el UNICO modo: `tasador_usuarios` ya no tiene ni `clave`
+    // ni `password_hash` (se unificaron en app_credenciales, 16-sep-2026).
     if (usuario && COSTO_USUARIOS.has(usuario)) {
-      // Sesion firmada por login_tasador (el front ya no tiene la clave).
-      if (await sesionFirmadaOk(W, SUPA_KEY, usuario, body?.session_exp, String(body?.session_sig || ""))) {
-        includeCosto = true;
-      } else if (clave) {
-        try {
-          const u = await rest(
-            W, SUPA_KEY,
-            `/tasador_usuarios?usuario=eq.${encodeURIComponent(usuario)}&clave=eq.${encodeURIComponent(clave)}&activo=eq.true&select=usuario`,
-          );
-          includeCosto = u.length > 0;
-        } catch (_) { includeCosto = false; }
-      }
+      includeCosto = await sesionFirmadaOk(W, SUPA_KEY, usuario, body?.session_exp, String(body?.session_sig || ""));
     }
   }
 

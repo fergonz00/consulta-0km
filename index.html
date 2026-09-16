@@ -491,6 +491,12 @@ let usuariosList = [];
 let currentMode = null;
 let stockData = [];
 let rotacionData = {}; // nombreCorto -> {stock, ventasPorMes, diasVenta} — solo llega si el login es admin (gcia)
+// ¿La Edge nos mando la ganancia en esta sesion? Es la UNICA fuente de verdad para
+// mostrar margenes. Si viene en false y igual mostraramos "gcia", todos los numeros
+// saldrian de una ganancia 0 y el margen se veria como -dto extra: un auto que deja
+// +2,76% aparece en -1,95%. Paso dos veces (ver credsEdge). Nunca mas: sin esto, no
+// se muestra margen.
+let gciaDisponible = false;
 // modelo (nombre amigable) -> {total, disponibles:{total,colores}, pedidas:{total,colores}, nombreCorto}
 // Reparto VW (stock virtual): unidades ya asignadas por VW que todavia no entraron
 // a Oversoft. Para responder "¿puedo reponer este modelo?". Solo llega si es admin.
@@ -820,6 +826,7 @@ async function cargarStockOversoft() {
   const data = await res.json();
   if (!data || data.ok === false) throw new Error(data && data.error ? data.error : 'respuesta invalida');
 
+  gciaDisponible = data.gciaIncluida === true; // la Edge dice si desbloqueo la ganancia
   catalogoModelos = data.catalogoModelos || []; // todos los modelos con precio, haya o no unidades
   paletaColores = data.paleta || {};            // nombreCorto -> colores reales del modelo
   rotacionData = data.rotacion || {}; // comparativos Baratito por modelo (solo admin)
@@ -3992,7 +3999,10 @@ function abrirDetalle(consultaId, editMode = false) {
   const overlay = document.getElementById('modalOverlay');
   const cont = document.getElementById('modalContent');
   const cliente = c.tipo_cliente === 'particular' ? `${c.cliente_nombre || ''} ${c.cliente_apellido || ''}`.trim() : (c.reventa_nombre || '');
-  const showGcia = currentMode === 'admin'; // gcia y % financiación SOLO admin (fngonzalez)
+  // gcia y % financiación SOLO admin — y SOLO si la Edge realmente mando la ganancia.
+  // Sin el segundo chequeo, una sesion sin credenciales pinta margenes calculados
+  // sobre una ganancia 0 (ver gciaDisponible).
+  const showGcia = currentMode === 'admin' && gciaDisponible;
   const itemsHtml = (c.items || []).map((it, i) => {
     // Para items de reparto creados antes del fix, los campos del analisis vienen en null
     // y el modelo guardado puede ser el alias (sin "VW " ni "MY##"). Recalculamos en vivo
@@ -4513,12 +4523,22 @@ function abrirDetalle(consultaId, editMode = false) {
     `;
   }
 
+  // Admin sin ganancia desbloqueada: lo decimos fuerte en vez de mostrar margenes
+  // falsos. Pasa si la sesion guardada es vieja (sin sesion firmada) o si vencio.
+  const avisoSinGcia = (currentMode === 'admin' && !gciaDisponible)
+    ? `<div style="background:#fee2e2; border:1px solid #fca5a5; color:#991b1b; border-radius:8px; padding:10px 12px; margin-bottom:10px; font-size:13px">
+         <strong>⚠️ No se pudo desbloquear la ganancia en esta sesión.</strong>
+         Los márgenes quedan ocultos a propósito: mostrarlos daría cualquier cosa.
+         Salí y volvé a entrar (botón <strong>Salir</strong>) para recuperarlos.
+       </div>`
+    : '';
   cont.innerHTML = `
     <div class="modal-header">
       <h2>#${c.id} — ${escapeHtml(cliente)}</h2>
       <button class="modal-close" onclick="closeModal()">×</button>
     </div>
     <div class="modal-body">
+      ${avisoSinGcia}
       <div class="detalle-section">
         <h4>Vendedor</h4>
         <div class="kv"><span class="k">Nombre</span><span class="v">${escapeHtml(c.vendedor_nombre || c.vendedor_usuario || '')}</span></div>
@@ -6366,9 +6386,19 @@ async function init() {
           : (currentUser.rol ? [currentUser.rol] : ['vendedor']);
         // Sesion firmada guardada en el login. Solo si es del MISMO usuario: si
         // quedo de una impersonacion, no vale para este.
-        if (sess.session_sig && sess.usuario === currentUser.usuario) {
+        const sigOk = sess.session_sig && sess.usuario === currentUser.usuario &&
+                      Number(sess.session_exp || 0) * 1000 > Date.now();
+        if (sigOk) {
           currentUser.session_exp = sess.session_exp;
           currentUser.session_sig = sess.session_sig;
+        } else {
+          // Sin sesion firmada no hay forma de probar quien sos ante las Edge
+          // (`tasador_usuarios` ya no tiene la clave): entrarias con media app
+          // en blanco y sin margenes. Mejor pedir el login de nuevo.
+          hideLoading();
+          limpiarSesion();
+          document.getElementById('loginScreen').classList.remove('hidden');
+          return;
         }
         document.getElementById('loginScreen').classList.add('hidden');
         await cargarStock();

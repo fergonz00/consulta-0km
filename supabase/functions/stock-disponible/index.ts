@@ -88,8 +88,8 @@ async function rest(base: string, key: string, path: string): Promise<any[]> {
  * clave del usuario, asi que {usuario, clave} dejo de llegar y esta Edge
  * respondia SIEMPRE sin ganancia: el panel del admin mostraba "gcia
  * resultante" = -dto extra (como si el margen fuera 0). El token firmado es
- * ahora la forma de probar quien pide. La clave se sigue aceptando para
- * sesiones viejas restauradas de localStorage.
+ * ahora la UNICA forma de probar quien pide: desde el 16-sep-2026 `tasador_usuarios`
+ * tampoco tiene `clave` ni `password_hash` (unificados en app_credenciales).
  */
 async function sesionFirmadaOk(
   W: string, KEY: string, usuario: string, exp: unknown, sig: string,
@@ -212,18 +212,16 @@ Deno.serve(async (req: Request) => {
     let body: any = {};
     try { body = await req.json(); } catch { body = {}; }
     const usuario = String(body?.usuario || "").trim().toLowerCase();
-    const clave = String(body?.clave || "");
-    // Sesion firmada por login_tasador (el front ya no tiene la clave).
+    // Sesion firmada por login_tasador: el front ya no tiene la clave (y la base tampoco).
     const sesionOk = await sesionFirmadaOk(W, SUPA_KEY, usuario, body?.session_exp, String(body?.session_sig || ""));
     usuarioReq = usuario;
     comoVendedorReq = String(body?.comoVendedor || "").trim().toLowerCase();
     pedirPreventas = body?.misPreventas === true;
-    if (pedirPreventas && usuario && (sesionOk || clave)) {
+    if (pedirPreventas && usuario && sesionOk) {
       try {
-        const filtro = sesionOk ? "" : `&clave=eq.${encodeURIComponent(clave)}`;
         const u = await rest(
           W, SUPA_KEY,
-          `/tasador_usuarios?usuario=eq.${encodeURIComponent(usuario)}${filtro}&activo=eq.true&select=usuario,rol,roles`,
+          `/tasador_usuarios?usuario=eq.${encodeURIComponent(usuario)}&activo=eq.true&select=usuario,rol,roles`,
         );
         if (u.length > 0) {
           autenticado = true;
@@ -233,19 +231,10 @@ Deno.serve(async (req: Request) => {
         }
       } catch (_) { autenticado = false; }
     }
-    if (usuario && GCIA_USUARIOS.has(usuario)) {
-      if (sesionOk) {
-        includeGcia = true; // sesion firmada del usuario autorizado
-      } else if (clave) {
-        try {
-          const u = await rest(
-            W, SUPA_KEY,
-            `/tasador_usuarios?usuario=eq.${encodeURIComponent(usuario)}&clave=eq.${encodeURIComponent(clave)}&activo=eq.true&select=usuario`
-          );
-          includeGcia = u.length > 0; // credenciales validas del usuario autorizado
-        } catch (_) { includeGcia = false; }
-      }
-    }
+    // La sesion firmada es el UNICO modo: `tasador_usuarios` ya no tiene ni `clave`
+    // ni `password_hash` (se unificaron en app_credenciales, 16-sep-2026), asi que
+    // el viejo filtro `clave=eq.` apuntaba a una columna inexistente y siempre fallaba.
+    if (usuario && sesionOk && GCIA_USUARIOS.has(usuario)) includeGcia = true;
   }
 
   try {
