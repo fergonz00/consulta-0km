@@ -283,7 +283,6 @@ input, select, textarea { font-family: var(--font); }
     <div class="right">
       <span class="user-info" id="userInfo"></span>
       <button id="btnCambiarPerfil" onclick="cambiarPerfil()" class="hidden" style="background:rgba(255,255,255,0.15); color:#fff; padding:8px 14px; border-radius:6px; font-size:13px; font-weight:500">🔄 Cambiar perfil</button>
-      <button id="btnUsuarios" onclick="abrirUsuarios()" class="hidden" style="background:rgba(255,255,255,0.15); color:#fff; padding:8px 14px; border-radius:6px; font-size:13px; font-weight:500">👥 Usuarios</button>
       <button onclick="logout()">Salir</button>
     </div>
   </header>
@@ -708,7 +707,6 @@ function logout() {
   limpiarSesion();
   currentUser = null; realUser = null; currentMode = null;
   document.getElementById('impersonateBanner').classList.add('hidden');
-  document.getElementById('btnUsuarios').classList.add('hidden');
   document.getElementById('btnCambiarPerfil').classList.add('hidden');
   document.getElementById('usuariosView').classList.add('hidden');
   document.getElementById('appScreen').classList.add('hidden');
@@ -749,10 +747,7 @@ function entrarComo(modo) {
   document.getElementById('usuariosView').classList.add('hidden');
   const tag = modo === 'admin' ? ' · Admin' : (modo === 'gerente' ? ' · Gerente' : '');
   document.getElementById('userInfo').textContent = (currentUser.nombre || currentUser.usuario) + tag;
-  // Botón "Usuarios" cuando el modo activo es admin Y puede gestionar usuarios o
-  // al menos resetear claves (fngonzalez full, mlubrano solo reset).
-  // Gestion de usuarios UNIFICADA en el portal: aca queda oculta siempre.
-  document.getElementById('btnUsuarios').classList.add('hidden');
+  // Gestión de usuarios: unificada en el portal. Esta app ya no tiene solapa Usuarios.
   // Botón "Selección múltiple" (para borrar varias consultas) solo superadmin
   const btnSel = document.getElementById('btnSelMultiple');
   if (btnSel) btnSel.classList.toggle('hidden', !(modo === 'admin' && _esSuperadmin()));
