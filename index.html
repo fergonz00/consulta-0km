@@ -654,7 +654,11 @@ function guardarSesion() {
 function cargarSesion() {
   try { const raw = localStorage.getItem('consulta0km_user'); return raw ? JSON.parse(raw) : null; } catch(e) { return null; }
 }
-function limpiarSesion() { try { localStorage.removeItem('consulta0km_user'); } catch(e) {} }
+function limpiarSesion() {
+  try { localStorage.removeItem('consulta0km_user'); } catch(e) {}
+  // Salir = salir de TODO el ecosistema: borrar la cookie compartida del portal.
+  try { document.cookie = 'tga_session=; path=/; domain=.titogonzalez.online; max-age=0; Secure; SameSite=Lax'; } catch(e) {}
+}
 
 // Credenciales para las Edge Functions (stock-disponible, usados-disponibles).
 // Desde que el login pasa por rpc/login_tasador (bcrypt server-side) el front NO
