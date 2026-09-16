@@ -17,8 +17,8 @@
 //
 // COSTO BLINDADO (mismo criterio que la gcia en `stock-disponible`): el costo
 // de toma y el margen son plata interna. Solo se devuelven a los usuarios de
-// COSTO_USUARIOS, validados server-side con {usuario, clave} (POST) contra
-// tasador_usuarios. Vendedor, gerente, cualquier otro admin y cualquier GET
+// COSTO_USUARIOS, validados server-side con la sesion firmada de login_tasador
+// ({usuario, session_exp, session_sig}) o, para sesiones viejas, con la clave. Vendedor, gerente, cualquier otro admin y cualquier GET
 // reciben la lista SIN costo ni margen.
 //
 // EL COSTO SALE DE OVERSOFT (`usados.preciodetoma`), que es lo que se tomo
@@ -65,6 +65,40 @@ const normPat = (s: unknown) => String(s ?? "").toUpperCase().replace(/[^A-Z0-9]
 // asi que el anio se agrega solo si no viene ya en el texto. Mismo criterio que
 // tituloUsado() en portal-precios: si no, el nombre sale con el anio duplicado.
 // deno-lint-ignore no-explicit-any
+/**
+ * Sesion firmada que devuelve el RPC `login_tasador`: HMAC-SHA256 de
+ * "usuario.exp" con el secreto de `app_config.tga_session_secret`, en hex.
+ *
+ * Desde que el login corre server-side con bcrypt, el front YA NO tiene la
+ * clave del usuario, asi que {usuario, clave} dejo de llegar y esta Edge
+ * respondia SIEMPRE sin ganancia: la pantalla de usados quedo sin costo
+ * de toma ni margen. El token firmado es
+ * ahora la forma de probar quien pide. La clave se sigue aceptando para
+ * sesiones viejas restauradas de localStorage.
+ */
+async function sesionFirmadaOk(
+  W: string, KEY: string, usuario: string, exp: unknown, sig: string,
+): Promise<boolean> {
+  const e = Number(exp) || 0;
+  if (!usuario || !e || !sig) return false;
+  if (e * 1000 < Date.now()) return false; // vencida (dura 7 dias)
+  try {
+    const rows = await rest(W, KEY, "/app_config?clave=eq.tga_session_secret&select=valor&limit=1");
+    const secret = rows?.[0]?.valor;
+    if (!secret) return false;
+    const enc = new TextEncoder();
+    const k = await crypto.subtle.importKey(
+      "raw", enc.encode(String(secret)), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+    );
+    const mac = await crypto.subtle.sign("HMAC", k, enc.encode(`${usuario}.${e}`));
+    const hex = Array.from(new Uint8Array(mac)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    return hex === String(sig).trim().toLowerCase();
+  } catch (_) {
+    return false;
+  }
+}
+
+
 function tituloUsado(u: any): string {
   const base = [String(u.marca ?? "").trim(), String(u.modelo ?? "").trim()]
     .filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
@@ -91,14 +125,19 @@ Deno.serve(async (req: Request) => {
     try { body = await req.json(); } catch { body = {}; }
     const usuario = String(body?.usuario || "").trim().toLowerCase();
     const clave = String(body?.clave || "");
-    if (usuario && clave && COSTO_USUARIOS.has(usuario)) {
-      try {
-        const u = await rest(
-          W, SUPA_KEY,
-          `/tasador_usuarios?usuario=eq.${encodeURIComponent(usuario)}&clave=eq.${encodeURIComponent(clave)}&activo=eq.true&select=usuario`,
-        );
-        includeCosto = u.length > 0;
-      } catch (_) { includeCosto = false; }
+    if (usuario && COSTO_USUARIOS.has(usuario)) {
+      // Sesion firmada por login_tasador (el front ya no tiene la clave).
+      if (await sesionFirmadaOk(W, SUPA_KEY, usuario, body?.session_exp, String(body?.session_sig || ""))) {
+        includeCosto = true;
+      } else if (clave) {
+        try {
+          const u = await rest(
+            W, SUPA_KEY,
+            `/tasador_usuarios?usuario=eq.${encodeURIComponent(usuario)}&clave=eq.${encodeURIComponent(clave)}&activo=eq.true&select=usuario`,
+          );
+          includeCosto = u.length > 0;
+        } catch (_) { includeCosto = false; }
+      }
     }
   }
 

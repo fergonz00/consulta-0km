@@ -25,8 +25,9 @@
 // esta fisicamente pero que ya tiene color asignado y precio puesto en el Baratito.
 //
 // GANANCIA BLINDADA: la gcia (gcia_actual/gcia_vigente) es dato sensible y SOLO se
-// devuelve a los usuarios de GCIA_USUARIOS (hoy: solo fngonzalez), validados
-// server-side con {usuario, clave} (POST) contra tasador_usuarios. El resto
+// devuelve a los usuarios de GCIA_USUARIOS, validados server-side con la sesion
+// firmada de login_tasador ({usuario, session_exp, session_sig}) o, para sesiones
+// viejas, con {usuario, clave} contra tasador_usuarios. El resto
 // (otros admin incluidos), vendedor/gerente y cualquier GET reciben stock SIN gcia.
 //
 // Secrets requeridos: OVERSOFT_URL, OVERSOFT_KEY (replica solo-lectura).
@@ -77,6 +78,39 @@ async function rest(base: string, key: string, path: string): Promise<any[]> {
   });
   if (!res.ok) throw new Error(`${path} -> ${res.status} ${await res.text()}`);
   return res.json();
+}
+
+/**
+ * Sesion firmada que devuelve el RPC `login_tasador`: HMAC-SHA256 de
+ * "usuario.exp" con el secreto de `app_config.tga_session_secret`, en hex.
+ *
+ * Desde que el login corre server-side con bcrypt, el front YA NO tiene la
+ * clave del usuario, asi que {usuario, clave} dejo de llegar y esta Edge
+ * respondia SIEMPRE sin ganancia: el panel del admin mostraba "gcia
+ * resultante" = -dto extra (como si el margen fuera 0). El token firmado es
+ * ahora la forma de probar quien pide. La clave se sigue aceptando para
+ * sesiones viejas restauradas de localStorage.
+ */
+async function sesionFirmadaOk(
+  W: string, KEY: string, usuario: string, exp: unknown, sig: string,
+): Promise<boolean> {
+  const e = Number(exp) || 0;
+  if (!usuario || !e || !sig) return false;
+  if (e * 1000 < Date.now()) return false; // vencida (dura 7 dias)
+  try {
+    const rows = await rest(W, KEY, "/app_config?clave=eq.tga_session_secret&select=valor&limit=1");
+    const secret = rows?.[0]?.valor;
+    if (!secret) return false;
+    const enc = new TextEncoder();
+    const k = await crypto.subtle.importKey(
+      "raw", enc.encode(String(secret)), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+    );
+    const mac = await crypto.subtle.sign("HMAC", k, enc.encode(`${usuario}.${e}`));
+    const hex = Array.from(new Uint8Array(mac)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    return hex === String(sig).trim().toLowerCase();
+  } catch (_) {
+    return false;
+  }
 }
 
 // Normalizador de nombres de modelo. Portado VERBATIM de gestion-tga Codigo.js (_ntrim).
@@ -179,14 +213,17 @@ Deno.serve(async (req: Request) => {
     try { body = await req.json(); } catch { body = {}; }
     const usuario = String(body?.usuario || "").trim().toLowerCase();
     const clave = String(body?.clave || "");
+    // Sesion firmada por login_tasador (el front ya no tiene la clave).
+    const sesionOk = await sesionFirmadaOk(W, SUPA_KEY, usuario, body?.session_exp, String(body?.session_sig || ""));
     usuarioReq = usuario;
     comoVendedorReq = String(body?.comoVendedor || "").trim().toLowerCase();
     pedirPreventas = body?.misPreventas === true;
-    if (pedirPreventas && usuario && clave) {
+    if (pedirPreventas && usuario && (sesionOk || clave)) {
       try {
+        const filtro = sesionOk ? "" : `&clave=eq.${encodeURIComponent(clave)}`;
         const u = await rest(
           W, SUPA_KEY,
-          `/tasador_usuarios?usuario=eq.${encodeURIComponent(usuario)}&clave=eq.${encodeURIComponent(clave)}&activo=eq.true&select=usuario,rol,roles`,
+          `/tasador_usuarios?usuario=eq.${encodeURIComponent(usuario)}${filtro}&activo=eq.true&select=usuario,rol,roles`,
         );
         if (u.length > 0) {
           autenticado = true;
@@ -196,16 +233,18 @@ Deno.serve(async (req: Request) => {
         }
       } catch (_) { autenticado = false; }
     }
-    if (usuario && clave) {
-      try {
-        if (GCIA_USUARIOS.has(usuario)) {
+    if (usuario && GCIA_USUARIOS.has(usuario)) {
+      if (sesionOk) {
+        includeGcia = true; // sesion firmada del usuario autorizado
+      } else if (clave) {
+        try {
           const u = await rest(
             W, SUPA_KEY,
             `/tasador_usuarios?usuario=eq.${encodeURIComponent(usuario)}&clave=eq.${encodeURIComponent(clave)}&activo=eq.true&select=usuario`
           );
           includeGcia = u.length > 0; // credenciales validas del usuario autorizado
-        }
-      } catch (_) { includeGcia = false; }
+        } catch (_) { includeGcia = false; }
+      }
     }
   }
 

@@ -642,12 +642,36 @@ function showToast(msg, dur = 2500) {
 // ============ SESSION ============
 function guardarSesion() {
   if (!currentUser) return;
-  try { localStorage.setItem('consulta0km_user', JSON.stringify({ id: currentUser.id, mode: currentMode })); } catch(e) {}
+  // Guardamos tambien la sesion FIRMADA que devolvio login_tasador (HMAC de
+  // "usuario.exp"): es lo unico que prueba quien sos ante las Edge Functions
+  // ahora que el login corre server-side y el front no tiene mas la clave.
+  try {
+    localStorage.setItem('consulta0km_user', JSON.stringify({
+      id: currentUser.id, mode: currentMode, usuario: currentUser.usuario || null,
+      session_exp: currentUser.session_exp || null, session_sig: currentUser.session_sig || null
+    }));
+  } catch(e) {}
 }
 function cargarSesion() {
   try { const raw = localStorage.getItem('consulta0km_user'); return raw ? JSON.parse(raw) : null; } catch(e) { return null; }
 }
 function limpiarSesion() { try { localStorage.removeItem('consulta0km_user'); } catch(e) {} }
+
+// Credenciales para las Edge Functions (stock-disponible, usados-disponibles).
+// Desde que el login pasa por rpc/login_tasador (bcrypt server-side) el front NO
+// recibe mas la clave: lo que identifica al usuario es la sesion firmada que
+// devuelve ese RPC (session_exp + session_sig = HMAC de "usuario.exp"). Sin
+// mandarla, la Edge responde SIN ganancia y el panel del admin muestra todos los
+// margenes como si la gcia fuera 0 (o sea: "gcia resultante" = -dto extra).
+// `clave` se sigue mandando si esta (sesiones viejas) por compatibilidad.
+function credsEdge(extra) {
+  const u = currentUser || {};
+  const c = {};
+  if (u.usuario) c.usuario = u.usuario;
+  if (u.session_sig && u.session_exp) { c.session_exp = u.session_exp; c.session_sig = u.session_sig; }
+  if (u.clave) c.clave = u.clave;
+  return Object.assign(c, extra || {});
+}
 
 // ============ LOGIN ============
 async function login() {
@@ -786,8 +810,7 @@ async function cargarStock() {
 async function cargarStockOversoft() {
   // Mandamos credenciales del usuario logueado: la Edge devuelve la gcia SOLO si es admin.
   // Vendedor/gerente reciben el stock sin ganancia (blindada server-side).
-  const creds = (currentUser && currentUser.usuario && currentUser.clave)
-    ? { usuario: currentUser.usuario, clave: currentUser.clave } : {};
+  const creds = credsEdge();
   const res = await fetch(STOCK_EDGE_URL, {
     method: 'POST',
     headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
@@ -2097,12 +2120,10 @@ async function cargarPreventasVendidas() {
     const res = await fetch(STOCK_EDGE_URL, {
       method: 'POST',
       headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        usuario: currentUser.usuario,
-        clave: currentUser.clave || '',
+      body: JSON.stringify(credsEdge({
         misPreventas: true,
         ...(objetivo ? { comoVendedor: objetivo } : {})
-      })
+      }))
     });
     const data = await res.json();
     preventasVendidas = (data && data.preventasVendidas) || [];
@@ -4977,8 +4998,7 @@ function nuevaConsultaDispatch() {
 // si es uno de los usuarios autorizados (mismo patron que stock-disponible).
 async function cargarUsadosStock(forzar = false) {
   if (usadosStockCargado && !forzar) return;
-  const creds = (currentUser && currentUser.usuario && currentUser.clave)
-    ? { usuario: currentUser.usuario, clave: currentUser.clave } : {};
+  const creds = credsEdge();
   const res = await fetch(USADOS_EDGE_URL, {
     method: 'POST',
     headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
@@ -6344,6 +6364,12 @@ async function init() {
         currentUser.rolesArr = (Array.isArray(currentUser.roles) && currentUser.roles.length > 0)
           ? currentUser.roles
           : (currentUser.rol ? [currentUser.rol] : ['vendedor']);
+        // Sesion firmada guardada en el login. Solo si es del MISMO usuario: si
+        // quedo de una impersonacion, no vale para este.
+        if (sess.session_sig && sess.usuario === currentUser.usuario) {
+          currentUser.session_exp = sess.session_exp;
+          currentUser.session_sig = sess.session_sig;
+        }
         document.getElementById('loginScreen').classList.add('hidden');
         await cargarStock();
         if (currentUser.rolesArr.includes('admin') && currentUser.rolesArr.length > 1 && !sess.mode) {
