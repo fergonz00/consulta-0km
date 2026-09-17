@@ -6378,7 +6378,7 @@ async function init() {
   if (sess && sess.id) {
     showLoading('Restaurando sesión...');
     try {
-      const data = await sbFetch(`tasador_usuarios?id=eq.${sess.id}&activo=eq.true`);
+      const data = await sbFetch(`tasador_usuarios?id=eq.${sess.id}&activo=eq.true&select=id,nombre,usuario,rol,activo,email,roles,telefono_wa,debe_cambiar_clave,notificaciones_wa`);
       if (data && data.length > 0) {
         currentUser = data[0];
         currentUser.rolesArr = (Array.isArray(currentUser.roles) && currentUser.roles.length > 0)
