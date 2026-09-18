@@ -4290,16 +4290,22 @@ function abrirDetalle(consultaId, editMode = false) {
     // mismo snapshot del Motor que los precios y que el bloque de rotacion), no de ninguna
     // planilla. Antes leia la col M de la tab "bt" del espejo, que en realidad era "vendidos
     // 60 dias": el cartel decia "ultimo mes" y mostraba otra cosa.
+    // Arriba el mes EN CURSO (hasta hoy) y abajo el ultimo mes completo como referencia.
     let ventasMesHtml = '';
     if (showGcia && ncRot && rotacionData[ncRot]) {
       const _hoyV = new Date();
-      const _mesV = new Date(_hoyV.getFullYear(), _hoyV.getMonth() - 1, 1);
-      const mkUlt = _mesV.getFullYear() + '-' + String(_mesV.getMonth() + 1).padStart(2, '0');
-      const v = Number((rotacionData[ncRot].ventasPorMes || {})[mkUlt]) || 0;
-      const mesTxt = MES_ABR[_mesV.getMonth()] + ' ' + String(_mesV.getFullYear()).slice(2);
+      const _vpm = rotacionData[ncRot].ventasPorMes || {};
+      const _mk = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+      const _mt = d => MES_ABR[d.getMonth()] + ' ' + String(d.getFullYear()).slice(2);
+      const _u = n => n + ' ' + (n === 1 ? 'unidad' : 'unidades');
+      const _mesAct = new Date(_hoyV.getFullYear(), _hoyV.getMonth(), 1);
+      const _mesAnt = new Date(_hoyV.getFullYear(), _hoyV.getMonth() - 1, 1);
+      const vAct = Number(_vpm[_mk(_mesAct)]) || 0;
+      const vAnt = Number(_vpm[_mk(_mesAnt)]) || 0;
       ventasMesHtml = `
         <div style="margin-top:8px; padding:6px 8px; background:#e7f1ff; border-left:3px solid var(--vw-blue); border-radius:4px; font-size:12px">
-          <strong>📈 Vendidos en ${mesTxt}:</strong> ${v} ${v === 1 ? 'unidad' : 'unidades'} de <strong>${escapeHtml(it.modelo)}</strong>
+          <strong>📈 Vendidos en ${_mt(_mesAct)} (al ${_hoyV.getDate()}):</strong> ${_u(vAct)} de <strong>${escapeHtml(it.modelo)}</strong>
+          <div style="color:#555; margin-top:2px">${_mt(_mesAnt)} completo: ${_u(vAnt)}</div>
         </div>`;
     }
     // Rotación del modelo (los comparativos del Baratito) — solo admin. Los datos
