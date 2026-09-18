@@ -444,7 +444,7 @@ El cartel del detalle admin decía **"📈 Vendidos último mes: 17 unidades de 
 1. **Columna equivocada.** El cartel leía la col **M** de la tab `bt` del espejo. El comentario del código decía `M = vendidos en el ultimo mes`, pero el encabezado real de esa columna es **`vendidos 60 dias`**. La col del mes es la **G** (`Vendidos`). Para ese Taos: G=21, M=17 — mostraba 17 y lo rotulaba "último mes".
 2. **Ninguno de los dos números era real.** Contra Oversoft (`unidades` con `modelo = 'CL23LZ MY26'`, por `fechaasignacion`): abr 7 · may 10 · jun 3 · jul 2 · **ago 2**. La planilla estaba desactualizada.
 
-El `ventasPorMes` del snapshot del Motor coincide exacto con Oversoft, mes a mes. Por eso ahora el cartel sale de ahí y muestra el **último mes COMPLETO**, con el mes en el título (`Vendidos en ago 26: 2 unidades`) para que no se pueda volver a confundir el período.
+El `ventasPorMes` del snapshot del Motor coincide exacto con Oversoft, mes a mes. Por eso ahora el cartel sale de ahí. Desde el 18-09-2026 muestra **el mes en curso hasta hoy** (`Vendidos en sep 26 (al 18): N`) y abajo el último mes completo como referencia, siempre con el mes en el texto para que no se confunda el período.
 
 ### Qué se reemplazó
 
