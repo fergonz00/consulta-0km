@@ -911,15 +911,15 @@ async function cargarStockOversoft() {
 // si la URL no esta seteada o falla la fetch, deja competenciaMap vacio y la UI no muestra la seccion.
 async function cargarCompetencia() {
   try {
-    const filas = await sbFetch('competencia_precios?select=modelo_tga,fuente,precio');
+    const filas = await sbFetch('competencia_precios?select=modelo_tga,fuente,precio,updated_at');
     const map = {};
     (filas || []).forEach(f => {
       const modelo = (f.modelo_tga || '').trim();
       const precio = Number(f.precio);
       if (!modelo || !precio || isNaN(precio)) return;
       if (!map[modelo]) map[modelo] = { tu0km: NaN, espasa: NaN };
-      if (f.fuente === 'elcerokm') map[modelo].tu0km = precio;
-      else if (f.fuente === 'espasa') map[modelo].espasa = precio;
+      if (f.fuente === 'elcerokm') { map[modelo].tu0km = precio; map[modelo].tu0km_at = f.updated_at; }
+      else if (f.fuente === 'espasa') { map[modelo].espasa = precio; map[modelo].espasa_at = f.updated_at; }
     });
     competenciaMap = map;
     console.log(`[Competencia] ${Object.keys(map).length} modelos cargados.`);
@@ -4178,12 +4178,20 @@ function abrirDetalle(consultaId, editMode = false) {
       const ml = competenciaML[it.modelo];
       // Number(null) es 0: una consulta sin precio no se compara contra nada.
       const ped = it.precio_pedido != null && Number(it.precio_pedido) > 0 ? Number(it.precio_pedido) : null;
-      const filaComp = (label, precio) => {
+      // Si el scraper deja de andar la fila queda con el precio viejo (ElCeroKm estuvo 10 dias
+      // bloqueado, 11 al 21-sep-2026, y se mostraba como vigente): mas de un dia => fecha en rojo.
+      const fechaDato = (at) => {
+        if (!at) return '';
+        const d = new Date(at);
+        if (isNaN(d) || Date.now() - d.getTime() < 24 * 3600 * 1000) return '';
+        return ` <span style="color:var(--red); font-size:11px; font-weight:600">⚠ dato del ${d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}</span>`;
+      };
+      const filaComp = (label, precio, at) => {
         if (!precio || isNaN(precio)) return '';
         if (!ped) {
           return `
           <div style="display:grid; grid-template-columns:1fr auto; gap:10px; padding:6px 6px; border-bottom:1px dashed var(--vw-grey-2); font-size:12px">
-            <span><strong>${escapeHtml(label)}</strong></span>
+            <span><strong>${escapeHtml(label)}</strong>${fechaDato(at)}</span>
             <span class="muted">${fmtMoney(precio)}</span>
           </div>`;
         }
@@ -4196,13 +4204,13 @@ function abrirDetalle(consultaId, editMode = false) {
         const dolarTxt = (dolarDiff >= 0 ? '+' : '−') + fmtMoney(Math.abs(dolarDiff)).replace('$', '$');
         return `
           <div style="display:grid; grid-template-columns:1fr auto auto; gap:10px; padding:6px 6px; border-bottom:1px dashed var(--vw-grey-2); font-size:12px; align-items:center">
-            <span><strong>${escapeHtml(label)}</strong> <span class="muted">${fmtMoney(precio)}</span></span>
+            <span><strong>${escapeHtml(label)}</strong> <span class="muted">${fmtMoney(precio)}</span>${fechaDato(at)}</span>
             <span class="muted" style="font-size:11px">(${dolarTxt})</span>
             <span style="color:${color}; font-weight:600; text-align:right; white-space:nowrap">${txt}</span>
           </div>
         `;
       };
-      const filasComp = [filaComp('ElCeroKm', comp.tu0km), filaComp('EspasaOnline', comp.espasa)].filter(Boolean).join('');
+      const filasComp = [filaComp('ElCeroKm', comp.tu0km, comp.tu0km_at), filaComp('EspasaOnline', comp.espasa, comp.espasa_at)].filter(Boolean).join('');
       const okmHtml = filasComp ? `
             <div style="font-size:12px; font-weight:700; margin:2px 0 4px">🏷 ElCeroKm / Espasa
               <span class="muted" style="font-weight:400; font-size:11px">(con flete y formularios${ped ? `, contra el precio pedido ${fmtMoney(ped)}` : ''})</span>
