@@ -439,7 +439,10 @@ Deno.serve(async (req: Request) => {
     // calculó el motor para el modelo (gcia_actual) y le sumamos solo el delta. Queda
     // consistente con el modelo sin importar las tasas exactas del motor, y no
     // depende de Apps Script. FYF se cancela en la resta de ofertas.
-    const _GCIA_TAXRATE = 0.0135 / 1.21 + 0.014 / 1.21; // porción lineal en vn (IIBB + comisión)
+    // Desde el 22-sep-2026 el motor usa la fórmula de Ventas: gcia neta / lista neta,
+    // con comisión 1,5% + IIBB 1,4% sobre la venta neta. En esa base el IVA se cancela
+    // y la porción lineal queda 2,9% del delta de precio.
+    const _GCIA_TAXRATE = 0.015 + 0.014; // porción lineal en vn (comisión + IIBB)
     function gciaEnOferta(gciaModelo: number, lista: number, ofertaModelo: number, ofertaEsp: number): number {
       if (!(lista > 0)) return gciaModelo;
       return gciaModelo + ((ofertaEsp - ofertaModelo) * (1 - _GCIA_TAXRATE)) / lista;
