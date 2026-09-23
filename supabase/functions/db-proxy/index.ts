@@ -17,6 +17,7 @@ const TABLAS_OK = new Set([
   "consultas_reaperturas",
   "tasaciones",
   "notificaciones_config",
+  "competencia_precios", // solo lectura desde el simulador; se escribe con service_role (portal-precios)
 ]);
 
 const CORS_HEADERS = {
