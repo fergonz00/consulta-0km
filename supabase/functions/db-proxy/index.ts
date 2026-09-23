@@ -18,6 +18,7 @@ const TABLAS_OK = new Set([
   "tasaciones",
   "notificaciones_config",
   "competencia_precios", // solo lectura desde el simulador; se escribe con service_role (portal-precios)
+  "costos_financieros_mes", // solo lectura desde el simulador (SIRCREB/deb-cred del mes); se escribe con service_role
 ]);
 
 const CORS_HEADERS = {

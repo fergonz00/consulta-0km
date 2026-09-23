@@ -575,7 +575,7 @@ let formUsado = null;
 // ============ HELPERS ============
 // Tablas internas con RLS que ya no se tocan con la anon key: van por el proxy
 // firmado (db-proxy) con la sesión del operador. El resto sigue directo.
-const _TABLAS_PROXY = ['consultas_0km','consultas_0km_items','consultas_usados','consultas_reaperturas','tasaciones','notificaciones_config','competencia_precios'];
+const _TABLAS_PROXY = ['consultas_0km','consultas_0km_items','consultas_usados','consultas_reaperturas','tasaciones','notificaciones_config','competencia_precios','costos_financieros_mes'];
 function _sesionFirmada() {
   const src = (realUser && realUser.session_sig) ? realUser : currentUser;
   if (src && src.session_sig) return { usuario: src.usuario, session_exp: src.session_exp, session_sig: src.session_sig };
