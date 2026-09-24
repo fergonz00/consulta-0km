@@ -4336,6 +4336,13 @@ function abrirDetalle(consultaId, editMode = false) {
         const celdasMeses = mesesKeys.map(mk =>
           `<div style="text-align:center"><div class="muted" style="font-size:10px">${MES_ABR[parseInt(mk.slice(5), 10) - 1]}</div><div style="font-weight:700">${Number(vpm[mk]) || 0}</div></div>`
         ).join('');
+        // El mes EN CURSO al lado del último completo: sin esto no se ve como viene
+        // el mes que estamos vendiendo. Va aparte (azul) porque NO suma al total de 4
+        // meses completos, que es el que alimenta meses de stock y el Baratito.
+        const mkAct = _hoy.getFullYear() + '-' + String(_hoy.getMonth() + 1).padStart(2, '0');
+        const vActual = Number(vpm[mkAct]) || 0;
+        const celdaActual =
+          `<div style="text-align:center; background:#e7f1ff; border-radius:4px"><div style="font-size:10px; color:var(--vw-blue)">${MES_ABR[_hoy.getMonth()]}*</div><div style="font-weight:700; color:var(--vw-blue)">${vActual}</div></div>`;
         // meses de stock: mismo criterio que Baratito (ritmo = vend4/4; ∞ si hay stock y 0 ventas)
         const ritmo = vend4 / 4;
         const stockM = Number(rot.stock) || 0;
@@ -4364,10 +4371,11 @@ function abrirDetalle(consultaId, editMode = false) {
               <strong>🔄 Rotación del modelo</strong>
               <span class="muted" style="font-size:11px">(mismos números que el Baratito)</span>
             </div>
-            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px; font-size:12px">
-              ${caja('Vendidos · últ. 4 meses completos',
-                `<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:4px">${celdasMeses}</div>
-                 <div style="margin-top:4px; text-align:center"><strong>${vend4}</strong> <span class="muted">total</span></div>`)}
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:8px; font-size:12px">
+              ${caja('Vendidos · últ. 4 meses completos + en curso',
+                `<div style="display:grid; grid-template-columns:repeat(5,1fr); gap:4px">${celdasMeses}${celdaActual}</div>
+                 <div style="margin-top:4px; text-align:center"><strong>${vend4}</strong> <span class="muted">total (4 meses completos)</span></div>
+                 <div class="muted" style="font-size:10px; text-align:center">* ${MES_ABR[_hoy.getMonth()]} va al día ${_hoy.getDate()} — no suma al total</div>`)}
               ${caja('Meses de stock',
                 `<div style="font-size:18px; font-weight:700; color:${mesesColor}">${mesesTxt}</div>
                  <div class="muted" style="font-size:11px">${stockM} en stock · ritmo ${ritmo.toFixed(1).replace('.', ',')}/mes</div>`)}
