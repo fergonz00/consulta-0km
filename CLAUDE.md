@@ -498,11 +498,11 @@ Lo pasa **Valeria Reyna** (gerenta administrativa) a principio de mes y lo carga
 
 Tabla `costos_financieros_mes`: una fila por mes (`periodo` = primer día), `sircreb_pct` y `deb_cred_pct` **en fracción** (0,003 y 0,012), igual que el resto de los porcentajes del stack.
 
-**Si el mes en curso no está cargado, se usa la última fila anterior y todo lo que la consume muestra el cartel de desactualizado** — en el panel y adentro de cada consulta. Decisión explícita: seguir calculando con el número del mes pasado antes que dejar de calcular, siempre que el cartel se vea.
+**Si el mes en curso no está cargado, se usa la última fila anterior.** Hasta el **3er día hábil** del mes (lun-vie sin eriados_ar) eso es lo normal y **no se marca nada**: queda vigente la del mes anterior. Desde el 3er día hábil, todo lo que la consume muestra el cartel de desactualizado — en el panel y adentro de cada consulta. Decisión explícita: seguir calculando con el número del mes pasado antes que dejar de calcular. (Pedido de Fer el 01/10/2026: antes avisaba y marcaba desde el día 1.) Regla gemela: getAlicuotaVigente (portal-precios) y cargarCostosFinancieros (index.html, lee eriados_ar por el db-proxy, solo lectura).
 
 RLS: **habilitada** con policy sólo de `SELECT`. La anon key lee (la usa `index.html`), pero **no puede escribir** — verificado, un POST con anon da 401. Se escribe únicamente desde portal-precios con la `service_role`.
 
-**Aviso del día 1**: cron diario de Vercel `/api/cron/sircreb` (12:00 UTC = 9 hs ART) → Edge `notify-sircreb-pendiente` (vive en el repo del **tasador**) → WhatsApp a `fngonzalez`. Insiste cada 2 días hasta que se carga; al cargarse el aviso se corta solo, sin marcar nada. Usa el template ya aprobado `precios_actualizados` (una sola variable) y `costos_financieros_avisos` para no repetir. Env `SIRCREB_DESTINATARIOS` para sumar gente.
+**Aviso del 3er día hábil**: cron diario de Vercel `/api/cron/sircreb` (12:00 UTC = 9 hs ART) → Edge `notify-sircreb-pendiente` (vive en el repo del **tasador**) → WhatsApp a `fngonzalez`. Insiste cada 2 días hasta que se carga; al cargarse el aviso se corta solo, sin marcar nada. Usa el template ya aprobado `precios_actualizados` (una sola variable) y `costos_financieros_avisos` para no repetir. Env `SIRCREB_DESTINATARIOS` para sumar gente.
 
 ### Cómo entra en el análisis
 

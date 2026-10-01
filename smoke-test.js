@@ -23,7 +23,10 @@ vc.on('warn', () => {})
 vc.on('log', () => {})
 vc.on('info', () => {})
 
-const ALICUOTA = [{ periodo: '2026-09-01', sircreb_pct: 0.003, deb_cred_pct: 0.012 }]
+// El mes en curso (hora argentina), para que "al dia" no dependa de cuando se corre.
+const _ar = new Date(Date.now() - 3 * 3600 * 1000)
+const PERIODO_HOY = `${_ar.getUTCFullYear()}-${String(_ar.getUTCMonth() + 1).padStart(2, '0')}-01`
+const ALICUOTA = [{ periodo: PERIODO_HOY, sircreb_pct: 0.003, deb_cred_pct: 0.012 }]
 
 function jsonResp(data) {
   return Promise.resolve({
@@ -43,8 +46,12 @@ const dom = new JSDOM(HTML, {
     win.confirm = () => true
     // jsdom no implementa scrollTo y el wizard lo llama al cambiar de paso.
     win.scrollTo = () => {}
-    win.fetch = (url) => {
-      const u = String(url)
+    win.fetch = (url, init) => {
+      let u = String(url)
+      // Las tablas internas van por el db-proxy: la tabla viaja en el body, no en la URL.
+      if (u.includes('/functions/v1/db-proxy')) {
+        try { u = String(JSON.parse(init.body).path) } catch (_) {}
+      }
       if (u.includes('costos_financieros_mes')) return jsonResp(ALICUOTA)
       return jsonResp([])
     }
@@ -66,8 +73,14 @@ const TEST = `
 
   // 1) La alicuota se lee de la tabla y suma bien.
   casi(alicuotaTransferencia(), 0.015, 'alicuota total sep-26');
-  ok(costoTransfer.desactualizado === false, 'sep-26 no deberia figurar desactualizado');
-  ok(costoTransfer.sinDatos === false, 'sep-26 deberia tener datos');
+  ok(costoTransfer.desactualizado === false, 'el mes al dia no deberia figurar desactualizado');
+  ok(costoTransfer.sinDatos === false, 'el mes al dia deberia tener datos');
+
+  // 1b) Plazo del SIRCREB: 3er dia habil, salteando fines de semana y feriados.
+  const fer = new Set(['2026-10-12', '2027-01-01']);
+  ok(diaHabilDelMes('2026-10-01', 3, fer) === '2026-10-05', 'oct-26: 3er habil = lun 5');
+  ok(diaHabilDelMes('2026-11-01', 3, fer) === '2026-11-04', 'nov-26 arranca domingo: 3er habil = mie 4');
+  ok(diaHabilDelMes('2027-01-01', 3, fer) === '2027-01-06', 'ene-27 con feriado el 1: 3er habil = mie 6');
 
   // 2) El costo en pesos del ejemplo de Fer.
   casi(costoTransferencia(10000000), 150000, 'costo de 10M al 1,5%');

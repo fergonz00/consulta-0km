@@ -19,7 +19,11 @@ const TABLAS_OK = new Set([
   "notificaciones_config",
   "competencia_precios", // solo lectura desde el simulador; se escribe con service_role (portal-precios)
   "costos_financieros_mes", // solo lectura desde el simulador (SIRCREB/deb-cred del mes); se escribe con service_role
+  "feriados_ar", // solo lectura: plazo del SIRCREB (3er día hábil)
 ]);
+
+// Tablas a las que el proxy sólo deja leer (GET).
+const SOLO_LECTURA = new Set(["feriados_ar"]);
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -99,6 +103,7 @@ Deno.serve(async (req: Request) => {
 
   const method = String(body?.method || "GET").toUpperCase();
   if (!["GET", "POST", "PATCH", "DELETE"].includes(method)) return json({ error: "Método inválido" }, 400);
+  if (SOLO_LECTURA.has(tabla) && method !== "GET") return json({ error: "Tabla de solo lectura" }, 403);
 
   // Reenvío a PostgREST con service_role.
   const headers: Record<string, string> = {

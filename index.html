@@ -575,7 +575,7 @@ let formUsado = null;
 // ============ HELPERS ============
 // Tablas internas con RLS que ya no se tocan con la anon key: van por el proxy
 // firmado (db-proxy) con la sesión del operador. El resto sigue directo.
-const _TABLAS_PROXY = ['consultas_0km','consultas_0km_items','consultas_usados','consultas_reaperturas','tasaciones','notificaciones_config','competencia_precios','costos_financieros_mes'];
+const _TABLAS_PROXY = ['consultas_0km','consultas_0km_items','consultas_usados','consultas_reaperturas','tasaciones','notificaciones_config','competencia_precios','costos_financieros_mes','feriados_ar'];
 function _sesionFirmada() {
   const src = (realUser && realUser.session_sig) ? realUser : currentUser;
   if (src && src.session_sig) return { usuario: src.usuario, session_exp: src.session_exp, session_sig: src.session_sig };
@@ -947,9 +947,27 @@ async function cargarCompetencia() {
 // creditos, mas el SIRCREB de IIBB, que cambia todos los meses.
 //
 // La tabla `costos_financieros_mes` tiene una fila por mes. Si el mes en curso todavia
-// no se cargo, se usa la ultima fila anterior y se marca `desactualizado`: preferimos
-// seguir calculando con el numero del mes pasado ANTES que dejar de calcular, siempre
-// que el cartel se vea en pantalla.
+// no se cargo, se usa la ultima fila anterior: preferimos seguir calculando con el
+// numero del mes pasado ANTES que dejar de calcular. Hasta el 3er dia habil eso es lo
+// normal (Valeria lo pasa los primeros dias) y no se marca; desde ahi va el cartel de
+// `desactualizado`. Misma regla que `getAlicuotaVigente` de portal-precios.
+const SIRCREB_DIA_HABIL_PLAZO = 3;
+
+// El N-esimo dia habil (lun-vie sin feriados) de un periodo, en YYYY-MM-DD.
+function diaHabilDelMes(periodo, n, feriados) {
+  const d = new Date(`${String(periodo).slice(0, 10)}T12:00:00Z`);
+  let cuenta = 0;
+  for (let i = 0; i < 31; i++) {
+    const iso = d.toISOString().slice(0, 10);
+    const dow = d.getUTCDay();
+    if (dow !== 0 && dow !== 6 && !feriados.has(iso)) {
+      cuenta++;
+      if (cuenta >= n) return iso;
+    }
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return d.toISOString().slice(0, 10);
+}
 
 // Primer dia del mes actual en horario argentino (YYYY-MM-01).
 function periodoActualAR() {
@@ -982,8 +1000,16 @@ async function cargarCostosFinancieros() {
     const periodo = String(f.periodo).slice(0, 10);
     const sircreb = Number(f.sircreb_pct) || 0;
     const debCred = Number(f.deb_cred_pct) || 0;
+    let enPlazo = false;
+    if (periodo !== periodoActual) {
+      // Sin feriados (si falla la lectura) el plazo cuenta solo fines de semana.
+      const fer = await sbFetch(`feriados_ar?select=fecha&fecha=gte.${periodoActual}&limit=40`).catch(() => []);
+      const feriados = new Set((fer || []).map(x => String(x.fecha).slice(0, 10)));
+      const hoy = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+      enPlazo = hoy < diaHabilDelMes(periodoActual, SIRCREB_DIA_HABIL_PLAZO, feriados);
+    }
     costoTransfer = { total: sircreb + debCred, sircreb, debCred, periodo, periodoActual,
-      desactualizado: periodo !== periodoActual, sinDatos: false };
+      desactualizado: periodo !== periodoActual && !enPlazo, sinDatos: false };
     console.log(`[CostoTransf] ${periodoLabel(periodo)} = ${(costoTransfer.total*100).toFixed(2)}%` +
       (costoTransfer.desactualizado ? ' (DESACTUALIZADO)' : ''));
   } catch(e) {
