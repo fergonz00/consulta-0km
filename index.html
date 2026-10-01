@@ -613,6 +613,37 @@ async function sbFetch(path, options = {}) {
   return res.json();
 }
 
+// RPC de usuarios. `tasador_usuarios` ya no se lee ni se escribe con la anon
+// key (estaba a la vista el directorio entero del personal: nombre, usuario,
+// email y telefono de WhatsApp de las 30 cuentas). Todo pasa por funciones
+// SECURITY DEFINER que verifican la firma de sesion que emitio login_tasador,
+// asi que hay que mandarla en cada llamada.
+async function rpcUsuarios(fn, args, sesion) {
+  const s = sesion || _sesionFirmada();
+  if (!s) throw new Error('Sesión vencida: volvé a entrar.');
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    body: JSON.stringify({
+      p_actor: s.usuario,
+      p_actor_exp: s.session_exp,
+      p_actor_sig: s.session_sig,
+      ...(args || {})
+    })
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(t || ('Supabase ' + res.status));
+  }
+  const txt = await res.text();
+  return txt ? JSON.parse(txt) : null;
+}
+
 function fmtMoney(n) {
   if (n == null || isNaN(n)) return '—';
   return '$' + Math.round(n).toLocaleString('es-AR');
@@ -1469,7 +1500,9 @@ async function showNuevaConsulta() {
 
 async function cargarVendedores() {
   try {
-    const data = await sbFetch('tasador_usuarios?activo=eq.true&select=id,usuario,nombre,roles,rol&order=nombre.asc');
+    // La RPC ya devuelve solo activos con rol vendedor; el filtro queda igual
+    // por si la lista cambia, y no pide email ni telefono.
+    const data = await rpcUsuarios('directorio_vendedores');
     vendedoresCache = (data || []).filter(u => {
       const r = Array.isArray(u.roles) ? u.roles : (u.rol ? [u.rol] : []);
       return r.includes('vendedor');
@@ -6126,7 +6159,9 @@ async function cargarUsuarios() {
   const cont = document.getElementById('adminUsuariosList');
   cont.innerHTML = '<div class="empty">Cargando...</div>';
   try {
-    const data = await sbFetch('tasador_usuarios?select=id,usuario,nombre,email,telefono_wa,callmebot_key,roles,rol,activo,debe_cambiar_clave&order=usuario.asc');
+    // Panel de superadmin: la RPC valida el rol server-side (no alcanza con
+    // esconder el boton) y devuelve la tabla completa.
+    const data = await rpcUsuarios('listar_usuarios');
     usuariosList = data || [];
     renderUsuariosList();
   } catch(e) {
@@ -6283,24 +6318,29 @@ async function guardarUsuario(id) {
   if (roles.length === 0) { alert('Asigná al menos un rol'); return; }
 
   const isNew = !id;
-  const body = {
-    usuario, nombre, email: email || null, telefono_wa: telefono_wa || null, callmebot_key,
-    roles, rol: roles[0], activo
-  };
 
   try {
     showLoading('Guardando...');
     if (isNew) {
       const clave = (document.getElementById('uClave').value || '').trim() || generarClaveProvisoria();
-      body.clave = clave;
-      body.debe_cambiar_clave = true;
-      await sbFetch('tasador_usuarios', { method: 'POST', body: JSON.stringify(body) });
+      // La RPC hashea la clave con bcrypt y la guarda en app_credenciales;
+      // `tasador_usuarios` no tiene mas la columna `clave`.
+      await rpcUsuarios('alta_usuario', {
+        p_usuario: usuario, p_nombre: nombre, p_clave: clave,
+        p_rol: roles[0], p_roles: roles,
+        p_email: email || null, p_tel: telefono_wa || null, p_callmebot: callmebot_key
+      });
       hideLoading();
       closeModal();
       showToast('Usuario creado. Clave: ' + clave);
       alert(`Usuario creado.\n\nClave provisoria: ${clave}\n\nPasásela al usuario; al primer login va a tener que cambiarla.`);
     } else {
-      await sbFetch(`tasador_usuarios?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+      await rpcUsuarios('editar_usuario', {
+        p_id: id, p_nombre: nombre,
+        p_rol: roles[0], p_roles: roles,
+        p_email: email || null, p_tel: telefono_wa || null, p_callmebot: callmebot_key,
+        p_activo: activo
+      });
       hideLoading();
       closeModal();
       showToast('Usuario actualizado');
@@ -6321,10 +6361,7 @@ async function resetClaveUsuario(id) {
   const clave = generarClaveProvisoria();
   try {
     showLoading('Reseteando...');
-    await sbFetch(`tasador_usuarios?id=eq.${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ clave, debe_cambiar_clave: true })
-    });
+    await rpcUsuarios('resetear_clave', { p_id: id, p_clave: clave });
     hideLoading();
     mostrarClaveProvisoria(u.usuario, clave);
     cargarUsuarios();
@@ -6394,10 +6431,7 @@ async function toggleActivoUsuario(id, activarNuevo) {
   if (!confirm(`¿${activarNuevo ? 'Activar' : 'Desactivar'} a ${u.usuario}?`)) return;
   try {
     showLoading('Guardando...');
-    await sbFetch(`tasador_usuarios?id=eq.${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ activo: activarNuevo })
-    });
+    await rpcUsuarios('set_activo_usuario', { p_id: id, p_activo: activarNuevo });
     hideLoading();
     cargarUsuarios();
   } catch(e) {
@@ -6451,29 +6485,30 @@ async function init() {
   const sess = cargarSesion();
   if (sess && sess.id) {
     showLoading('Restaurando sesión...');
+    // La firma se valida ANTES de leer la fila: `tasador_usuarios` ya no se lee
+    // con la anon key, y la RPC que la devuelve exige la sesion firmada. Sin
+    // firma tampoco hay forma de probar quien sos ante las Edge, asi que de
+    // todas formas habria que pedir el login de nuevo.
+    const sigOk = sess.session_sig && sess.usuario &&
+                  Number(sess.session_exp || 0) * 1000 > Date.now();
+    if (!sigOk) {
+      hideLoading();
+      limpiarSesion();
+      document.getElementById('loginScreen').classList.remove('hidden');
+      return;
+    }
+    const firma = { usuario: sess.usuario, session_exp: sess.session_exp, session_sig: sess.session_sig };
     try {
-      const data = await sbFetch(`tasador_usuarios?id=eq.${sess.id}&activo=eq.true&select=id,nombre,usuario,rol,activo,email,roles,telefono_wa,debe_cambiar_clave,notificaciones_wa`);
-      if (data && data.length > 0) {
+      const data = await rpcUsuarios('mi_usuario', {}, firma);
+      // La RPC devuelve la fila del dueño de la firma. Si no coincide con el id
+      // guardado, la sesion quedo de una impersonacion y no vale para este.
+      if (data && data.length > 0 && String(data[0].id) === String(sess.id)) {
         currentUser = data[0];
         currentUser.rolesArr = (Array.isArray(currentUser.roles) && currentUser.roles.length > 0)
           ? currentUser.roles
           : (currentUser.rol ? [currentUser.rol] : ['vendedor']);
-        // Sesion firmada guardada en el login. Solo si es del MISMO usuario: si
-        // quedo de una impersonacion, no vale para este.
-        const sigOk = sess.session_sig && sess.usuario === currentUser.usuario &&
-                      Number(sess.session_exp || 0) * 1000 > Date.now();
-        if (sigOk) {
-          currentUser.session_exp = sess.session_exp;
-          currentUser.session_sig = sess.session_sig;
-        } else {
-          // Sin sesion firmada no hay forma de probar quien sos ante las Edge
-          // (`tasador_usuarios` ya no tiene la clave): entrarias con media app
-          // en blanco y sin margenes. Mejor pedir el login de nuevo.
-          hideLoading();
-          limpiarSesion();
-          document.getElementById('loginScreen').classList.remove('hidden');
-          return;
-        }
+        currentUser.session_exp = sess.session_exp;
+        currentUser.session_sig = sess.session_sig;
         document.getElementById('loginScreen').classList.add('hidden');
         await cargarStock();
         if (currentUser.rolesArr.includes('admin') && currentUser.rolesArr.length > 1 && !sess.mode) {
