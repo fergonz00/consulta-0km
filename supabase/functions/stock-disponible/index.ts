@@ -171,7 +171,11 @@ const REPARTO_COLORES_BASE: Record<string, string> = {
 
 // Flete y formulario. `preventas.precioventa` viene SIN esto; todo lo demas de la
 // pantalla (ofertas, consultas) va CON FyF, asi que hay que sumarlo para comparar.
-const FYF = 1110000;
+// Desde el 02/10/2026 el FyF es 1.300.000; las PVs anteriores se hicieron con 1.110.000.
+const FYF = 1300000;
+const FYF_ANTERIOR = 1110000;
+const FYF_DESDE = "2026-10-02";
+const fyfDePv = (fecha: string) => (String(fecha || "").slice(0, 10) >= FYF_DESDE ? FYF : FYF_ANTERIOR);
 // Ventana de preventas que se le ofrecen al vendedor para consultar por transferencia.
 const PREVENTAS_DIAS = 120;
 
@@ -748,7 +752,7 @@ Deno.serve(async (req: Request) => {
     //
     // OJO con el precio: `preventas.precioventa` es el precio del AUTO, SIN flete y
     // formulario. Verificado el 10-09-2026 contra el contable de varias PVs, donde
-    // totalPlan - precioventa da exactamente 1.110.000. Como todo lo demas de esta
+    // totalPlan - precioventa da exactamente 1.110.000 (1.300.000 desde el 02/10/2026). Como todo lo demas de esta
     // pantalla (ofertas, consultas) va CON FyF, se devuelven los dos numeros y el
     // comparable es `precio_con_fyf`.
     let preventasVendidas: any[] | undefined;
@@ -837,7 +841,7 @@ Deno.serve(async (req: Request) => {
             nombreCorto: nc,
             modelo: price ? (price.modelo || nc) : null,
             precio_sin_fyf: sinFyf,
-            precio_con_fyf: sinFyf > 0 ? sinFyf + FYF : 0,
+            precio_con_fyf: sinFyf > 0 ? sinFyf + fyfDePv(x.fecha) : 0,
             precio_lista: price ? Number(price.lista) || 0 : 0,
             oferta_baratito: price ? Number(price.precioOferta) || 0 : 0,
             consulta_id: ya ? ya.id : null,
