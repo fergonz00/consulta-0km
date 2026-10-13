@@ -20,10 +20,15 @@ const TABLAS_OK = new Set([
   "competencia_precios", // solo lectura desde el simulador; se escribe con service_role (portal-precios)
   "costos_financieros_mes", // solo lectura desde el simulador (SIRCREB/deb-cred del mes); se escribe con service_role
   "feriados_ar", // solo lectura: plazo del SIRCREB (3er día hábil)
+  "portal_ofertas", // solo lectura: el precio 0km que ve Fer en /precios, para que
+                    // el tasador calcule la Fórmula FG con ESE número y no con una
+                    // planilla aparte (Fer, 13-10-2026: "el precio de contado está
+                    // mal, tenés que tomar el mío"). Los 47 modelos diferían, hasta
+                    // $4.564.816 en la Amarok Highline TDI MT.
 ]);
 
 // Tablas a las que el proxy sólo deja leer (GET).
-const SOLO_LECTURA = new Set(["feriados_ar"]);
+const SOLO_LECTURA = new Set(["feriados_ar", "portal_ofertas"]);
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
