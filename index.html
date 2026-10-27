@@ -904,6 +904,8 @@ async function cargarStockOversoft() {
       precio_lista: Number(u.precio_lista) || 0,
       oferta_vigente: Number(u.oferta_vigente) || 0,
       gcia_vigente: Number(u.gcia_vigente) || 0,
+      // Incentivo de VW solo para ESTE chasis (ya sumado en gcia_vigente). Solo admin.
+      inc_chasis: Number(u.inc_chasis) || 0, inc_chasis_nota: u.inc_chasis_nota || '',
       fuente_oferta: u.fuente_oferta || 'baratito',
       fecha_factura, fecha_factura_str: fmtFechaCorta(fecha_factura)
     };
@@ -924,6 +926,7 @@ async function cargarStockOversoft() {
     precio_lista: Number(u.precio_lista) || 0,
     oferta_vigente: Number(u.oferta_vigente) || 0,
     gcia_vigente: Number(u.gcia_vigente) || 0,
+    inc_chasis: Number(u.inc_chasis) || 0, inc_chasis_nota: u.inc_chasis_nota || '',
     fuente_oferta: u.fuente_oferta || 'baratito',
     fecha_factura: null, fecha_factura_str: ''
   })).filter(r => r.serie && r.modelo);
@@ -4182,6 +4185,7 @@ function abrirDetalle(consultaId, editMode = false) {
           ${r.bloqueo ? ' <span class="tag-badge" style="background:#dc2626; color:#fff">NO SE PUEDE VENDER</span>' : ''}
           ${pedido ? ' <span style="color:var(--orange); font-weight:700; font-size:11px">PEDIDO</span>' : ''}
           ${esp ? `<div style="font-size:11px; color:#166534; font-weight:700; margin-top:2px">💲 Oferta especial: ${fmtMoney(r.oferta_vigente)}${deltaEsp != null ? ` <span style="font-weight:400">(${deltaEsp < 0 ? '−' : '+'}${fmtMoney(Math.abs(deltaEsp))} vs ${fmtMoney(r.oferta_baratito)} del modelo)</span>` : ''}${r.gcia_vigente ? ` <span style="font-weight:400">· gcia ${fmtPct(r.gcia_vigente)}</span>` : ''}</div>` : ''}
+          ${r.inc_chasis > 0 ? `<div style="font-size:11px; color:#166534" title="${escapeHtml(r.inc_chasis_nota)}">💚 Dto VW por chasis: +${fmtMoney(r.inc_chasis)} <span class="muted">(${escapeHtml(r.inc_chasis_nota)}, ya sumado en la gcia)</span>${!esp && r.gcia_vigente ? ` · gcia ${fmtPct(r.gcia_vigente)}` : ''}</div>` : ''}
           ${r.demora ? `<div style="font-size:11px; color:${demoraGrave(r.demora) ? '#991b1b' : '#92400e'}">🚚 ${escapeHtml(textoDemora(r.demora))}</div>` : ''}
           ${r.bloqueo ? `<div style="font-size:11px; color:#991b1b; font-weight:700">🚫 ${escapeHtml(textoBloqueo(r.bloqueo))}</div>` : ''}
         </div>`;

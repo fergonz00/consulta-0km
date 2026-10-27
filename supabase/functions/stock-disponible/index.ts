@@ -321,11 +321,21 @@ Deno.serve(async (req: Request) => {
       W, SUPA_KEY,
       "/unidades_bloqueo_venta?select=serie,motivo&liberada_at=is.null&limit=500",
     ).catch(() => [] as any[]);
+    // Incentivo de VW que cobra SOLO ese chasis (tabla incentivos_unidad, ej. circ
+    // 123/26 "no patentables 2027"). No esta en el snapshot del motor, que es por
+    // modelo: sin esto la gcia de esas unidades salia sin el dto especial. Mismo
+    // criterio que portal /precios (fetchIncentivosChasis): vale mientras la unidad
+    // todavia pueda patentar dentro de la vigencia.
+    const hoyInc = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
+    const incChasisP = rest(
+      W, SUPA_KEY,
+      `/incentivos_unidad?select=serie,monto_civa,circular,vigencia_desde,vigencia_hasta&vigencia_hasta=gte.${hoyInc}&limit=2000`,
+    ).catch(() => [] as any[]);
 
     const [unidades, modelos, colores, cat, snapArr, especiales, listaPrecios, repDesc, compras, hist,
-           comprasColor, portalRep, demoras, feriadosRows, bloqueosRows] =
+           comprasColor, portalRep, demoras, feriadosRows, bloqueosRows, incChasisRows] =
       await Promise.all([unidadesP, modelosP, coloresP, catP, snapP, espP, listaP, repDescP, comprasP, histP,
-                         comprasColorP, portalRepP, demorasP, feriadosP, bloqueosP]);
+                         comprasColorP, portalRepP, demorasP, feriadosP, bloqueosP, incChasisP]);
 
     // Bloqueo por chasis, listo para colgarle a la unidad (este o en reparto).
     const bloqueoBySerie: Record<string, any> = {};
@@ -395,6 +405,17 @@ Deno.serve(async (req: Request) => {
     for (const s of modelosSnap) if (s.nombreCorto) priceByNc[s.nombreCorto] = s;
     const espBySerie: Record<string, any> = {};
     for (const e of especiales) if (e.serie) espBySerie[String(e.serie).trim()] = e;
+    // serie -> {monto c/IVA, nota}. Una serie puede cobrar mas de una circular: se suman.
+    const incBySerie: Record<string, { monto: number; nota: string }> = {};
+    for (const r of incChasisRows || []) {
+      const s = String(r.serie || "").trim().toUpperCase();
+      const monto = Number(r.monto_civa) || 0;
+      if (!s || !(monto > 0)) continue;
+      const d = (x: string) => String(x).slice(8, 10) + "/" + String(x).slice(5, 7);
+      const nota = `C${r.circular}: patentando ${d(r.vigencia_desde)} al ${d(r.vigencia_hasta)}`;
+      const prev = incBySerie[s];
+      incBySerie[s] = { monto: (prev?.monto || 0) + monto, nota: prev ? `${prev.nota} · ${nota}` : nota };
+    }
     // codigo-base -> nombre de modelo desde la lista de precios (primera aparicion = mas nueva).
     // Igual que descByBase: si la lista tiene el mismo codigo para dos trims
     // (Highline y Outfit comparten CH24K3), el base no alcanza -> ambiguo.
@@ -451,6 +472,14 @@ Deno.serve(async (req: Request) => {
       if (!(lista > 0)) return gciaModelo;
       return gciaModelo + ((ofertaEsp - ofertaModelo) * (1 - _GCIA_TAXRATE)) / lista;
     }
+    // Incentivo por chasis: es plata que entra c/IVA sin tocar la venta, asi que en
+    // la formula de Ventas (gcia neta / lista neta) el IVA se cancela y suma
+    // monto / lista. Igual que /precios (sim.otros + incChasis / lista).
+    function gciaConIncChasis(gcia: number, lista: number, serie: string): number {
+      const inc = incBySerie[String(serie || "").trim().toUpperCase()];
+      if (!inc || !(lista > 0)) return gcia;
+      return gcia + inc.monto / lista;
+    }
 
     // 4) Join por unidad.
     const out: any[] = [];
@@ -473,9 +502,10 @@ Deno.serve(async (req: Request) => {
       const fuente_oferta = tieneEsp ? "unidad" : "baratito";
       // Con precio especial ajustamos la gcia a esa oferta (delta lineal desde la del
       // modelo). Antes se dejaba la del modelo tal cual y sobrestimaba el margen.
-      const gcia_vigente = tieneEsp
-        ? gciaEnOferta(gcia_actual, precio_lista, oferta_baratito, oferta_vigente)
-        : gcia_actual;
+      const gcia_vigente = gciaConIncChasis(
+        tieneEsp ? gciaEnOferta(gcia_actual, precio_lista, oferta_baratito, oferta_vigente) : gcia_actual,
+        precio_lista, u.serie,
+      );
 
       const fecha = u.facturafecha || u.fechaderecepcion || u.fechadepedido || null;
 
@@ -502,7 +532,12 @@ Deno.serve(async (req: Request) => {
       const blq = bloqueoBySerie[String(u.serie || "").trim().toUpperCase()];
       if (blq) row.bloqueo = blq;
       // gcia solo para admin (ver bloque de credenciales arriba).
-      if (includeGcia) { row.gcia_actual = gcia_actual; row.gcia_vigente = gcia_vigente; }
+      if (includeGcia) {
+        row.gcia_actual = gcia_actual;
+        row.gcia_vigente = gcia_vigente;
+        const inc = incBySerie[row.serie.toUpperCase()];
+        if (inc) { row.inc_chasis = inc.monto; row.inc_chasis_nota = inc.nota; }
+      }
       out.push(row);
     }
 
@@ -660,9 +695,12 @@ Deno.serve(async (req: Request) => {
             if (blqR) rowR.bloqueo = blqR;
             if (includeGcia) {
               rowR.gcia_actual = gcia_actual;
-              rowR.gcia_vigente = tieneEspR
-                ? gciaEnOferta(gcia_actual, precio_lista, oferta_baratito, oferta_vigenteR)
-                : gcia_actual;
+              rowR.gcia_vigente = gciaConIncChasis(
+                tieneEspR ? gciaEnOferta(gcia_actual, precio_lista, oferta_baratito, oferta_vigenteR) : gcia_actual,
+                precio_lista, serie,
+              );
+              const incR = incBySerie[String(serie).toUpperCase()];
+              if (incR) { rowR.inc_chasis = incR.monto; rowR.inc_chasis_nota = incR.nota; }
             }
             repartoUnidades.push(rowR);
           }
