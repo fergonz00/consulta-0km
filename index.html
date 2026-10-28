@@ -1395,6 +1395,43 @@ function chasisRepartoNuevoPorModelo(modelo) {
     .sort((a, b) => (a.color || '').localeCompare(b.color || ''));
 }
 
+// Oferta especial por chasis (stock limitado, portal_precios_unidad). Fer, 28-oct-2026:
+// una consulta con chasis de oferta especial es SOLO de chasis especiales de ese
+// modelo; lo de Baratito normal (u otro modelo) va en otra consulta, porque se
+// contesta un solo precio y no se pueden mezclar las dos ofertas.
+function esChasisEspecial(c) {
+  return !!c && (c.fuente_oferta === 'unidad' || c.fuente_oferta === 'stock_limitado') && c.oferta_vigente > 0;
+}
+// Qué tipo de consulta quedó armada con lo elegido hasta ahora:
+// { tipo: 'especial', modelo } | { tipo: 'normal' } | null (todavía nada elegido).
+function modoOfertaConsulta() {
+  let modo = null;
+  for (const u of formData.unidades) {
+    if (u.esReparto && u.modelo) { modo = modo || { tipo: 'normal' }; continue; }
+    for (const s of u.chasisSeleccionados || []) {
+      const c = stockData.find(r => r.serie === s);
+      if (esChasisEspecial(c)) return { tipo: 'especial', modelo: u.modelo };
+      modo = { tipo: 'normal' };
+    }
+  }
+  return modo;
+}
+// Errores de mezcla (para el botón Siguiente y la validación final).
+function erroresMezclaOferta() {
+  const modo = modoOfertaConsulta();
+  if (!modo || modo.tipo !== 'especial') return [];
+  const errs = [];
+  formData.unidades.forEach((u, i) => {
+    if (u.modelo !== modo.modelo || u.esReparto) {
+      errs.push(`Unidad ${i+1}: con oferta especial de stock limitado la consulta es solo de ${modo.modelo}. Hacé otra consulta para ${u.modelo || 'esta unidad'}.`);
+      return;
+    }
+    const normales = (u.chasisSeleccionados || []).filter(s => !esChasisEspecial(stockData.find(r => r.serie === s)));
+    if (normales.length) errs.push(`Unidad ${i+1}: no se pueden mezclar chasis con oferta especial y chasis de Baratito normal (${normales.join(', ')}).`);
+  });
+  return errs;
+}
+
 // Precio de referencia del modelo. Para "sin disponibilidad" el modelo puede no tener
 // NINGUNA unidad en stockData, así que cae al catálogo (snapshot del Motor Baratito).
 // Devuelve null si el modelo no tiene precio publicado.
@@ -2028,7 +2065,26 @@ STEP_RENDERERS['colores'] = () => {
   const origen = formData.origen || 'stock';
   const listaDe = (modelo) => origen === 'reparto' ? chasisRepartoNuevoPorModelo(modelo) : chasisStockPorModelo(modelo);
   // Las unidades de reparto sin chasis (fallback CSV) no eligen color → no las validamos.
-  const allOk = formData.unidades.every(u => u.esReparto || u.chasisSeleccionados.length > 0);
+  const modo = modoOfertaConsulta();
+  const errsMezcla = erroresMezclaOferta();
+  const allOk = formData.unidades.every(u => u.esReparto || u.chasisSeleccionados.length > 0) && errsMezcla.length === 0;
+  // Chasis que no se pueden tildar porque mezclarían oferta especial con Baratito normal.
+  const trabaMezcla = (u, c) => {
+    if (!modo) return null;
+    if (modo.tipo === 'especial') {
+      if (u.modelo !== modo.modelo) return `Ya elegiste oferta especial de ${modo.modelo}: este modelo va en otra consulta`;
+      if (!esChasisEspecial(c)) return 'Sin oferta especial: va en otra consulta (no se mezcla con stock limitado)';
+      return null;
+    }
+    return esChasisEspecial(c) ? 'Oferta especial de stock limitado: va en una consulta aparte' : null;
+  };
+  const avisoMezcla = modo && modo.tipo === 'especial'
+    ? `<div style="font-size:13px; background:#ecfdf5; border:1px solid #86efac; color:#166534; border-radius:8px; padding:8px 12px; margin-bottom:12px">
+         💲 Esta consulta es por <strong>oferta especial de stock limitado</strong> de ${escapeHtml(modo.modelo)}. Solo podés sumar otros chasis con oferta especial de ese modelo. Para Baratito normal u otro modelo, hacé otra consulta.</div>`
+    : '';
+  const avisoErr = errsMezcla.length
+    ? `<div style="font-size:13px; background:#fef2f2; border:1px solid #fca5a5; color:#991b1b; border-radius:8px; padding:8px 12px; margin-bottom:12px">${errsMezcla.map(escapeHtml).join('<br>')}</div>`
+    : '';
   const hint = origen === 'reparto'
     ? 'Estas unidades <strong>no están en el concesionario</strong>: VW ya nos las asignó con ese color y las podemos comprar. Solo salen las que no tenemos en stock.'
     : 'Hasta 3 chasis por unidad. Tocá para seleccionar. Los marcados <strong>A RECIBIR</strong> ya se los compramos a VW y están en camino; si además dicen <strong>NO LLEGÓ</strong>, están demorados y abajo figura lo que contestó VW.';
@@ -2036,6 +2092,7 @@ STEP_RENDERERS['colores'] = () => {
     body: `
       <h2>Elegí los colores</h2>
       <p class="step-hint">${hint}</p>
+      ${avisoMezcla}${avisoErr}
       ${formData.unidades.map((u, idx) => {
         if (u.esReparto) {
           return `
@@ -2061,7 +2118,8 @@ STEP_RENDERERS['colores'] = () => {
             <div class="scroll-list" style="max-height:240px; margin-top:10px">
               ${chasis.length === 0 ? '<div class="empty"><p>Sin unidades para este origen</p></div>' : chasis.map(c => {
                 const checked = u.chasisSeleccionados.includes(c.serie);
-                const disabled = !checked && u.chasisSeleccionados.length >= 3;
+                const traba = checked ? null : trabaMezcla(u, c);
+                const disabled = !checked && (u.chasisSeleccionados.length >= 3 || !!traba);
                 const fechaTxt = fmtFechaCorta(c.fecha_factura);
                 return `
                   <label class="item ${checked ? 'selected' : ''}" style="${disabled ? 'opacity:.4; cursor:not-allowed' : ''}">
@@ -2071,6 +2129,7 @@ STEP_RENDERERS['colores'] = () => {
                       <div class="sub">${escapeHtml(c.serie)}${c.enReparto ? ' · ' + txtEstadoReparto(c) + ' · color que no hay en stock' : (fechaTxt ? (c.aRecibir ? ' · Pedido ' : ' · Fact ') + fechaTxt : '')}</div>
                       ${c.demora ? `<div class="sub" style="color:${demoraGrave(c.demora) ? '#991b1b' : '#92400e'}; font-weight:600">🚚 ${escapeHtml(textoDemora(c.demora))}</div>` : ''}
                       ${c.bloqueo ? `<div class="sub" style="color:#991b1b; font-weight:700">🚫 ${escapeHtml(textoBloqueo(c.bloqueo))}</div>` : ''}
+                      ${traba ? `<div class="sub" style="color:#6b7280; font-style:italic">${escapeHtml(traba)}</div>` : ''}
                     </div>
                     <div class="right">
                       ${fmtMoney(c.oferta_vigente)}
@@ -3015,6 +3074,7 @@ async function submitConsulta() {
       errs.push(`Unidad ${i+1}: la transferencia (${fmtMoney(u.transferenciaMonto)}) supera el precio pedido`);
     }
   });
+  if (!ventaHecha && !sinDisp) errs.push(...erroresMezclaOferta());
   if (formData.pagaTransferencia === 'si' && !formData.unidades.some(u => u.transferenciaMonto > 0)) {
     errs.push('Dijiste que una parte va por transferencia pero no cargaste ningún monto');
   }

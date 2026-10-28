@@ -400,6 +400,31 @@ const TEST = `
   ok(htmlTrab.indexOf('NO SE PUEDE VENDER TODAV') >= 0, 'el detalle deberia cantar que la unidad esta trabada');
   ok(htmlTrab.indexOf('no habilito la venta') >= 0, 'el detalle deberia mostrar el motivo');
 
+  // Oferta especial por chasis (stock limitado) NO se mezcla con Baratito normal
+  // ni con otro modelo en la misma consulta (Fer, 28-oct-2026, consulta #710).
+  const TERA = 'VW Tera Trend MSI MT';
+  stockData = [
+    { serie: 'TT473953', modelo: TERA, color: 'Gris Platino', libre: true, oferta_vigente: 31277935, fuente_oferta: 'baratito' },
+    { serie: 'TT448256', modelo: TERA, color: 'Blanco Cristal', libre: true, oferta_vigente: 31277935, fuente_oferta: 'baratito' },
+    { serie: 'TT472687', modelo: TERA, color: 'Gris Alba', libre: true, oferta_vigente: 31989513, fuente_oferta: 'unidad' },
+    { serie: 'TT472532', modelo: TERA, color: 'Gris Platino', libre: true, oferta_vigente: 31989513, fuente_oferta: 'unidad' },
+    { serie: 'PT1', modelo: 'VW Polo Track MSI MT', color: 'Blanco', libre: true, oferta_vigente: 30000000, fuente_oferta: 'baratito' },
+  ];
+  const u1 = (m, s) => ({ modelo: m, chasisSeleccionados: s, esReparto: false, precioPedido: 1, colorPedido: null, transferenciaMonto: null });
+  formData.origen = 'stock';
+  formData.unidades = [u1(TERA, ['TT473953', 'TT448256', 'TT472687'])];
+  ok(erroresMezclaOferta().length === 1, 'el caso #710 (2 normales + 1 especial) tiene que trabarse');
+  formData.unidades = [u1(TERA, ['TT472687', 'TT472532'])];
+  ok(erroresMezclaOferta().length === 0, 'dos especiales del mismo modelo SI se pueden');
+  formData.unidades = [u1(TERA, ['TT472687']), u1('VW Polo Track MSI MT', ['PT1'])];
+  ok(erroresMezclaOferta().length === 1, 'especial + otro modelo tiene que trabarse');
+  formData.unidades = [u1(TERA, ['TT473953']), u1('VW Polo Track MSI MT', ['PT1'])];
+  ok(erroresMezclaOferta().length === 0, 'Baratito normal de dos modelos sigue permitido');
+  formData.unidades = [u1(TERA, ['TT473953'])];
+  const htmlCol = STEP_RENDERERS['colores']().body;
+  const filaEsp = htmlCol.split('<label').find((l) => l.indexOf("'TT472687'") >= 0) || '';
+  ok(/<input[^>]* disabled /.test(filaEsp) && filaEsp.indexOf('consulta aparte') >= 0, 'con un normal elegido, el especial tiene que salir deshabilitado');
+
   return fallos;
 })()
 `
