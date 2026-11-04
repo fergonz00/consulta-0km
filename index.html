@@ -704,6 +704,11 @@ function showToast(msg, dur = 2500) {
 // ============ SESSION ============
 function guardarSesion() {
   if (!currentUser) return;
+  // Mientras se navega como OTRO no se toca la sesion guardada: la impersonacion
+  // es temporal y vive en la cookie compartida del portal. Guardar al impersonado
+  // dejaba en localStorage un usuario con la firma de otro, y al recargar la RPC
+  // rechazaba esa firma y habia que loguearse de nuevo.
+  if (realUser) return;
   // Guardamos tambien la sesion FIRMADA que devolvio login_tasador (HMAC de
   // "usuario.exp"): es lo unico que prueba quien sos ante las Edge Functions
   // ahora que el login corre server-side y el front no tiene mas la clave.
@@ -717,6 +722,32 @@ function guardarSesion() {
 function cargarSesion() {
   try { const raw = localStorage.getItem('consulta0km_user'); return raw ? JSON.parse(raw) : null; } catch(e) { return null; }
 }
+
+// ===== Impersonacion que viene del PORTAL (cookie compartida tga_session) =====
+// El portal deja en la cookie al usuario con el que se navega y, en
+// `session_usuario`, al operador real que firmo la sesion: la firma no se puede
+// emitir en el navegador (el secreto vive en el servidor), asi que se sigue
+// autenticando como el firmante y solo cambia la identidad que se muestra.
+// Esta app tenia login propio en localStorage y ni miraba la cookie, asi que
+// "entrar como" desde el portal no hacia nada aca: te seguia mostrando a vos.
+function _cookieTGA() {
+  const m = document.cookie.match(/(?:^|;\s*)tga_session=([^;]+)/);
+  if (!m) return null;
+  try { return JSON.parse(decodeURIComponent(m[1])); } catch(e) { return null; }
+}
+function _impersonacionDelPortal() {
+  const c = _cookieTGA();
+  if (!c || !c.usuario || !c.id || !c.session_sig || !c.session_exp) return null;
+  const firmante = String(c.session_usuario || c.usuario).toLowerCase();
+  if (firmante === String(c.usuario).toLowerCase()) return null;  // sesion normal
+  if (Number(c.session_exp) * 1000 <= Date.now()) return null;    // firma vencida
+  return {
+    id: c.id,
+    usuario: String(c.usuario).toLowerCase(),
+    firma: { usuario: firmante, session_exp: c.session_exp, session_sig: c.session_sig }
+  };
+}
+
 function limpiarSesion() {
   try { localStorage.removeItem('consulta0km_user'); } catch(e) {}
   // Salir = salir de TODO el ecosistema: borrar la cookie compartida del portal.
@@ -6545,7 +6576,49 @@ function volverAAdmin() {
 }
 
 // ============ INIT ============
+// Arma la sesion impersonada que mando el portal. Devuelve true si se quedo con
+// la pantalla. Quien puede entrar como otro lo decide la BASE: mi_usuario solo
+// devuelve la fila de un tercero si el firmante es superadmin, asi que aca no
+// hay ninguna lista de usuarios para mantener.
+async function _entrarComoDelPortal() {
+  const imp = _impersonacionDelPortal();
+  if (!imp) return false;
+  showLoading('Entrando como ' + imp.usuario + '...');
+  try {
+    const [elFirmante, elOtro] = await Promise.all([
+      rpcUsuarios('mi_usuario', {}, imp.firma),
+      rpcUsuarios('mi_usuario', { p_id: imp.id }, imp.firma)
+    ]);
+    if (!elFirmante || !elFirmante.length || !elOtro || !elOtro.length) throw new Error('sin datos');
+    // realUser = el dueño de la firma. `_sesionFirmada()` lo prefiere, asi que
+    // todo lo que va al db-proxy se sigue autorizando con el operador real.
+    realUser = Object.assign({}, elFirmante[0], {
+      session_exp: imp.firma.session_exp, session_sig: imp.firma.session_sig
+    });
+    currentUser = Object.assign({}, elOtro[0]);
+    currentUser.rolesArr = (Array.isArray(currentUser.roles) && currentUser.roles.length > 0)
+      ? currentUser.roles
+      : (currentUser.rol ? [currentUser.rol] : ['vendedor']);
+    document.getElementById('loginScreen').classList.add('hidden');
+    await cargarStock();
+    hideLoading();
+    // El cartel naranja de "estas viendo como" lo pone el banner cross-app del
+    // final del archivo, que lee la misma cookie y trae el boton para volver.
+    const roles = currentUser.rolesArr.filter(r => ['vendedor', 'gerente', 'admin'].includes(r));
+    if (roles.length > 1) elegirModo(); else entrarComo(roles[0] || 'vendedor');
+    return true;
+  } catch(e) {
+    console.error('[sso impersonacion]', e);
+    realUser = null; currentUser = null;
+    hideLoading();
+    showToast('No se pudo entrar como ' + imp.usuario + '. Entrá con tu usuario.', 5000);
+    return false;
+  }
+}
+
 async function init() {
+  // Si venis del portal "entrando como" otro, eso manda sobre la sesion propia.
+  if (await _entrarComoDelPortal()) return;
   const sess = cargarSesion();
   if (sess && sess.id) {
     showLoading('Restaurando sesión...');
