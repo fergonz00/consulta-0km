@@ -6125,10 +6125,18 @@ function onUsadoAdminPrecioInput(consultaId, el) {
   const costoTr = transferencia > 0 ? costoTransferencia(transferencia) : 0;
   const m = margenUsado(precio - costoTr, costo);
   if (!m) { hint.textContent = ''; return; }
-  hint.innerHTML = costoTr > 0
+  // Misma segunda lectura que el bloque de ganancia: si el tasador cargo arreglos,
+  // el margen sumandolos al costo. Sin esto el precio que autoriza Fer se medía
+  // contra la toma sola y daba un margen que no existe.
+  const arreglos = Number(u.arreglos) || 0;
+  const mArr = arreglos > 0 ? margenUsado(precio - costoTr, costo + arreglos) : null;
+  const lineaArr = mArr
+    ? `<br>Con arreglos (${fmtMoney(arreglos)}): <strong style="color:${colorMargen(mArr)}">${(mArr.sobreCosto*100).toFixed(1)}%</strong> de margen (${fmtMoney(mArr.pesos)})`
+    : '';
+  hint.innerHTML = (costoTr > 0
     ? `Con ese precio entran ${fmtMoney(precio - costoTr)} (se van ${fmtMoney(costoTr)} por la transferencia): ` +
       `<strong style="color:${colorMargen(m)}">${(m.sobreCosto*100).toFixed(1)}%</strong> de margen (${fmtMoney(m.pesos)})`
-    : `Con ese precio: <strong style="color:${colorMargen(m)}">${(m.sobreCosto*100).toFixed(1)}%</strong> de margen (${fmtMoney(m.pesos)})`;
+    : `Con ese precio: <strong style="color:${colorMargen(m)}">${(m.sobreCosto*100).toFixed(1)}%</strong> de margen (${fmtMoney(m.pesos)})`) + lineaArr;
 }
 
 // ---------- Acciones del admin ----------
