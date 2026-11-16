@@ -955,6 +955,9 @@ async function cargarStockOversoft() {
       gcia_vigente: Number(u.gcia_vigente) || 0,
       // Incentivo de VW solo para ESTE chasis (ya sumado en gcia_vigente). Solo admin.
       inc_chasis: Number(u.inc_chasis) || 0, inc_chasis_nota: u.inc_chasis_nota || '',
+      // Costo real de compra + fórmula del modelo + whosale de hoy. Solo admin (la Edge
+      // los manda únicamente con la gcia). Ver analisisCostoReal().
+      costo_hist: u.costo_hist || null, sim_gcia: u.sim_gcia || null, who_hoy: Number(u.who_hoy) || 0,
       fuente_oferta: u.fuente_oferta || 'baratito',
       fecha_factura, fecha_factura_str: fmtFechaCorta(fecha_factura)
     };
@@ -976,6 +979,7 @@ async function cargarStockOversoft() {
     oferta_vigente: Number(u.oferta_vigente) || 0,
     gcia_vigente: Number(u.gcia_vigente) || 0,
     inc_chasis: Number(u.inc_chasis) || 0, inc_chasis_nota: u.inc_chasis_nota || '',
+    costo_hist: u.costo_hist || null, sim_gcia: u.sim_gcia || null, who_hoy: Number(u.who_hoy) || 0,
     fuente_oferta: u.fuente_oferta || 'baratito',
     fecha_factura: null, fecha_factura_str: ''
   })).filter(r => r.serie && r.modelo);
@@ -2136,7 +2140,7 @@ STEP_RENDERERS['colores'] = () => {
     : '';
   const hint = origen === 'reparto'
     ? 'Estas unidades <strong>no están en el concesionario</strong>: VW ya nos las asignó con ese color y las podemos comprar. Solo salen las que no tenemos en stock.'
-    : 'Hasta 3 chasis por unidad. Tocá para seleccionar. Los marcados <strong>A RECIBIR</strong> ya se los compramos a VW y están en camino; si además dicen <strong>NO LLEGÓ</strong>, están demorados y abajo figura lo que contestó VW.';
+    : 'Elegí <strong>un solo chasis</strong>: cada consulta es por una unidad en particular. Los marcados <strong>A RECIBIR</strong> ya se los compramos a VW y están en camino; si además dicen <strong>NO LLEGÓ</strong>, están demorados y abajo figura lo que contestó VW.';
   return {
     body: `
       <h2>Elegí los colores</h2>
@@ -2168,11 +2172,13 @@ STEP_RENDERERS['colores'] = () => {
               ${chasis.length === 0 ? '<div class="empty"><p>Sin unidades para este origen</p></div>' : chasis.map(c => {
                 const checked = u.chasisSeleccionados.includes(c.serie);
                 const traba = checked ? null : trabaMezcla(u, c);
-                const disabled = !checked && (u.chasisSeleccionados.length >= 3 || !!traba);
+                // Un solo chasis por unidad (Fer, 16-nov-2026): cada consulta es por una
+                // unidad en particular, porque cada caso es distinto (costo, whosale, días).
+                const disabled = !checked && !!traba;
                 const fechaTxt = fmtFechaCorta(c.fecha_factura);
                 return `
                   <label class="item ${checked ? 'selected' : ''}" style="${disabled ? 'opacity:.4; cursor:not-allowed' : ''}">
-                    <input type="checkbox" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="toggleChasisParalelo(${idx}, '${escapeHtml(c.serie)}')">
+                    <input type="radio" name="chasis_u${idx}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="toggleChasisParalelo(${idx}, '${escapeHtml(c.serie)}')">
                     <div class="info">
                       <div class="title">${escapeHtml(c.color || '—')}${badgeChasis(c)}</div>
                       <div class="sub">${escapeHtml(c.serie)}${c.enReparto ? ' · ' + txtEstadoReparto(c) + ' · color que no hay en stock' : (fechaTxt ? (c.aRecibir ? ' · Pedido ' : ' · Fact ') + fechaTxt : '')}</div>
@@ -2807,9 +2813,8 @@ function setUnidadModelo(idx, modelo) {
 }
 function toggleChasisParalelo(idx, serie) {
   const u = formData.unidades[idx];
-  const i = u.chasisSeleccionados.indexOf(serie);
-  if (i >= 0) u.chasisSeleccionados.splice(i, 1);
-  else if (u.chasisSeleccionados.length < 3) u.chasisSeleccionados.push(serie);
+  // Un solo chasis por unidad: elegir otro reemplaza al anterior.
+  u.chasisSeleccionados = u.chasisSeleccionados[0] === serie ? [] : [serie];
   renderStep();
 }
 function onPrecioPedidoInput(idx, el) {
@@ -4189,6 +4194,99 @@ function bloqueTransferencia(it, showGcia, precioRef) {
     </div>`;
 }
 
+// ---------- Costo REAL de compra y dólar blue (solo admin) ----------
+// Pedido de Fer (16-nov-2026): al aprobar un precio, ver cuánto costó DE VERDAD ese
+// chasis y cuánto deja en dólar blue. Mismo cálculo que el tilde "vs histórico" del
+// Baratito (portal-precios VsHistorico.tsx) — si se toca uno, tocar el otro:
+//   costo real = factura VW − whosale de ESA compra (lo arma la Edge: costo_hist).
+//   venta      = precio − FyF + condiciones comerciales de HOY SIN whosale (ya está
+//                en el costo) − comisión − IIBB (fórmula de Ventas, gciaPesosLive),
+//                menos el costo de la transferencia si la hay.
+//   blue       = costo al blue del día del pago a VW; venta al blue de hoy.
+// Sin factura todavía (reparto / a recibir): costo = lista de hoy − whosale de hoy.
+function gciaPesosLive(sim, dtoFrac) {
+  const lista = Number(sim.lista) || 0;
+  if (!(lista > 0)) return 0;
+  const neto = 1 / (1 + (Number(sim.iva) || 0.21));
+  const vn = lista * (1 - dtoFrac);
+  const U = sim.costoRep - (sim.cc90Iva || 0) - (sim.otros || 0) * lista;
+  const com = dtoFrac > 0.05 ? vn * neto * 0.015 : 0.015 * vn;
+  const iibb = Math.max(0.014 * vn * neto, 0.1 * (vn - sim.costoRep) * neto);
+  return (vn - U) * neto - com - iibb;
+}
+
+function analisisCostoReal(it, precio) {
+  const serie = ((it.chasis || [])[0] || {}).serie;
+  if (!serie || !(precio > 0)) return null;
+  const live = (stockData || []).find(r => r.serie === serie);
+  if (!live || !live.sim_gcia || !live.costo_hist) return null;
+  const base = live.sim_gcia;
+  const lista = Number(base.lista) || 0;
+  if (!(lista > 0)) return null;
+  const iva = Number(base.iva) || 0.21;
+  const h = live.costo_hist;
+  const estimado = !!h.sinFactura;
+  const costoReal = estimado ? base.costoRep - (live.who_hoy || 0) : h.costoRealCiva;
+  const otros = (base.otros || 0) + (live.inc_chasis || 0) / lista - (live.who_hoy || 0) / lista;
+  const dto = (lista + FYF - precio) / lista;
+  const montoTr = Number(it.transferencia_monto) || 0;
+  const costoTr = montoTr > 0 ? costoTransferencia(montoTr) : 0;
+  const pesos = gciaPesosLive({ ...base, otros, costoRep: costoReal }, dto) - costoTr;
+  const costoNeto = costoReal / (1 + iva);
+  const blueHoy = Number(h.blueHoy) || 0;
+  const blueCompra = estimado ? blueHoy : (Number(h.blueCompra) || 0);
+  const hayUsd = blueHoy > 0 && blueCompra > 0;
+  const usdCosto = hayUsd ? costoNeto / blueCompra : null;
+  const usdVenta = hayUsd ? (pesos + costoNeto) / blueHoy : null;
+  return {
+    serie, h, estimado, costoReal, pesos, pctCosto: pesos / costoNeto, blueHoy, blueCompra,
+    usdCosto, usdVenta, usdG: hayUsd ? usdVenta - usdCosto : null,
+    whoHoy: live.who_hoy || 0, listaHoy: base.costoRep, conTransferencia: costoTr > 0,
+  };
+}
+
+function _usdTxt(n) { return 'USD ' + Math.round(n).toLocaleString('es-AR'); }
+function _pct1(x) { return (x * 100).toFixed(1).replace('.', ','); }
+function _colorSigno(n) { return n < 0 ? 'var(--red)' : 'var(--green)'; }
+
+function bloqueCostoReal(it, precio, titulo) {
+  const a = analisisCostoReal(it, precio);
+  if (!a) return '';
+  const fd = s => s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(2, 4)}` : '—';
+  const FORMA = { nc: 'cobrado por NC', pendiente: 'NC pendiente', sin_nc: 'SIN NC — reclamar', no_aplica: 'el modelo no tenía whosale ese mes' };
+  const h = a.h;
+  const estiloForma = h.whoForma === 'sin_nc' ? 'color:var(--red); font-weight:700' : '';
+  const costoTxt = a.estimado
+    ? `Sin factura de VW todavía: lista de hoy ${fmtMoney(a.listaHoy)} − whosale de hoy ${fmtMoney(a.whoHoy)} = <strong>${fmtMoney(a.costoReal)}</strong> <span class="muted">(estimado)</span>`
+    : `Factura VW ${fmtMoney(h.fcCiva)} <span class="muted">(${fd(h.fechaFc)}${h.fechaPago ? ', pagada ' + fd(h.fechaPago) : ', sin pagar'})</span>`
+      + ` − whosale ${fmtMoney(h.whoCiva)} <span class="muted" style="${estiloForma}">(${FORMA[h.whoForma] || h.whoForma}${h.whoForma === 'sin_nc' ? ': esperado ' + fmtMoney(h.whoEsperadoCiva) : ''})</span>`
+      + ` = <strong>${fmtMoney(a.costoReal)}</strong>`;
+  const fechaBlue = a.estimado ? ' de hoy' : ' del ' + fd(h.fechaDolar);
+  const usdHtml = a.usdG != null
+    ? `<div style="margin-top:4px">En blue: costo ${_usdTxt(a.usdCosto)} <span class="muted">(a $${Math.round(a.blueCompra).toLocaleString('es-AR')}${fechaBlue})</span>`
+      + ` · venta ${_usdTxt(a.usdVenta)} <span class="muted">(a $${Math.round(a.blueHoy).toLocaleString('es-AR')} de hoy)</span>`
+      + ` · <strong style="color:${_colorSigno(a.usdG)}">${a.usdG >= 0 ? '+' : ''}${_usdTxt(a.usdG)} (${_pct1(a.usdG / a.usdCosto)}%)</strong></div>`
+    : '<div class="muted">Sin cotización del blue.</div>';
+  return `
+    <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--vw-grey-2); font-size:12px">
+      <div style="font-size:13px; margin-bottom:6px"><strong>💵 ${titulo || 'Vs costo real de compra'}</strong>
+        <span class="muted" style="font-size:11px">(chasis ${escapeHtml(a.serie)} · c/IVA)</span></div>
+      <div>${costoTxt}</div>
+      <div style="margin-top:4px">Con ${fmtMoney(precio)} gana <strong style="color:${_colorSigno(a.pesos)}">${fmtMoney(a.pesos)}</strong> contra lo que costó
+        <span class="muted">(${_pct1(a.pctCosto)}% s/costo · venta sin whosale${a.conTransferencia ? ', ya sin el costo de la transferencia' : ''})</span></div>
+      ${usdHtml}
+    </div>`;
+}
+
+function hintCostoReal(it, precio) {
+  const a = analisisCostoReal(it, precio);
+  if (!a) return '';
+  const usd = a.usdG != null
+    ? ` · en blue <strong style="color:${_colorSigno(a.usdG)}">${a.usdG >= 0 ? '+' : ''}${_usdTxt(a.usdG)} (${_pct1(a.usdG / a.usdCosto)}%)</strong>`
+    : '';
+  return `<br>vs costo real <strong style="color:${_colorSigno(a.pesos)}">${fmtMoney(a.pesos)}</strong>${usd}`;
+}
+
 function abrirDetalle(consultaId, editMode = false) {
   const list = currentMode === 'admin' ? adminConsultas : myConsultas;
   const c = list.find(x => x.id === consultaId);
@@ -4640,6 +4738,7 @@ function abrirDetalle(consultaId, editMode = false) {
         ${noChasisMsg}
         ${ventasMesHtml}
         ${analisisHtml}
+        ${showGcia && it.precio_pedido ? bloqueCostoReal(it, it.precio_pedido, c.origen === 'venta_hecha' ? 'Vendida vs costo real de compra' : 'Precio pedido vs costo real de compra') : ''}
         ${historialHtml}
         ${competenciaHtml}
         ${rotacionHtml}
@@ -4901,6 +5000,8 @@ function onAdminPrecioMaxInput(consultaId, el) {
       `(${fmtMoney(costoTr)}) · entran ${fmtMoney(precio - costoTr)} · ` +
       `<strong style="color:${colorG}">gcia ${fmtPct(gcia)}</strong>`
     : `Con ${fmtMoney(precio)}: dto extra ${fmtPct(dto)} · <strong style="color:${colorG}">gcia ${fmtPct(gcia)}</strong>`;
+  // Vs costo real de compra y en blue, al precio que se está tipeando.
+  hint.innerHTML += hintCostoReal(it, precio);
 }
 
 // ---------- Resultado de venta (lo marca el vendedor) ----------

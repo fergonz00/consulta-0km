@@ -894,6 +894,147 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // Costo REAL de compra por chasis (pedido de Fer, 16-nov-2026): para aprobar un
+    // precio viendo cuánto costó de verdad la unidad y cuánto deja en dólar blue.
+    // Mismo cálculo que el tilde "vs histórico" del Baratito (portal-precios,
+    // src/lib/costoHistorico.ts) — si se toca uno, tocar el otro:
+    //   costo real = factura de compra VW − whosale de ESA compra (NC/ND netas de
+    //   Oversoft detcash OKM; respaldo monica_whosale; esperado de la circular si la
+    //   NC está pendiente ≤35 días). Dólar: blue del día de pago a VW (o de la factura).
+    // Va con la fórmula del modelo (`sim_gcia`) y el whosale de hoy (`who_hoy`) para
+    // que el front calcule la venta SIN whosale (ya está en el costo) a cualquier precio.
+    // Solo admin (includeGcia): es costo, igual que la ganancia.
+    if (includeGcia) {
+      try {
+        const todas = [...out, ...repartoUnidades];
+        const series = [...new Set(todas.map((r) => String(r.serie || "").trim().toUpperCase()).filter(Boolean))];
+        const okm: Record<string, any[]> = {};
+        for (let i = 0; i < series.length; i += 40) {
+          const lote = encodeURIComponent(series.slice(i, i + 40).map((s) => `"${s}"`).join(","));
+          for (const r of await rest(OV_URL!, OV_KEY!, `/detcash?select=referencia,fecha,importe,comprobante&motivo=eq.OKM&referencia=in.(${lote})`)) {
+            const s = String(r.referencia || "").trim().toUpperCase();
+            (okm[s] ||= []).push(r);
+          }
+        }
+        const pag = async (path: string) => {
+          const all: any[] = [];
+          for (let off = 0; off < 20000; off += 1000) {
+            const ch = await rest(W, SUPA_KEY, `${path}&limit=1000&offset=${off}`);
+            all.push(...ch);
+            if (ch.length < 1000) break;
+          }
+          return all;
+        };
+        const [comprasH, monicaW, whoInc, blueRows] = await Promise.all([
+          pag("/compras_vw?select=serie,mes,fecha_fc,fecha_pago_vw,neto"),
+          pag("/monica_whosale?select=serie,monto_neto").catch(() => []),
+          pag("/incentivos?select=mes,nombre_corto,monto_civa&tipo=eq.whosale"),
+          pag("/cotizaciones_dolar?select=fecha,venta&fuente=eq.blue&order=fecha"),
+        ]);
+        let blueHoy: { fecha: string; venta: number } | null = null;
+        try {
+          const r = await fetch("https://dolarapi.com/v1/dolares/blue", { headers: { "User-Agent": "Mozilla/5.0" } });
+          if (r.ok) {
+            const j = await r.json();
+            if (Number(j.venta) > 0) blueHoy = { fecha: hoyAR(), venta: Number(j.venta) };
+          }
+        } catch (_) { /* cae al último de la tabla */ }
+        const serieBlue = blueRows.filter((r: any) => Number(r.venta) > 0).map((r: any) => ({ fecha: String(r.fecha), venta: Number(r.venta) }));
+        if (!blueHoy && serieBlue.length) blueHoy = serieBlue[serieBlue.length - 1];
+        const blueDel = (f: string): number | null => {
+          let lo = 0, hi = serieBlue.length - 1, res: number | null = null;
+          while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (serieBlue[mid].fecha <= f) { res = serieBlue[mid].venta; lo = mid + 1; } else hi = mid - 1;
+          }
+          return res;
+        };
+        const MESES_C = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+        const MESES_L = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+        // compras_vw: fechas ISO, '28-abr' o '24/04' (el año sale de `mes`, 'abril-26').
+        const fechaCompra = (v: unknown, mes: unknown): string | null => {
+          const s = String(v ?? "").trim().toLowerCase();
+          if (!s) return null;
+          if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+          const m = s.match(/^(\d{1,2})[-/ ]([a-z]{3}|\d{1,2})$/);
+          if (!m) return null;
+          const mi = /^\d+$/.test(m[2]) ? Number(m[2]) - 1 : MESES_C.indexOf(m[2]);
+          if (mi < 0 || mi > 11) return null;
+          const mm = String(mes ?? "").trim().toLowerCase().match(/^([a-z]+)-(\d{2})$/);
+          if (!mm) return null;
+          let anio = 2000 + Number(mm[2]);
+          const mc = MESES_L.indexOf(mm[1]);
+          if (mc >= 0 && mi < mc) anio += 1;
+          return `${anio}-${String(mi + 1).padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+        };
+        const compraDe: Record<string, any> = {};
+        for (const c of comprasH) compraDe[String(c.serie || "").trim().toUpperCase()] = c;
+        const monDe: Record<string, number> = {};
+        for (const m of monicaW) monDe[String(m.serie || "").trim().toUpperCase()] = Number(m.monto_neto) || 0;
+        const whoPorMes: Record<string, Record<string, number>> = {};
+        for (const r of whoInc) (whoPorMes[r.mes] ||= {})[r.nombre_corto] = Number(r.monto_civa) || 0;
+        const mesesWho = Object.keys(whoPorMes).sort();
+        const whoEsperado = (mes: string, nc: string | null) => {
+          for (let i = mesesWho.length - 1; i >= 0; i--) if (mesesWho[i] <= mes) return nc ? (whoPorMes[mesesWho[i]][nc] || 0) : 0;
+          return 0;
+        };
+        const hoy = hoyAR();
+        for (const row of todas) {
+          const s = String(row.serie || "").trim().toUpperCase();
+          const p = row.nombreCorto ? priceByNc[row.nombreCorto] : null;
+          if (!s || !p || !p.sim) continue;
+          const iva = Number(p.sim.iva) || 0.21;
+          row.sim_gcia = p.sim;
+          row.who_hoy = Number(p.incentivos?.whosale) || 0;
+          const regs = okm[s] || [];
+          const fcs = regs.filter((r) => String(r.comprobante || "").startsWith("FC"));
+          const notas = regs.filter((r) => !String(r.comprobante || "").startsWith("FC"));
+          const c = compraDe[s];
+          let fc = 0;
+          let fechaFc: string | null = null;
+          if (fcs.length) {
+            fc = -fcs.reduce((a, r) => a + Number(r.importe), 0);
+            fechaFc = fcs.map((r) => String(r.fecha).slice(0, 10)).sort()[0];
+          } else if (c && Number(c.neto) > 0) {
+            fc = Number(c.neto) * (1 + iva);
+            fechaFc = fechaCompra(c.fecha_fc, c.mes);
+          }
+          if (!(fc > 0)) {
+            // Sin factura de VW todavía (reparto / a recibir): el front estima con la lista de hoy.
+            row.costo_hist = { sinFactura: true, blueHoy: blueHoy?.venta ?? null, fechaBlueHoy: blueHoy?.fecha ?? null };
+            continue;
+          }
+          const cobrado = Math.max(notas.reduce((a, r) => a + Number(r.importe), 0), (monDe[s] || 0) * (1 + iva));
+          const esperado = whoEsperado((fechaFc || hoy).slice(0, 7), row.nombreCorto);
+          let who = 0;
+          let whoForma = "no_aplica";
+          if (cobrado > 1000) { who = cobrado; whoForma = "nc"; }
+          else if (esperado > 0) {
+            const dias = fechaFc ? (Date.parse(hoy) - Date.parse(fechaFc)) / 86400000 : 0;
+            if (dias <= 35) { who = esperado; whoForma = "pendiente"; } else whoForma = "sin_nc";
+          }
+          const fechaPago = c ? fechaCompra(c.fecha_pago_vw, c.mes) : null;
+          const fechaDolar = fechaPago || fechaFc;
+          row.costo_hist = {
+            sinFactura: false,
+            fcCiva: Math.round(fc),
+            whoCiva: Math.round(who),
+            whoForma,
+            whoEsperadoCiva: Math.round(esperado),
+            costoRealCiva: Math.round(fc - who),
+            fechaFc,
+            fechaPago,
+            fechaDolar,
+            blueCompra: fechaDolar ? blueDel(fechaDolar) : null,
+            blueHoy: blueHoy?.venta ?? null,
+            fechaBlueHoy: blueHoy?.fecha ?? null,
+          };
+        }
+      } catch (e) {
+        console.error("[costo_hist]", String(e));
+      }
+    }
+
     return json({
       ok: true,
       updatedAt: payload.updatedAt || null,
