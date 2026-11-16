@@ -690,3 +690,12 @@ Verificado contra producción: sin clave → 0 · clave incorrecta → 0 · Gise
 ⚠️ **`gerente` o `admin`** hoy son: Daniel López (gerente) y Fer, Matías Lubrano, Catalina y Fernando M. González (admin). Si alguno de esos no debería ver las ventas de todos, se saca del rol o se acota la condición acá.
 
 ⚠️ **El resto de la pantalla filtra en el front, no en la base.** `consultas_0km`, `consultas_0km_items`, `consultas_usados` y `consultas_reaperturas` tienen **RLS deshabilitada** (patrón heredado del tasador) y la anon key es pública: un vendedor curioso puede leer todas las consultas por REST. La lista de ventas ya no, porque pasa por la Edge con credenciales. Cerrar el resto es prender RLS con políticas por vendedor, y es un trabajo aparte.
+
+## Un chasis por unidad + costo real de compra (2026-11-16)
+
+Pedido de Fer: *"cada consulta por el portal tiene que ser por un chasis en particular porque cada caso es particular"* y, al aprobar, ver la comparativa contra el costo histórico.
+
+- **Wizard**: el paso de colores pasó de "hasta 3 chasis por unidad" (checkbox) a **uno solo** (radio; elegir otro reemplaza al anterior, `toggleChasisParalelo`). Las consultas viejas con varios chasis siguen abriendo; el bloque de costo usa el primero.
+- **Edge `stock-disponible`**: con la gcia (solo `GCIA_USUARIOS`) cada chasis trae `costo_hist` (factura VW − whosale de ESA compra: NC/ND netas de Oversoft `detcash` motivo OKM, respaldo `monica_whosale`, esperado de la circular si la NC está pendiente ≤35 días; blue del día de pago a VW o de la factura), `sim_gcia` (fórmula del modelo) y `who_hoy` (whosale vigente). Sin factura (reparto) → `{sinFactura:true}` y el front estima con la lista de hoy − whosale de hoy. Para vendedores no viaja nada de esto (verificado: 0 filas con costo sin credenciales).
+- **Front (admin)**: `analisisCostoReal(it, precio)` / `bloqueCostoReal` / `hintCostoReal`. La venta va SIN whosale (ya está en el costo) y con las condiciones de hoy + incentivo por chasis, menos comisión, IIBB y el costo de la transferencia si la hay. Bloque "💵 Precio pedido vs costo real de compra" debajo del análisis + una línea más en el hint del precio a autorizar.
+- **Gemelo**: el mismo cálculo vive en portal-precios (`src/lib/costoHistorico.ts` + `VsHistorico.tsx`, tilde "vs histórico" del Baratito). Si se toca uno, tocar el otro. Verificado 16-nov contra el informe de las 87 unidades: costo y blue de compra 76/76 iguales.
