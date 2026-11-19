@@ -898,7 +898,12 @@ Deno.serve(async (req: Request) => {
     // precio viendo cuánto costó de verdad la unidad y cuánto deja en dólar blue.
     // Mismo cálculo que el tilde "vs histórico" del Baratito (portal-precios,
     // src/lib/costoHistorico.ts) — si se toca uno, tocar el otro:
-    //   costo real = factura de compra VW − whosale de ESA compra (NC/ND netas de
+    //   costo real = (NETO de la factura VW − gastos VW por unidad) × (1+IVA) − whosale
+    //   de ESA compra. Fuera del costo (19-nov-2026, caso Amarok VA002847): las
+    //   percepciones de IIBB 0,6% e IVA 3%/1,5% (pagos a cuenta) y los gastos de VW
+    //   (flete/adm./seguro, los cubre el FyF que la venta no cuenta). Gastos = neto −
+    //   costo de lista del modelo en el mes de la factura; fuera de rango, fijo de la gama.
+    //   Whosale: NC/ND netas de
     //   Oversoft detcash OKM; respaldo monica_whosale; esperado de la circular si la
     //   NC está pendiente ≤35 días). Dólar: blue del día de pago a VW (o de la factura).
     // Va con la fórmula del modelo (`sim_gcia`) y el whosale de hoy (`who_hoy`) para
@@ -911,7 +916,7 @@ Deno.serve(async (req: Request) => {
         const okm: Record<string, any[]> = {};
         for (let i = 0; i < series.length; i += 40) {
           const lote = encodeURIComponent(series.slice(i, i + 40).map((s) => `"${s}"`).join(","));
-          for (const r of await rest(OV_URL!, OV_KEY!, `/detcash?select=referencia,fecha,importe,comprobante&motivo=eq.OKM&referencia=in.(${lote})`)) {
+          for (const r of await rest(OV_URL!, OV_KEY!, `/detcash?select=referencia,fecha,importe,sujetoretganan,comprobante&motivo=eq.OKM&referencia=in.(${lote})`)) {
             const s = String(r.referencia || "").trim().toUpperCase();
             (okm[s] ||= []).push(r);
           }
@@ -925,12 +930,22 @@ Deno.serve(async (req: Request) => {
           }
           return all;
         };
-        const [comprasH, monicaW, whoInc, blueRows] = await Promise.all([
+        const [comprasH, monicaW, whoInc, blueRows, listasH] = await Promise.all([
           pag("/compras_vw?select=serie,mes,fecha_fc,fecha_pago_vw,neto"),
           pag("/monica_whosale?select=serie,monto_neto").catch(() => []),
           pag("/incentivos?select=mes,nombre_corto,monto_civa&tipo=eq.whosale"),
           pag("/cotizaciones_dolar?select=fecha,venta&fuente=eq.blue&order=fecha"),
+          pag("/precios_lista?select=mes,modelo,costo_concesionario"),
         ]);
+        const costoListaDe: Record<string, number> = {};
+        for (const p of listasH) costoListaDe[`${p.mes}|${p.modelo}`] = Number(p.costo_concesionario) || 0;
+        // Gemelo de gastosVwFijos (portal-precios src/lib/costoHistorico.ts).
+        const gastosVwFijos = (nc: string | null) => {
+          const n = String(nc || "").toLowerCase();
+          if (/amarok|tiguan|vento|taos/.test(n)) return 573353;
+          if (/polo|virtus|saveiro/.test(n)) return 505000;
+          return 513343;
+        };
         let blueHoy: { fecha: string; venta: number } | null = null;
         try {
           const r = await fetch("https://dolarapi.com/v1/dolares/blue", { headers: { "User-Agent": "Mozilla/5.0" } });
@@ -991,14 +1006,19 @@ Deno.serve(async (req: Request) => {
           const notas = regs.filter((r) => !String(r.comprobante || "").startsWith("FC"));
           const c = compraDe[s];
           let fc = 0;
+          let netoFc = 0;
           let fechaFc: string | null = null;
           if (fcs.length) {
             fc = -fcs.reduce((a, r) => a + Number(r.importe), 0);
+            netoFc = -fcs.reduce((a, r) => a + Number(r.sujetoretganan || 0), 0);
             fechaFc = fcs.map((r) => String(r.fecha).slice(0, 10)).sort()[0];
+            if (!(netoFc > 0) && c && Number(c.neto) > 0) netoFc = Number(c.neto);
           } else if (c && Number(c.neto) > 0) {
-            fc = Number(c.neto) * (1 + iva);
+            netoFc = Number(c.neto);
+            fc = netoFc * (1 + iva);
             fechaFc = fechaCompra(c.fecha_fc, c.mes);
           }
+          if (!(netoFc > 0) && fc > 0) netoFc = fc / (1 + iva);
           if (!(fc > 0)) {
             // Sin factura de VW todavía (reparto / a recibir): el front estima con la lista de hoy.
             row.costo_hist = { sinFactura: true, blueHoy: blueHoy?.venta ?? null, fechaBlueHoy: blueHoy?.fecha ?? null };
@@ -1013,15 +1033,23 @@ Deno.serve(async (req: Request) => {
             const dias = fechaFc ? (Date.parse(hoy) - Date.parse(fechaFc)) / 86400000 : 0;
             if (dias <= 35) { who = esperado; whoForma = "pendiente"; } else whoForma = "sin_nc";
           }
+          const costoLista = row.nombreCorto && fechaFc ? costoListaDe[`${fechaFc.slice(0, 7)}|${row.nombreCorto}`] || 0 : 0;
+          const medido = costoLista > 0 ? netoFc - costoLista / (1 + iva) : NaN;
+          const gastosForma = medido >= 300000 && medido <= 900000 ? "lista" : "estimado";
+          const gastosVw = Math.round(gastosForma === "lista" ? medido : gastosVwFijos(row.nombreCorto));
           const fechaPago = c ? fechaCompra(c.fecha_pago_vw, c.mes) : null;
           const fechaDolar = fechaPago || fechaFc;
           row.costo_hist = {
             sinFactura: false,
             fcCiva: Math.round(fc),
+            netoFc: Math.round(netoFc),
+            gastosVw,
+            gastosForma,
+            percepciones: Math.max(0, Math.round(fc - netoFc * (1 + iva))),
             whoCiva: Math.round(who),
             whoForma,
             whoEsperadoCiva: Math.round(esperado),
-            costoRealCiva: Math.round(fc - who),
+            costoRealCiva: Math.round((netoFc - gastosVw) * (1 + iva) - who),
             fechaFc,
             fechaPago,
             fechaDolar,

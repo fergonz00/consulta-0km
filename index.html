@@ -4198,7 +4198,9 @@ function bloqueTransferencia(it, showGcia, precioRef) {
 // Pedido de Fer (16-nov-2026): al aprobar un precio, ver cuánto costó DE VERDAD ese
 // chasis y cuánto deja en dólar blue. Mismo cálculo que el tilde "vs histórico" del
 // Baratito (portal-precios VsHistorico.tsx) — si se toca uno, tocar el otro:
-//   costo real = factura VW − whosale de ESA compra (lo arma la Edge: costo_hist).
+//   costo real = (neto factura VW − gastos VW) + IVA − whosale de ESA compra (lo arma
+//   la Edge: costo_hist). Sin percepciones (a cuenta de impuestos) ni gastos de VW
+//   (flete/adm./seguro, los cubre el FyF que la venta no cuenta). 19-nov-2026.
 //   venta      = precio − FyF + condiciones comerciales de HOY SIN whosale (ya está
 //                en el costo) − comisión − IIBB (fórmula de Ventas, gciaPesosLive),
 //                menos el costo de la transferencia si la hay.
@@ -4258,9 +4260,11 @@ function bloqueCostoReal(it, precio, titulo) {
   const estiloForma = h.whoForma === 'sin_nc' ? 'color:var(--red); font-weight:700' : '';
   const costoTxt = a.estimado
     ? `Sin factura de VW todavía: lista de hoy ${fmtMoney(a.listaHoy)} − whosale de hoy ${fmtMoney(a.whoHoy)} = <strong>${fmtMoney(a.costoReal)}</strong> <span class="muted">(estimado)</span>`
-    : `Factura VW ${fmtMoney(h.fcCiva)} <span class="muted">(${fd(h.fechaFc)}${h.fechaPago ? ', pagada ' + fd(h.fechaPago) : ', sin pagar'})</span>`
+    : `Factura VW neto ${fmtMoney(h.netoFc)} <span class="muted">(${fd(h.fechaFc)}${h.fechaPago ? ', pagada ' + fd(h.fechaPago) : ', sin pagar'})</span>`
+      + ` − gastos VW ${fmtMoney(h.gastosVw)} <span class="muted">(flete/adm./seguro${h.gastosForma === 'estimado' ? ', estimado' : ''}; los cubre el FyF)</span> + IVA`
       + ` − whosale ${fmtMoney(h.whoCiva)} <span class="muted" style="${estiloForma}">(${FORMA[h.whoForma] || h.whoForma}${h.whoForma === 'sin_nc' ? ': esperado ' + fmtMoney(h.whoEsperadoCiva) : ''})</span>`
-      + ` = <strong>${fmtMoney(a.costoReal)}</strong>`;
+      + ` = <strong>${fmtMoney(a.costoReal)}</strong>`
+      + (h.percepciones > 0 ? ` <span class="muted">· no cuenta ${fmtMoney(h.percepciones)} de percepciones (a cuenta de impuestos)</span>` : '');
   const fechaBlue = a.estimado ? ' de hoy' : ' del ' + fd(h.fechaDolar);
   const usdHtml = a.usdG != null
     ? `<div style="margin-top:4px">En blue: costo ${_usdTxt(a.usdCosto)} <span class="muted">(a $${Math.round(a.blueCompra).toLocaleString('es-AR')}${fechaBlue})</span>`
