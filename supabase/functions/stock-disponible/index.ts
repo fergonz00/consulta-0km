@@ -610,6 +610,21 @@ Deno.serve(async (req: Request) => {
           const PEDIDA = new Set(["comprado", "ok"]);
           const vigentes = repRows.filter((r: any) =>
             String(r.periodo || "") === perVigente || PEDIDA.has(String(r.estado_compra || "").toLowerCase()));
+          // Facturadas por VW (compras_vw, carga de Valeria) que NO pasaron por el reparto
+          // (compra directa, alta del zonal) y todavia no entraron a Oversoft: tambien son
+          // nuestras. Fer, 26-11-2026: "todo lo que ya compre y VW me mando el mail quiero
+          // que se contemple". Entran como "pedida" con el modelo y color de la factura.
+          // Ventana de 120 dias para no revivir filas viejas sin serie en Oversoft.
+          try {
+            const desde = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
+            const fact = await rest(W, SUPA_KEY, `/compras_vw?select=serie,modelo_valeria,color,created_at&created_at=gte.${desde}&limit=2000`);
+            const yaRep = new Set(repRows.map((r: any) => String(r.vin || "").toUpperCase().slice(-8)));
+            for (const f of fact) {
+              const s8 = String(f.serie || "").trim().toUpperCase();
+              if (!s8 || s8.startsWith("MAN-") || s8.length !== 8 || yaRep.has(s8)) continue;
+              vigentes.push({ vin: s8, descripcion: f.modelo_valeria, color_codigo: String(f.color || "").trim(), estado_compra: "comprado", periodo: "factura" });
+            }
+          } catch (_) { /* sin compras_vw seguimos con el reparto solo */ }
 
           // Nombres de color (codigo VW -> nombre); DB pisa la base.
           const coloresRep: Record<string, string> = {};

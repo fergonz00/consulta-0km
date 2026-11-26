@@ -970,8 +970,10 @@ async function cargarStockOversoft() {
   repartoMap = {}; // el CSV espejo de reparto ya no manda cuando la Edge responde
   const repUnidades = (data.repartoUnidades || []).map(u => ({
     serie: u.serie, modelo: (u.modelo || '').trim(), nombreCorto: u.nombreCorto || null,
-    color: (u.color || '').trim(), libre: true, aRecibir: false,
-    enReparto: true, estadoReparto: u.estadoReparto || 'a_pedir',
+    // "pedida" = ya comprada a VW y todavia no en Oversoft (Fer, 26-11-2026): es stock
+    // nuestro, cuenta y se muestra como A RECIBIR, no como reparto.
+    color: (u.color || '').trim(), libre: true, aRecibir: u.estadoReparto === 'pedida',
+    enReparto: u.estadoReparto !== 'pedida', estadoReparto: u.estadoReparto || 'a_pedir',
     bloqueo: u.bloqueo || null,
     oferta_baratito: Number(u.oferta_baratito) || 0,
     gcia_actual: Number(u.gcia_actual) || 0,
@@ -986,7 +988,7 @@ async function cargarStockOversoft() {
   stockData = stockData.concat(repUnidades);
 
   const aRecibir = stockData.filter(r => r.aRecibir).length;
-  const enRep = repUnidades.length;
+  const enRep = stockData.filter(r => r.enReparto).length;
   const fisico = stockData.length - aRecibir - enRep;
   console.log(`[Stock] EN VIVO Oversoft: ${stockData.length} disponibles (${fisico} fisico, ${aRecibir} a recibir, ${enRep} en reparto). Snapshot ${data.updatedAt || '?'}.`);
   if (stockData.length === 0) showToast('Atención: no hay unidades disponibles en el stock.');
