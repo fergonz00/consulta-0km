@@ -164,7 +164,6 @@ const TEST = `
   formData = { origen: 'stock', unidades: [{}], pagaTransferencia: null, tipoCliente: null };
   ok(getNextStep('precios') === 'fecha-pago', 'despues de precios va la fecha de pago del contado');
   ok(getNextStep('fecha-pago') === 'transferencia', 'despues de la fecha de pago va la transferencia');
-  ok(typeof w.STEP_RENDERERS['fecha-pago'] === 'function' || true, 'existe el paso fecha-pago');
   ok(getNextStep('transferencia') === 'tipo-cliente', 'sin transferencia salta al cliente');
   formData.pagaTransferencia = 'si';
   ok(getNextStep('transferencia') === 'transferencia-monto', 'con transferencia pide el monto');
