@@ -1575,6 +1575,11 @@ async function showNuevaConsulta() {
     // El monto exacto va por unidad (u.transferenciaMonto), porque cada unidad pedida
     // termina siendo una consulta separada y si no se contaria dos veces.
     pagaTransferencia: null,
+    // Fecha de pago del CONTADO (Fer, 27-11-2026): la oferta vale cobrando hasta la
+    // fecha tope de la semana (cobro_hasta). Si el cliente necesita pagar despues,
+    // se pide aca junto con el precio y al aceptar la consulta queda autorizada.
+    // pagaDespues: 'no' | 'si'; fechaPagoPedida: 'YYYY-MM-DD'; cobroHasta: tope de hoy.
+    pagaDespues: null, fechaPagoPedida: null, cobroHasta: null,
     // Venta ya hecha: la preventa elegida, tal como la devolvio Oversoft.
     pvVendida: null,
     observaciones: ''
@@ -1582,6 +1587,7 @@ async function showNuevaConsulta() {
   wizardStack = [];
   currentStep = null;
   wizardTipo = '0km';
+  cargarCobroHasta(); // tope de cobro de la semana, para el paso fecha-pago
   gerenteVendedorActivo = null;
   document.getElementById('vendedorList').classList.add('hidden');
   document.getElementById('vendedorWizard').classList.remove('hidden');
@@ -1667,7 +1673,8 @@ function getNextStep(step) {
   }
   if (step === 'color-sd') return 'precios';
   if (step === 'colores') return 'precios';
-  if (step === 'precios') return 'transferencia';
+  if (step === 'precios') return 'fecha-pago';
+  if (step === 'fecha-pago') return 'transferencia';
   if (step === 'transferencia') {
     return formData.pagaTransferencia === 'si' ? 'transferencia-monto' : 'tipo-cliente';
   }
@@ -1719,7 +1726,7 @@ function totalSteps() {
   // Venta ya hecha: origen, elegir la venta, monto por transferencia, observaciones,
   // resumen (+ vendedor si lo carga un gerente).
   if (formData.origen === 'venta_hecha') return currentMode === 'gerente' ? 7 : 6;
-  let n = 13; // 12 de siempre + la pregunta de pago por transferencia
+  let n = 14; // 12 de siempre + pago por transferencia + fecha de pago del contado
   if (formData.pagaTransferencia === 'si') n += 1; // monto por transferencia
   if (formData.origen === 'reparto' || formData.origen === 'sin_disponibilidad') n += 1; // segunda pregunta
   if (currentMode === 'gerente') n += 1; // elegir vendedor
@@ -2392,6 +2399,87 @@ STEP_RENDERERS['transferencia'] = () => ({
   footer: `<button class="btn-back" onclick="wizardBack()">Atrás</button>`
 });
 
+// ----- Fecha de pago del contado (Fer, 27-11-2026) -----
+// La oferta vale cobrando hasta la fecha tope de la semana. Si el cliente paga
+// despues, se pide aca: gerencia responde precio Y fecha en la misma consulta, y
+// el control de preventas (Edge notify-pv-cobro-hasta) no avisa si la PV coincide
+// con lo autorizado.
+async function cargarCobroHasta() {
+  if (formData.cobroHasta) return formData.cobroHasta;
+  try {
+    const r = await fetch(SUPABASE_URL + '/rest/v1/rpc/cobro_hasta', {
+      method: 'POST',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+    const j = await r.json();
+    if (typeof j === 'string' && /^\d{4}-\d{2}-\d{2}/.test(j)) formData.cobroHasta = j.slice(0, 10);
+  } catch (e) { console.warn('cobro_hasta', e); }
+  return formData.cobroHasta;
+}
+function fmtDiaLargo(iso) {
+  if (!iso) return '';
+  const d = new Date(String(iso).slice(0, 10) + 'T12:00:00');
+  return d.toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'numeric' });
+}
+STEP_RENDERERS['fecha-pago'] = () => {
+  const tope = formData.cobroHasta;
+  const topeTxt = tope ? fmtDiaLargo(tope) : 'la fecha tope de esta semana';
+  const si = formData.pagaDespues === 'si';
+  const okFecha = si && formData.fechaPagoPedida && (!tope || formData.fechaPagoPedida > tope);
+  return {
+    body: `
+      <h2>¿Cuándo paga el contado?</h2>
+      <p class="step-hint">Las ofertas de esta semana valen cobrando hasta el <strong>${escapeHtml(topeTxt)}</strong>. Si el cliente necesita pagar más tarde, pedilo acá junto con el precio: gerencia te responde las dos cosas. <strong>Sin autorización no se puede cargar otra fecha en la PV.</strong> Los créditos no cuentan: esos los liquida administración.</p>
+      <div class="opt-list">
+        <div class="opt ${formData.pagaDespues === 'no' ? 'selected' : ''}" onclick="selectPagaDespues('no')">
+          <span class="opt-icon">✅</span> Paga hasta el ${escapeHtml(topeTxt)}
+        </div>
+        <div class="opt ${si ? 'selected' : ''}" onclick="selectPagaDespues('si')">
+          <span class="opt-icon">📅</span> Necesita pagar más tarde
+        </div>
+      </div>
+      ${si ? `
+        <div class="field" style="margin-top:14px">
+          <label>¿Qué día paga? (si es e-cheq, el día que lo entrega)</label>
+          <input id="fechaPagoInput" type="date" value="${formData.fechaPagoPedida || ''}" ${tope ? `min="${tope}"` : ''}
+            oninput="onFechaPagoInput(this)" style="font-size:18px; padding:12px">
+          <div id="fechaPagoHint" class="field-hint" style="font-size:13px; margin-top:6px"></div>
+        </div>` : ''}
+    `,
+    footer: `
+      <button class="btn-back" onclick="wizardBack()">Atrás</button>
+      ${si ? `<button class="btn-next" id="btnNext" ${okFecha ? '' : 'disabled'} onclick="nextStep()">Siguiente</button>` : ''}
+    `,
+    onMount: () => {
+      if (!formData.cobroHasta) cargarCobroHasta().then(t => { if (t && currentStep === 'fecha-pago') renderStep(); });
+      if (si) onFechaPagoInput(document.getElementById('fechaPagoInput'));
+    }
+  };
+};
+function selectPagaDespues(v) {
+  formData.pagaDespues = v;
+  if (v === 'no') { formData.fechaPagoPedida = null; nextStep(); return; }
+  renderStep();
+}
+function onFechaPagoInput(el) {
+  if (!el) return;
+  const v = el.value || null;
+  formData.fechaPagoPedida = v;
+  const tope = formData.cobroHasta;
+  const hint = document.getElementById('fechaPagoHint');
+  const btn = document.getElementById('btnNext');
+  let ok = !!v, msg = '';
+  if (v) {
+    const dia = new Date(v + 'T12:00:00').getDay();
+    if (tope && v <= tope) { ok = false; msg = `Esa fecha está dentro del tope (${fmtDiaLargo(tope)}): no hace falta pedirla, volvé y elegí la primera opción.`; }
+    else if (dia === 0 || dia === 6) { ok = false; msg = 'Tiene que ser un día hábil: los bancos no acreditan sábados ni domingos.'; }
+    else msg = `Se pide cobrar el ${fmtDiaLargo(v)}${tope ? `, ${Math.round((new Date(v) - new Date(tope)) / 86400000)} días después del tope` : ''}.`;
+  }
+  if (hint) { hint.textContent = msg; hint.style.color = ok ? 'var(--vw-grey-4)' : 'var(--red)'; }
+  if (btn) btn.disabled = !ok;
+}
+
 // ----- Monto por transferencia (uno por unidad) -----
 STEP_RENDERERS['transferencia-monto'] = () => {
   const allOk = formData.unidades.some(u => u.transferenciaMonto && u.transferenciaMonto > 0);
@@ -2771,6 +2859,12 @@ STEP_RENDERERS['resumen'] = () => {
         <h4>Unidades</h4>
         ${unidadesHtml}
       </div>
+      <div class="detalle-section">
+        <h4>Fecha de pago del contado</h4>
+        ${f.pagaDespues === 'si' && f.fechaPagoPedida
+          ? `<div style="padding:4px 0"><strong style="color:#9a3412">📅 Pide pagar el ${escapeHtml(fmtDiaLargo(f.fechaPagoPedida))}</strong> <span class="muted">(el tope de esta semana es el ${escapeHtml(fmtDiaLargo(f.cobroHasta))}). Gerencia responde precio y fecha juntos.</span></div>`
+          : `<div style="padding:4px 0">Paga hasta el ${escapeHtml(fmtDiaLargo(f.cobroHasta) || 'tope de la semana')}</div>`}
+      </div>
       ${(f.observaciones || '').trim() ? `
         <div class="detalle-section">
           <h4>Observaciones / pedido adicional</h4>
@@ -3134,6 +3228,9 @@ async function submitConsulta() {
   if (formData.pagaTransferencia === 'si' && !formData.unidades.some(u => u.transferenciaMonto > 0)) {
     errs.push('Dijiste que una parte va por transferencia pero no cargaste ningún monto');
   }
+  if (!ventaHecha && f.pagaDespues === 'si' && !f.fechaPagoPedida) {
+    errs.push('Dijiste que paga más tarde pero no cargaste la fecha');
+  }
   if (errs.length) { alert('Faltan datos:\n\n• ' + errs.join('\n• ')); return; }
 
   // En modo gerente, debe haber un vendedor elegido
@@ -3193,6 +3290,9 @@ async function submitConsulta() {
         // stock/reparto -> precio; sin_disponibilidad -> primero "¿se consigue?".
         origen: f.origen || 'stock',
         estado: 'pendiente',
+        // Fecha de pago del contado pedida (null = paga dentro del tope de la semana).
+        fecha_pago_pedida: (!ventaHecha && f.pagaDespues === 'si') ? f.fechaPagoPedida : null,
+        cobro_hasta_al_pedir: f.cobroHasta || null,
         // Venta ya hecha: la preventa y el precio de venta quedan en la cabecera, y
         // la consulta nace ya marcada como vendida — porque lo esta. Asi el cruce con
         // la solapa Ventas funciona sin que nadie tenga que marcar nada despues.
@@ -3392,6 +3492,11 @@ function renderVendedorList() {
 // stock no lleva badge (es lo normal), reparto ámbar, sin disponibilidad violeta.
 function badgeOrigen(c, it) {
   const est = (txt, bg, fg) => ` <span style="background:${bg}; color:${fg}; padding:1px 5px; border-radius:6px; font-size:9px; font-weight:700; margin-left:4px">${txt}</span>`;
+  // Pide pagar el contado despues del tope de la semana (Fer, 27-11-2026).
+  const fp = c && c.fecha_pago_pedida ? est('PAGA ' + fmtDiaLargo(c.fecha_pago_pedida).toUpperCase(), '#ffedd5', '#9a3412') : '';
+  return badgeOrigenBase(c, it, est) + fp;
+}
+function badgeOrigenBase(c, it, est) {
   if (c && c.origen === 'venta_hecha') return est('YA VENDIDA · TRANSFERENCIA', '#fed7aa', '#9a3412');
   if (c && c.origen === 'sin_disponibilidad') return est('SIN DISPONIBILIDAD', '#e0e7ff', '#3730a3');
   if ((c && c.origen === 'reparto') || (it && it.es_reparto)) return est('REPARTO', '#fbbf24', '#78350f');
@@ -4906,6 +5011,11 @@ function abrirDetalle(consultaId, editMode = false) {
           <span class="k">VS otro presupuesto</span><span class="v">${vsOtroTxt}</span>
         </div>
       </div>
+      ${c.fecha_pago_pedida ? `
+        <div class="detalle-section" style="background:#fff7ed; border:1px solid #fdba74; border-radius:10px; padding:10px 12px">
+          <h4 style="color:#9a3412">📅 Pide pagar el contado el ${escapeHtml(fmtDiaLargo(c.fecha_pago_pedida))}</h4>
+          <div style="font-size:13px">La oferta valía cobrando hasta el <strong>${escapeHtml(fmtDiaLargo(c.cobro_hasta_al_pedir) || '—')}</strong>${c.cobro_hasta_al_pedir ? ` (${Math.round((new Date(c.fecha_pago_pedida) - new Date(c.cobro_hasta_al_pedir)) / 86400000)} días más)` : ''}. ${c.estado === 'aceptada' || c.estado === 'contraoferta' ? '<strong>La respuesta vale para esa fecha:</strong> con la PV cargada en la consulta, el control de preventas la toma como autorizada.' : 'Si aceptás, el precio vale pagando en esa fecha y queda autorizada para la PV.'}</div>
+        </div>` : ''}
       <div class="detalle-section">
         <h4>Unidades</h4>
         ${itemsHtml || '<div class="muted">—</div>'}

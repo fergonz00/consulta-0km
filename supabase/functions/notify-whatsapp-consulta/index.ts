@@ -632,6 +632,12 @@ function buildVariables(evento: string, con: any, items: any[], propio = true, a
       const marca = `🧾 YA VENDIDA${pv ? ` (PV ${pv})` : ""} — pide ${fmtMoney(monto)} por transferencia`;
       return [`${marca} — ${vendedor}`, modelosTxt(), dtoOAviso()];
     }
+    // Pide pagar el contado DESPUES del tope de la semana (Fer, 27-11-2026): va en
+    // {{1}} para que se vea que se autoriza precio Y fecha.
+    if (con.fecha_pago_pedida) {
+      const d = String(con.fecha_pago_pedida).slice(0, 10);
+      return [`PAGA EL ${d.slice(8, 10)}/${d.slice(5, 7)} (fuera del tope) - ${vendedor}`, modelosTxt(), dtoOAviso()];
+    }
     return [vendedor, modelosTxt(), dtoOAviso()];
   }
   if (evento === "consulta_0km_respondida") {
