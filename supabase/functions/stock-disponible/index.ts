@@ -329,7 +329,7 @@ Deno.serve(async (req: Request) => {
     const hoyInc = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
     const incChasisP = rest(
       W, SUPA_KEY,
-      `/incentivos_unidad?select=serie,monto_civa,circular,vigencia_desde,vigencia_hasta&vigencia_hasta=gte.${hoyInc}&limit=2000`,
+      `/incentivos_unidad?select=serie,monto_civa,circular,vigencia_desde,vigencia_hasta&vigencia_hasta=gte.${hoyInc}&confirmado=eq.true&limit=2000`,
     ).catch(() => [] as any[]);
 
     const [unidades, modelos, colores, cat, snapArr, especiales, listaPrecios, repDesc, compras, hist,
