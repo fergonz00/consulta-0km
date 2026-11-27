@@ -20,6 +20,7 @@ const TABLAS_OK = new Set([
   "competencia_precios", // solo lectura desde el simulador; se escribe con service_role (portal-precios)
   "costos_financieros_mes", // solo lectura desde el simulador (SIRCREB/deb-cred del mes); se escribe con service_role
   "feriados_ar", // solo lectura: plazo del SIRCREB (3er día hábil)
+  "transferencia_semaforo", // solo lectura: % vigente del costo por transferencia (lo escribe portal-precios)
   "portal_ofertas", // solo lectura: el precio 0km que ve Fer en /precios, para que
                     // el tasador calcule la Fórmula FG con ESE número y no con una
                     // planilla aparte (Fer, 13-10-2026: "el precio de contado está
@@ -28,7 +29,7 @@ const TABLAS_OK = new Set([
 ]);
 
 // Tablas a las que el proxy sólo deja leer (GET).
-const SOLO_LECTURA = new Set(["feriados_ar", "portal_ofertas"]);
+const SOLO_LECTURA = new Set(["feriados_ar", "portal_ofertas", "transferencia_semaforo"]);
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",

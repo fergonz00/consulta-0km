@@ -464,6 +464,12 @@ async function alicuotaTransferencia(url: string, key: string): Promise<number |
     const periodo = `${ar.getUTCFullYear()}-${String(ar.getUTCMonth() + 1).padStart(2, "0")}-01`;
     const filas = await sb(url, key,
       `costos_financieros_mes?select=periodo,sircreb_pct,deb_cred_pct&periodo=lte.${periodo}&order=periodo.desc&limit=1`);
+    // Desde el 27-11-2026 manda el semaforo (verde/amarillo/rojo) si esta calculado.
+    try {
+      const sem = (await sb(url, key,
+        `transferencia_semaforo?select=alicuota&periodo=lte.${periodo}&estado=neq.cerrado&order=periodo.desc&limit=1`) || [])[0];
+      if (sem && Number(sem.alicuota) > 0) return Number(sem.alicuota);
+    } catch (_) { /* cae a la suma vieja */ }
     const f = (filas || [])[0];
     if (!f) return null;
     const total = (Number(f.sircreb_pct) || 0) + (Number(f.deb_cred_pct) || 0);

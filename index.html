@@ -575,7 +575,7 @@ let formUsado = null;
 // ============ HELPERS ============
 // Tablas internas con RLS que ya no se tocan con la anon key: van por el proxy
 // firmado (db-proxy) con la sesión del operador. El resto sigue directo.
-const _TABLAS_PROXY = ['consultas_0km','consultas_0km_items','consultas_usados','consultas_reaperturas','tasaciones','notificaciones_config','competencia_precios','costos_financieros_mes','feriados_ar'];
+const _TABLAS_PROXY = ['consultas_0km','consultas_0km_items','consultas_usados','consultas_reaperturas','tasaciones','notificaciones_config','competencia_precios','costos_financieros_mes','feriados_ar','transferencia_semaforo'];
 function _sesionFirmada() {
   const src = (realUser && realUser.session_sig) ? realUser : currentUser;
   if (src && src.session_sig) return { usuario: src.usuario, session_exp: src.session_exp, session_sig: src.session_sig };
@@ -1098,7 +1098,20 @@ async function cargarCostosFinancieros() {
       enPlazo = hoy < diaHabilDelMes(periodoActual, SIRCREB_DIA_HABIL_PLAZO, feriados);
     }
     costoTransfer = { total: sircreb + debCred, sircreb, debCred, periodo, periodoActual,
-      desactualizado: periodo !== periodoActual && !enPlazo, sinDatos: false };
+      desactualizado: periodo !== periodoActual && !enPlazo, sinDatos: false, semaforo: null };
+    // Desde el 27-11-2026 manda el SEMAFORO (portal-precios, lib/semaforoTransferencia):
+    // el SIRCREB es pago a cuenta y vuelve en ~1 mes, asi que no se cobra entero.
+    // verde 1% / amarillo 1,2% / rojo 1,5%. Si no hay semaforo, queda la suma vieja.
+    try {
+      const sem = (await sbFetch(
+        `transferencia_semaforo?select=periodo,estado,alicuota&periodo=lte.${periodoActual}&estado=neq.cerrado&order=periodo.desc&limit=1`
+      ) || [])[0];
+      if (sem && Number(sem.alicuota) > 0) {
+        costoTransfer.semaforo = { estado: sem.estado, alicuota: Number(sem.alicuota) };
+        costoTransfer.total = Number(sem.alicuota);
+        costoTransfer.desactualizado = false;
+      }
+    } catch (e) { console.warn('[CostoTransf] semaforo no disponible:', e.message || e); }
     console.log(`[CostoTransf] ${periodoLabel(periodo)} = ${(costoTransfer.total*100).toFixed(2)}%` +
       (costoTransfer.desactualizado ? ' (DESACTUALIZADO)' : ''));
   } catch(e) {
@@ -1119,7 +1132,14 @@ function costoTransferencia(monto) {
 }
 
 /** Desglose para mostrar: "0,60% + 0,60% + 0,30% SIRCREB = 1,50%". */
-function textoAlicuota() {
+function textoAlicuota(showGcia) {
+  if (costoTransfer.semaforo) {
+    const emo = { verde: '🟢', amarillo: '🟡', rojo: '🔴' }[costoTransfer.semaforo.estado] || '';
+    // El vendedor ve solo el %; el color y el porque, solo quien autoriza el precio.
+    return showGcia
+      ? `${emo} Semáforo ${costoTransfer.semaforo.estado}: <strong>${fmtPct(alicuotaTransferencia())}</strong> (impuesto al cheque + SIRCREB que vuelve como pago a cuenta)`
+      : `Costo por transferencia: <strong>${fmtPct(alicuotaTransferencia())}</strong>`;
+  }
   const mitad = (Number(costoTransfer.debCred) || 0) / 2;
   return `${fmtPct(mitad)} de entrada + ${fmtPct(mitad)} de salida + ${fmtPct(costoTransfer.sircreb)} de SIRCREB = ` +
     `<strong>${fmtPct(alicuotaTransferencia())}</strong>`;
@@ -4295,7 +4315,7 @@ function bloqueTransferencia(it, showGcia, precioRef) {
         ${precio > 0 ? `<div><span class="muted">Entran de verdad:</span> <strong>${fmtMoney(precio - costo)}</strong></div>` : ''}
         ${showGcia && dtoTr != null ? `<div><span class="muted">Equivale a dto extra:</span> <strong style="color:var(--red)">${fmtPct(dtoTr)}</strong></div>` : ''}
       </div>
-      <div class="muted" style="font-size:11px; margin-top:6px">${textoAlicuota()} sobre ${fmtMoney(monto)}${showGcia ? ' · la ganancia de arriba ya lo tiene descontado' : ''}</div>
+      <div class="muted" style="font-size:11px; margin-top:6px">${textoAlicuota(showGcia)} sobre ${fmtMoney(monto)}${showGcia ? ' · la ganancia de arriba ya lo tiene descontado' : ''}</div>
       ${cambio ? `<div style="font-size:11px; color:#92400e; margin-top:4px">Se cargó con ${fmtPct(alicVieja)}; hoy la alícuota es ${fmtPct(alicHoy)} y es la que se está usando.</div>` : ''}
       ${avisoAlicuota()}
     </div>`;
